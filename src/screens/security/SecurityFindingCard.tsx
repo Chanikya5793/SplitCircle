@@ -82,11 +82,12 @@ export const SecurityFindingCard = ({ finding, onStateChange, onDelete }: Securi
   };
 
   return (
-    <GlassCard style={styles.card} contentStyle={styles.content}>
+    <GlassCard contentStyle={styles.content}>
       <TouchableOpacity
         activeOpacity={0.82}
         accessibilityRole="button"
         accessibilityLabel={`${severity} severity: ${finding.title}`}
+        accessibilityState={{ expanded }}
         onPress={() => setExpanded((value) => !value)}
       >
         <View style={styles.header}>
@@ -96,11 +97,9 @@ export const SecurityFindingCard = ({ finding, onStateChange, onDelete }: Securi
           <View style={styles.headerCopy}>
             <View style={styles.metaRow}>
               <Text variant="labelSmall" style={{ color: severityColor, fontWeight: '800', textTransform: 'uppercase' }}>
-                {severity} · {finding.assessment.score}/100 risk
+                {severity} priority
               </Text>
-              <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                {Math.round(finding.assessment.confidence * 100)}% confidence
-              </Text>
+
             </View>
             <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
               {finding.title}
@@ -112,6 +111,12 @@ export const SecurityFindingCard = ({ finding, onStateChange, onDelete }: Securi
           <Icon source={expanded ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.onSurfaceVariant} />
         </View>
       </TouchableOpacity>
+
+      {finding.assessment.recommendedActions[0] ? (
+        <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+          Next: {finding.assessment.recommendedActions[0]}
+        </Text>
+      ) : null}
 
       <View style={styles.sourceRow}>
         <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -126,9 +131,12 @@ export const SecurityFindingCard = ({ finding, onStateChange, onDelete }: Securi
 
       {expanded ? (
         <View style={[styles.details, { borderTopColor: theme.colors.outlineVariant }]}>
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            Rule-based risk score: {finding.assessment.score}/100. Confidence: {Math.round(finding.assessment.confidence * 100)}%.
+          </Text>
           {finding.assessment.factors.length > 0 ? (
             <View style={styles.block}>
-              <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>Why it scored this way</Text>
+              <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>Why this needs attention</Text>
               {finding.assessment.factors.map((factor) => (
                 <View key={factor.code} style={styles.detailRow}>
                   <Icon source={factor.points < 0 ? 'shield-check-outline' : 'circle-small'} size={17} color={factor.points < 0 ? theme.colors.success : severityColor} />
@@ -143,7 +151,7 @@ export const SecurityFindingCard = ({ finding, onStateChange, onDelete }: Securi
 
           {finding.evidence.length > 0 ? (
             <View style={styles.block}>
-              <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>Safe evidence</Text>
+              <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>Evidence</Text>
               {finding.evidence.map((entry, index) => (
                 <View key={`${entry.key}:${index}`} style={styles.detailRow}>
                   <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '800' }}>[E{index + 1}]</Text>
@@ -169,7 +177,7 @@ export const SecurityFindingCard = ({ finding, onStateChange, onDelete }: Securi
                 mode="outlined"
                 icon="open-in-new"
                 onPress={() => void Linking.openURL(officialPage)}
-                accessibilityHint="Opens the allowlisted official account security page"
+                accessibilityHint="Opens the official account security page"
               >
                 Open official security page
               </Button>
@@ -181,7 +189,7 @@ export const SecurityFindingCard = ({ finding, onStateChange, onDelete }: Securi
               <View style={styles.aiLabel}>
                 <Icon source={explanation.source === 'ondevice' ? 'chip' : explanation.source === 'pcc' ? 'cloud-lock-outline' : 'calculator-variant-outline'} size={16} color={theme.colors.primary} />
                 <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '800' }}>
-                  {explanation.source === 'ondevice' ? 'On-device explanation' : explanation.source === 'pcc' ? 'Private Cloud explanation' : 'Deterministic explanation'}
+                  {explanation.source === 'ondevice' ? 'On-device explanation' : explanation.source === 'pcc' ? 'Private Cloud explanation' : 'ManaSplit explanation'}
                 </Text>
               </View>
               <Text variant="bodySmall" style={{ color: theme.colors.onSurface, lineHeight: 19 }}>{explanation.text}</Text>
@@ -211,7 +219,6 @@ export const SecurityFindingCard = ({ finding, onStateChange, onDelete }: Securi
 };
 
 const styles = StyleSheet.create({
-  card: { marginHorizontal: 16 },
   content: { padding: 14 },
   header: { flexDirection: 'row', alignItems: 'flex-start', gap: 11 },
   icon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },

@@ -255,6 +255,7 @@ const LocalTrackPublisher = ({ callType, isMuted, isCameraOff, roomRef }: LocalT
 };
 
 interface VideoRoomContentProps {
+  controlsClearance: number;
   theme: CallTheme;
   isCameraOff: boolean;
   peer: CallPeer;
@@ -262,7 +263,7 @@ interface VideoRoomContentProps {
   cameraFacing: 'front' | 'back';
 }
 
-const VideoRoomContent = ({ theme, isCameraOff, peer, cameraFacing }: VideoRoomContentProps) => {
+const VideoRoomContent = ({ theme, isCameraOff, peer, cameraFacing, controlsClearance }: VideoRoomContentProps) => {
   const connectionState = useConnectionState();
   const participants = useParticipants();
   const tracks = useTracks([Track.Source.Camera]);
@@ -350,7 +351,7 @@ const VideoRoomContent = ({ theme, isCameraOff, peer, cameraFacing }: VideoRoomC
       )}
 
       {/* Local preview PiP — floats above the control bar, FaceTime-style. */}
-      <View style={styles.pip}>
+      <View style={[styles.pip, { bottom: controlsClearance }]}>
         {localTrack && !isCameraOff && isTrackReference(localTrack) ? (
           // Mirror the self-view for the front camera only (FaceTime/WhatsApp
           // behavior); the back camera and what the remote peer receives are
@@ -550,6 +551,7 @@ export const CallSessionScreen = ({
   } = useCallManager({ chatId, groupId });
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const [controlsHeight, setControlsHeight] = useState(0);
   const { threads } = useChat();
   const { groups } = useGroups();
   const { user } = useAuth();
@@ -901,6 +903,8 @@ export const CallSessionScreen = ({
   return (
     <View
       pointerEvents={visible ? 'auto' : 'none'}
+      accessibilityElementsHidden={!visible}
+      importantForAccessibility={visible ? 'auto' : 'no-hide-descendants'}
       style={[styles.overlay, visible ? styles.overlayVisible : styles.overlayHidden]}
     >
       <CallBackdrop peer={peer} />
@@ -964,7 +968,7 @@ export const CallSessionScreen = ({
                 hasAutoClosedRef={hasAutoClosedRef}
               />
               {callType === 'video' ? (
-                <VideoRoomContent theme={theme as CallTheme} isCameraOff={isCameraOff} peer={peer} cameraFacing={cameraFacing} />
+                <VideoRoomContent theme={theme as CallTheme} isCameraOff={isCameraOff} peer={peer} cameraFacing={cameraFacing} controlsClearance={Math.max(170, controlsHeight + 12)} />
               ) : (
                 <AudioRoomContent
                   theme={theme as CallTheme}
@@ -982,7 +986,10 @@ export const CallSessionScreen = ({
           </View>
         )}
 
-        <View style={[styles.controlsWrap, { paddingBottom: insets.bottom + 18 }]}>
+        <View
+          onLayout={({ nativeEvent }) => setControlsHeight(nativeEvent.layout.height)}
+          style={[styles.controlsWrap, { paddingBottom: insets.bottom + 18 }]}
+        >
           {noAnswer ? (
             <NoAnswerOptions
               onCancel={onHangUp}
@@ -1017,7 +1024,9 @@ const NoAnswerOptions = ({
   onCancel: () => void;
   onMessage: () => void;
   onCallAgain: () => void;
-}) => (
+}) => {
+  const { theme } = useTheme();
+  return (
   <View style={styles.noAnswerRow}>
     <View style={styles.noAnswerCol}>
       <TouchableOpacity onPress={onCancel} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Cancel" style={[styles.noAnswerBtn, { backgroundColor: '#fff' }]}>
@@ -1032,13 +1041,14 @@ const NoAnswerOptions = ({
       <Text style={styles.noAnswerLabel}>Message</Text>
     </View>
     <View style={styles.noAnswerCol}>
-      <TouchableOpacity onPress={onCallAgain} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Call again" style={[styles.noAnswerBtn, { backgroundColor: '#34C759' }]}>
-        <Ionicons name="call" size={24} color="#fff" />
+      <TouchableOpacity onPress={onCallAgain} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Call again" style={[styles.noAnswerBtn, { backgroundColor: theme.colors.success }]}>
+        <Ionicons name="call" size={24} color={theme.colors.onSuccess} />
       </TouchableOpacity>
       <Text style={styles.noAnswerLabel}>Call again</Text>
     </View>
   </View>
-);
+  );
+};
 
 const styles = StyleSheet.create({
   overlay: {
@@ -1081,8 +1091,8 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   minimizeBtnGlass: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
   },
   minimizeBtnContent: {
     flex: 1,

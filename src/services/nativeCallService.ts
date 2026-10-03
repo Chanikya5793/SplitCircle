@@ -338,7 +338,7 @@ const emitStartCall = (data: { handle?: string; callUUID?: string; video?: boole
       });
       return;
     }
-    appendCallDebug('startCall.emit', { handle, nativeCallId, reason: 'unknown uuid — genuine redial' });
+    appendCallDebug('startCall.emit', { handle, nativeCallId, reason: 'unknown uuid. Genuine redial' });
     emit('startCall', {
       handle,
       nativeCallId,

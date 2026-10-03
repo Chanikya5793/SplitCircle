@@ -45,7 +45,12 @@ export const AppLockGate = () => {
   if (!locked) return null;
 
   return (
-    <View style={styles.overlay} pointerEvents="auto">
+    <View
+      style={styles.overlay}
+      pointerEvents="auto"
+      accessibilityViewIsModal
+      accessibilityLabel={`${APP_NAME} is locked`}
+    >
       <View style={styles.markShell}>
         <MugguMark
           size={72}

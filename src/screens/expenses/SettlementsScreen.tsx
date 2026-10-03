@@ -1,7 +1,7 @@
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GuardedScreen } from '@/components/ui';
+import { GuardedScreen, ScrimBackdrop } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { useAppLock } from '@/context/AppLockContext';
 import { useDisplayCurrency } from '@/context/DisplayCurrencyContext';
@@ -13,7 +13,7 @@ import { resolveDisplayName, resolveInitials } from '@/utils/identity';
 import type { Group, GroupMember } from '@/models';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { Avatar, Button, IconButton, Text, TextInput, TouchableRipple } from 'react-native-paper';
+import { Avatar, Button, Icon, Text, TextInput, TouchableRipple } from 'react-native-paper';
 
 interface SettlementsScreenProps {
   group: Group;
@@ -118,13 +118,17 @@ export const SettlementsScreen = ({
   return (
     <LiquidBackground>
       <GuardedScreen target="expenses" entityId={group.groupId} label="Hidden">
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        accessibilityElementsHidden={showMemberSelector}
+        importantForAccessibility={showMemberSelector ? 'no-hide-descendants' : 'auto'}
+      >
         <GlassView style={styles.card}>
           <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
             {isEditMode ? 'Edit settlement' : 'Record settlement'}
           </Text>
 
-          <TouchableRipple onPress={() => openSelector('from')} style={styles.touchableInput}>
+          <TouchableRipple onPress={() => openSelector('from')} style={styles.touchableInput} accessibilityRole="button" accessibilityLabel={`Choose who paid. ${getMemberName(fromUserId)} selected`}>
             <View style={[styles.fakeInput, { borderColor: outlineColor, backgroundColor: inputTheme.colors.background }]}>
               <Text variant="bodySmall" style={{ color: theme.colors.primary }}>From</Text>
               <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, marginTop: 4 }}>{getMemberName(fromUserId)}</Text>
@@ -132,10 +136,10 @@ export const SettlementsScreen = ({
           </TouchableRipple>
 
           <View style={styles.arrowContainer}>
-            <IconButton icon="arrow-down" iconColor={theme.colors.onSurfaceVariant} size={20} />
+            <Icon source="arrow-down" color={theme.colors.onSurfaceVariant} size={20} />
           </View>
 
-          <TouchableRipple onPress={() => openSelector('to')} style={styles.touchableInput}>
+          <TouchableRipple onPress={() => openSelector('to')} style={styles.touchableInput} accessibilityRole="button" accessibilityLabel={`Choose who received payment. ${getMemberName(toUserId)} selected`}>
             <View style={[styles.fakeInput, { borderColor: outlineColor, backgroundColor: inputTheme.colors.background }]}>
               <Text variant="bodySmall" style={{ color: theme.colors.primary }}>To</Text>
               <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, marginTop: 4 }}>{getMemberName(toUserId)}</Text>
@@ -196,10 +200,11 @@ export const SettlementsScreen = ({
       </ScrollView>
 
       {showMemberSelector && (
-        <View style={styles.modalOverlay}>
+        <View style={styles.modalOverlay} accessibilityViewIsModal>
+          <ScrimBackdrop pointerEvents="none" />
           <GlassView role="floating" style={styles.modalContent}>
             <Text variant="titleLarge" style={[styles.modalTitle, { color: theme.colors.onSurface }]}>
-              Select {selectionMode === 'from' ? 'Payer' : 'Receiver'}
+              Select {selectionMode === 'from' ? 'payer' : 'receiver'}
             </Text>
             <ScrollView style={{ maxHeight: 400 }}>
               {group.members.map((member) => (
@@ -207,6 +212,9 @@ export const SettlementsScreen = ({
                   key={member.userId}
                   onPress={() => handleSelectMember(member)}
                   style={styles.memberItem}
+                  accessibilityRole="radio"
+                  accessibilityLabel={resolveDisplayName(member)}
+                  accessibilityState={{ checked: (selectionMode === 'from' ? fromUserId : toUserId) === member.userId }}
                 >
                   <View style={styles.memberRow}>
                     <Avatar.Text
@@ -220,7 +228,7 @@ export const SettlementsScreen = ({
                       {resolveDisplayName(member)}
                     </Text>
                     {(selectionMode === 'from' ? fromUserId : toUserId) === member.userId && (
-                      <IconButton icon="check" iconColor={theme.colors.primary} size={20} />
+                      <Icon source="check" color={theme.colors.primary} size={20} />
                     )}
                   </View>
                 </TouchableRipple>
@@ -284,7 +292,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1000, // Ensure it's on top

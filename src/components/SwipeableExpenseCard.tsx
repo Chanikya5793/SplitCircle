@@ -11,7 +11,7 @@ import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry'
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import { IconButton, Text, TouchableRipple } from 'react-native-paper';
+import { Icon, Text, TouchableRipple } from 'react-native-paper';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 // Category to Icon mapping
@@ -87,15 +87,17 @@ export const SwipeableExpenseCard = ({
       <RNAnimated.View style={[styles.rightAction, { transform: [{ translateX }, { scale }] }]}>
         <RectButton
           style={styles.rightActionPressable}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${maskGroupText(expense.title, groupId, 'title')}`}
           onPress={() => {
             errorHaptic();
             swipeableRef.current?.close();
             onDelete?.(expense);
           }}
         >
-          <View style={styles.deleteButtonPill}>
-            <IconButton icon="delete" iconColor="#fff" size={24} style={{ margin: 0 }} />
-            <Text style={styles.actionText}>Delete</Text>
+          <View style={[styles.deleteButtonPill, { backgroundColor: theme.colors.danger }]}>
+            <Icon source="delete" color={theme.colors.onDanger} size={24} />
+            <Text style={[styles.actionText, { color: theme.colors.onDanger }]}>Delete</Text>
           </View>
         </RectButton>
       </RNAnimated.View>
@@ -135,17 +137,23 @@ export const SwipeableExpenseCard = ({
             onPress={handlePress}
             onLongPress={onLongPress}
             style={{ flex: 1 }}
+            accessibilityRole="button"
+            accessibilityLabel={`${maskGroupText(expense.title, groupId, 'title')}, ${fmtMoney(expense.amount, currency)}, paid by ${payerName}`}
+            accessibilityHint="Opens expense details"
+            accessibilityActions={onDelete ? [{ name: 'delete', label: 'Delete expense' }] : undefined}
+            onAccessibilityAction={({ nativeEvent: { actionName } }) => {
+              if (actionName === 'delete') onDelete?.(expense);
+            }}
             {...touchableProps}
           >
             <Animated.View style={[styles.content, isFlat && styles.contentFlat, pressHighlightStyle]}>
               <View style={styles.header}>
                 <View style={styles.titleRow}>
                   <View style={styles.iconContainer}>
-                    <IconButton
-                      icon={getCategoryIcon(expense.category)}
+                    <Icon
+                      source={getCategoryIcon(expense.category)}
                       size={20}
-                      iconColor={theme.colors.primary}
-                      style={{ margin: 0 }}
+                      color={theme.colors.primary}
                     />
                   </View>
                   <View style={{ flex: 1 }}>
@@ -239,7 +247,6 @@ const styles = StyleSheet.create({
   deleteButtonPill: {
     width: 100,
     height: 56, // Horizontal pill shape
-    backgroundColor: '#ff6b6b', // Liquid Background 'debts' red
     borderRadius: 100,
     flexDirection: 'row',
     justifyContent: 'center',
@@ -252,7 +259,6 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   actionText: {
-    color: '#fff',
     fontSize: 13,
     fontWeight: 'bold',
     marginRight: 8,

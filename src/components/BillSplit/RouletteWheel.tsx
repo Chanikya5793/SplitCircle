@@ -277,31 +277,37 @@ const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
               the hub itself is the spin button whenever a spin is possible. */}
           {(() => {
             const actionable = Boolean(onHubPress) && !disabled;
-            return (
-              <Pressable
-                onPress={actionable ? onHubPress : undefined}
-                disabled={!actionable}
-                accessibilityRole="button"
-                accessibilityLabel={actionable ? 'Spin the wheel' : undefined}
-                style={({ pressed }) => [
-                  styles.hub,
-                  actionable
-                    ? { backgroundColor: theme.colors.primary, borderColor: 'rgba(255,255,255,0.25)' }
-                    : { backgroundColor: hubBg, borderColor: hubBorder },
-                  pressed && actionable && { transform: [{ scale: 0.94 }] },
-                ]}
-              >
-                <Text style={[styles.hubLabel, { color: actionable ? 'rgba(255,255,255,0.85)' : theme.colors.onSurfaceVariant }]}>
+            const hubContent = (
+              <>
+                <Text style={[styles.hubLabel, { color: actionable ? theme.colors.onPrimary : theme.colors.onSurfaceVariant }]}>
                   {actionable ? (winnerId ? 'RESPIN' : 'SPIN') : 'POT'}
                 </Text>
                 <Text
-                  style={[styles.hubAmount, { color: actionable ? '#FFFFFF' : theme.colors.onSurface }]}
+                  style={[styles.hubAmount, { color: actionable ? theme.colors.onPrimary : theme.colors.onSurface }]}
                   numberOfLines={1}
                   adjustsFontSizeToFit
                 >
                   {formatCurrency(totalAmount, currency)}
                 </Text>
+              </>
+            );
+            return actionable ? (
+              <Pressable
+                onPress={onHubPress}
+                accessibilityRole="button"
+                accessibilityLabel="Spin the wheel"
+                style={({ pressed }) => [
+                  styles.hub,
+                  { backgroundColor: theme.colors.primary, borderColor: 'rgba(255,255,255,0.25)' },
+                  pressed && { transform: [{ scale: 0.94 }] },
+                ]}
+              >
+                {hubContent}
               </Pressable>
+            ) : (
+              <View style={[styles.hub, { backgroundColor: hubBg, borderColor: hubBorder }]}>
+                {hubContent}
+              </View>
             );
           })()}
         </View>

@@ -1,5 +1,5 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GlassBackButton, GuardedScreen } from '@/components/ui';
+import { GlassBackButton, GlassCard, GuardedScreen } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
 import { lightHaptic } from '@/utils/haptics';
@@ -100,7 +100,7 @@ export const FilePreviewScreen = () => {
   const route = useRoute();
   const params = route.params as FilePreviewParams;
   const insets = useSafeAreaInsets();
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
 
   const [textContent, setTextContent] = useState<string | null>(null);
   const [textLoading, setTextLoading] = useState(false);
@@ -135,7 +135,8 @@ export const FilePreviewScreen = () => {
         if (cancelled) return;
         setTextContent(content.length > 512_000 ? content.slice(0, 512_000) + '\n\n…(truncated)' : content);
       } catch (e) {
-        if (!cancelled) setTextError(e instanceof Error ? e.message : 'Failed to read file');
+        console.warn('[FilePreview] Text preview failed:', e);
+        if (!cancelled) setTextError('This file could not be previewed. You can still try another app.');
       } finally {
         if (!cancelled) setTextLoading(false);
       }
@@ -159,7 +160,8 @@ export const FilePreviewScreen = () => {
         enableBarCollapsing: true,
       });
     } catch (e) {
-      appAlert('Cannot Open', 'Unable to open the in-app preview.');
+      console.warn('[FilePreview] Browser preview failed:', e);
+      appAlert('Couldn’t open preview', 'Check your connection and try again.');
     } finally {
       setBrowserOpening(false);
     }
@@ -172,7 +174,7 @@ export const FilePreviewScreen = () => {
     try {
       const fileInfo = await getInfoAsync(params.uri);
       if (!fileInfo.exists) {
-        appAlert('File Not Found', 'The file could not be found on this device.');
+        appAlert('File not found', 'This file is no longer available on this device.');
         return;
       }
       const isAvailable = await Sharing.isAvailableAsync();
@@ -194,21 +196,17 @@ export const FilePreviewScreen = () => {
         if (canOpen) await Linking.openURL(params.uri);
       }
     } catch (e) {
-      appAlert('Cannot Open', `Unable to open ${fileName}.`);
+      console.warn('[FilePreview] External open failed:', e);
+      appAlert('Couldn’t open file', `Try opening ${fileName} again or choose another app.`);
     }
   };
 
   const renderHeader = () => (
-    <View
-      style={[
-        styles.header,
-        {
-          paddingTop: insets.top + 8,
-          backgroundColor: isDark
-            ? `${theme.colors.surface}E6`
-            : `${theme.colors.surface}D9`,
-        },
-      ]}
+    <GlassCard
+      role="floating"
+      radius="xl"
+      style={[styles.headerShell, { marginTop: insets.top + 8 }]}
+      contentStyle={styles.header}
     >
       <View style={styles.headerBtn}>
         <GlassBackButton />
@@ -232,7 +230,7 @@ export const FilePreviewScreen = () => {
       >
         <Ionicons name="share-outline" size={22} color={theme.colors.onSurface} />
       </TouchableOpacity>
-    </View>
+    </GlassCard>
   );
 
   const renderContent = () => {
@@ -447,11 +445,13 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingBottom: 8,
+    minHeight: 52,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
     gap: 6,
   },
-  headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerShell: { marginHorizontal: 12, marginBottom: 8 },
+  headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   headerCenter: { flex: 1, paddingHorizontal: 4 },
   headerTitle: { fontSize: 16, fontWeight: '700' },
   headerSub: { fontSize: 11, marginTop: 1 },

@@ -3,3 +3,4 @@ export * from './group';
 export * from './expense';
 export * from './chat';
 export * from './call';
+export * from './monetization';

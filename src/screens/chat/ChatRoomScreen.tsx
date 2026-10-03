@@ -23,7 +23,7 @@ import type { SelectionAction } from '@/components/Chat/SelectionToolbar';
 import { AlbumBubble } from '@/components/AlbumBubble';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GlassCard, GlassToast, GroupAvatar, UserAvatar } from '@/components/ui';
+import { GlassCard, GlassToast, GroupAvatar, ScrimBackdrop, UserAvatar } from '@/components/ui';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { WallpaperPickerSheet } from '@/components/ui';
@@ -41,6 +41,7 @@ import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useLoadingState } from '@/context/LoadingContext';
 import { useTheme } from '@/context/ThemeContext';
+import { avatarColorsForKey } from '@/utils/avatarColors';
 import { useChatSearch } from '@/hooks/useChatSearch';
 import { useMediaSendPipeline } from '@/hooks/useMediaSendPipeline';
 import { useMentionAutocomplete } from '@/hooks/useMentionAutocomplete';
@@ -66,10 +67,20 @@ import {
   hydrateChatRenderCache,
 } from '@/services/messageRenderCache';
 import { publishMessageState } from '@/services/messageStateService';
+import {
+  containsSensitiveContent,
+  getSensitiveContentFilterEnabled,
+  reportMessage,
+  setSensitiveContentFilterEnabled,
+  setUserBlocked,
+  subscribeToBlockedUserIds,
+  type SafetyReportReason,
+} from '@/services/safetyService';
 import { clearChatDraft, getChatDraft, saveChatDraft } from '@/utils/chatDrafts';
-import { lightHaptic, mediumHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
+import { errorHaptic, lightHaptic, mediumHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import { resolveDisplayName, resolveInitials } from '@/utils/identity';
 import { useNavigation } from '@react-navigation/native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Clipboard from 'expo-clipboard';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, FlatList, InteractionManager, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -277,11 +288,29 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [blockedUserIds, setBlockedUserIds] = useState<Set<string>>(new Set());
+  const [filterSensitiveContent, setFilterSensitiveContent] = useState(true);
+  const directTargetId = thread.type === 'direct'
+    ? thread.participants.find((participant) => participant.userId !== user?.userId)?.userId
+    : undefined;
+  const conversationBlocked = !!directTargetId && blockedUserIds.has(directTargetId);
+
+  useEffect(() => {
+    void getSensitiveContentFilterEnabled().then(setFilterSensitiveContent);
+    if (!user?.userId) return;
+    return subscribeToBlockedUserIds(user.userId, setBlockedUserIds);
+  }, [user?.userId]);
+
+  const visibleMessages = useMemo(() => messages
+    .filter((message) => message.senderId === user?.userId || !blockedUserIds.has(message.senderId))
+    .map((message) => filterSensitiveContent && message.type === 'text' && containsSensitiveContent(message.content ?? '')
+      ? { ...message, content: 'Sensitive content hidden. Turn off the filter from the chat menu to view it.' }
+      : message), [blockedUserIds, filterSensitiveContent, messages, user?.userId]);
   // Group consecutive same-album image/video messages into one "album" row so
   // a multi-pick batch renders as a single grid bubble. Singles fall through
   // unchanged. Defined up here so search / reply / pin handlers below can use
   // `messageIdToRowIndex` for scroll-to-row jumps.
-  const rows = useMemo(() => buildChatRows(messages, user?.userId), [messages, user?.userId]);
+  const rows = useMemo(() => buildChatRows(visibleMessages, user?.userId), [visibleMessages, user?.userId]);
   const messageIdToRowIndex = useMemo(() => {
     const map = new Map<string, number>();
     rows.forEach((row, idx) => {
@@ -621,13 +650,21 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
 
   const placeAudioCall = useCallback(() => {
     lightHaptic();
+    if (conversationBlocked) {
+      appAlert('User blocked', 'Unblock this person before starting a call.');
+      return;
+    }
     startCallSession({ chatId: thread.chatId, groupId: thread.groupId, type: 'audio' });
-  }, [startCallSession, thread.chatId, thread.groupId]);
+  }, [conversationBlocked, startCallSession, thread.chatId, thread.groupId]);
 
   const placeVideoCall = useCallback(() => {
     lightHaptic();
+    if (conversationBlocked) {
+      appAlert('User blocked', 'Unblock this person before starting a call.');
+      return;
+    }
     startCallSession({ chatId: thread.chatId, groupId: thread.groupId, type: 'video' });
-  }, [startCallSession, thread.chatId, thread.groupId]);
+  }, [conversationBlocked, startCallSession, thread.chatId, thread.groupId]);
 
   useEffect(() => {
     console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
@@ -725,7 +762,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
       } else if (countChanged && items.length > prevCountBefore) {
         // If new messages arrived and we are within the throttle window,
         // log a concise "new messages" note.
-        console.log(`📨 New message(s) — total: ${items.length}`);
+        console.log(`📨 New message(s). Total: ${items.length}`);
         lastLogAt = now;
       }
     });
@@ -788,6 +825,10 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed) return;
+    if (conversationBlocked) {
+      appAlert('User blocked', 'Unblock this person before sending a message.');
+      return;
+    }
 
     lightHaptic();
 
@@ -828,7 +869,8 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
           editStashRef.current = stashed;
           setText(trimmed);
           setEditingMessage(editTarget);
-          alert(error instanceof Error ? error.message : 'Failed to edit message');
+          console.warn('[ChatRoom] Edit failed:', error);
+          appAlert('Couldn’t edit message', 'Your original text was restored. Try again.');
         }
       })();
       return;
@@ -901,7 +943,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
         console.error('Failed to send message:', error);
         // Restore the text so the user can retry.
         setText(trimmed);
-        alert(error instanceof Error ? error.message : 'Failed to send message');
+        appAlert('Couldn’t send message', 'Your text was restored. Check your connection and try again.');
       }
     })();
   }, [text, replyingTo, editingMessage, pendingMentionUserIds, thread.participants, thread.chatId, thread.groupId, notificationGroupName, sendMessage, setTyping]);
@@ -1123,6 +1165,48 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
       }
       case 'info': {
         handleSwipeInfo(target);
+        break;
+      }
+      case 'report': {
+        const submitReport = (reason: SafetyReportReason) => {
+          void (async () => {
+            try {
+              await reportMessage(target, reason);
+              successHaptic();
+              appAlert(
+                'Report received',
+                'ManaSplit safety will review this report. The message excerpt is included only because you chose to report it.',
+                target.senderId !== user.userId
+                  ? [
+                      { text: 'Done', style: 'cancel' },
+                      {
+                        text: 'Block sender',
+                        style: 'destructive',
+                        onPress: () => void setUserBlocked(target.senderId, true),
+                      },
+                    ]
+                  : undefined,
+              );
+            } catch (error) {
+              errorHaptic();
+              console.warn('[ChatRoom] Report failed:', error);
+              appAlert('Could not send report', 'The report was not sent. Check your connection and try again.');
+            }
+          })();
+        };
+        appAlert(
+          'Report message',
+          'Choose the reason that best describes this content. A limited excerpt will be sent to ManaSplit safety for review.',
+          [
+            { text: 'Harassment', onPress: () => submitReport('harassment') },
+            { text: 'Hate speech', onPress: () => submitReport('hate') },
+            { text: 'Sexual content', onPress: () => submitReport('sexual') },
+            { text: 'Violence or threats', onPress: () => submitReport('violence') },
+            { text: 'Scam or fraud', onPress: () => submitReport('scam') },
+            { text: 'Other', onPress: () => submitReport('other') },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        );
         break;
       }
       case 'select': {
@@ -1507,22 +1591,12 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
       });
     } catch (error) {
       console.error('Failed to send location:', error);
-      alert('Failed to send location');
+      appAlert('Couldn’t send location', 'Check your connection and try again.');
     }
   };
 
   // Get sender color for reply preview
-  const getSenderColor = (id: string) => {
-    const AVATAR_COLORS = [
-      '#E57373', '#F06292', '#BA68C8', '#9575CD', '#7986CB',
-      '#64B5F6', '#4FC3F7', '#4DD0E1', '#4DB6AC', '#81C784',
-    ];
-    let hash = 0;
-    for (let i = 0; i < id.length; i++) {
-      hash = id.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-  };
+  const getSenderColor = (id: string) => avatarColorsForKey(id, isDark).background;
 
 
   // Get proper group name if this is a group chat
@@ -1552,6 +1626,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   // Lock overlay only outside duress; in the decoy world the room just reads
   // as an empty conversation (data stays gated by chatShielded).
   const chatLocked = guardIsLockedDown('chats', thread.chatId);
+  const hideChatAccessibility = chatLocked || !lockGatePassed;
 
   const handleHeaderPress = () => {
     lightHaptic();
@@ -1804,6 +1879,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
       />
     );
   }, [
+    conversationBlocked,
     rows,
     rowSenderId,
     participantMap,
@@ -1831,6 +1907,11 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
 
   return (
     <LiquidBackground wallpaperChatId={thread.chatId}>
+      <View
+        style={styles.container}
+        accessibilityElementsHidden={hideChatAccessibility}
+        importantForAccessibility={hideChatAccessibility ? 'no-hide-descendants' : 'auto'}
+      >
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -1856,6 +1937,8 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               onPress={handleHeaderPress}
               activeOpacity={0.7}
               style={styles.headerPillTouchable}
+              accessibilityRole="button"
+              accessibilityLabel={`Open details for ${displayTitle}`}
             >
               <GlassView role="floating" style={styles.headerPill} intensity={40}>
                 <View style={styles.headerPillContent}>
@@ -1901,12 +1984,12 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
             <View style={styles.headerCallActions}>
               {!chatShielded && (
                 <>
-                  <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
+                  <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Audio call">
                     <GlassView role="floating" style={styles.headerCallButtonGlass} intensity={40}>
                       <Icon source="phone" size={18} color={theme.colors.primary} />
                     </GlassView>
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Video call">
+                  <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Video call">
                     <GlassView role="floating" style={styles.headerCallButtonGlass} intensity={40}>
                       <Icon source="video" size={18} color={theme.colors.primary} />
                     </GlassView>
@@ -1920,6 +2003,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
                 }}
                 style={styles.headerCallButton}
                 activeOpacity={0.7}
+                accessibilityRole="button"
                 accessibilityLabel="More options"
               >
                 <GlassView role="floating" style={styles.headerCallButtonGlass} intensity={40}>
@@ -1938,7 +2022,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               activeOpacity={0.75}
               accessibilityRole="button"
               accessibilityLabel={
-                myGroupBalance < 0 ? 'You owe money in this group — settle up' : 'You are owed money in this group'
+                myGroupBalance < 0 ? 'You owe money in this group. Settle up' : 'You are owed money in this group'
               }
               style={styles.balancePillTouchable}
             >
@@ -2043,7 +2127,12 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
           windowSize={10}
           initialNumToRender={15}
           ListFooterComponent={selectionMode ? (
-            <Pressable style={{ flex: 1, minHeight: 40 }} onPress={exitSelectionMode} />
+            <Pressable
+              style={{ flex: 1, minHeight: 44 }}
+              onPress={exitSelectionMode}
+              accessibilityRole="button"
+              accessibilityLabel="Exit message selection"
+            />
           ) : undefined}
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.3}
@@ -2054,18 +2143,6 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
             });
           }}
         />
-
-        {chatLocked && (
-          <View style={[styles.chatLockOverlay, { backgroundColor: theme.colors.appBackground }]} pointerEvents="auto">
-            <Icon source="lock-outline" size={40} color={theme.colors.onSurfaceVariant} />
-            <Text style={{ color: theme.colors.onSurface, fontWeight: '600', marginTop: 12, fontSize: 16 }}>
-              Messages hidden
-            </Text>
-            <Text style={{ color: theme.colors.onSurfaceVariant, fontSize: 13, marginTop: 4 }}>
-              Shake again or enter your code to reveal.
-            </Text>
-          </View>
-        )}
 
         {/* Mention autocomplete — floats just above the composer when active */}
         {isGroupChat && mentionQuery !== null && (
@@ -2113,13 +2190,10 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
                 onPress={() => setReplyingTo(null)}
                 style={[styles.replyCloseButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }]}
                 activeOpacity={0.6}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel reply"
               >
-                <IconButton
-                  icon="close"
-                  size={22}
-                  iconColor={theme.colors.onSurfaceVariant}
-                  style={{ margin: 0 }}
-                />
+                <Ionicons name="close" size={22} color={theme.colors.onSurfaceVariant} />
               </TouchableOpacity>
             </View>
           )}
@@ -2148,13 +2222,10 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
                 }}
                 style={[styles.replyCloseButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }]}
                 activeOpacity={0.6}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel editing"
               >
-                <IconButton
-                  icon="close"
-                  size={22}
-                  iconColor={theme.colors.onSurfaceVariant}
-                  style={{ margin: 0 }}
-                />
+                <Ionicons name="close" size={22} color={theme.colors.onSurfaceVariant} />
               </TouchableOpacity>
             </View>
           )}
@@ -2170,7 +2241,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               size={24}
               style={styles.attachButton}
               accessibilityLabel="Add attachment"
-              disabled={mediaPipelineLoading.loading}
+              disabled={mediaPipelineLoading.loading || conversationBlocked}
             />
             <View
               style={[
@@ -2185,6 +2256,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
                   dense
                   placeholder={placeholder}
                   value={text}
+                  disabled={conversationBlocked}
                   onChangeText={handleComposerTextChange}
                   onSelectionChange={handleComposerSelectionChange}
                   style={styles.input}
@@ -2218,19 +2290,20 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
             </View>
             <TouchableOpacity
               onPress={handleSend}
-              disabled={!text.trim()}
+              disabled={!text.trim() || conversationBlocked}
               activeOpacity={0.8}
               style={[
                 styles.sendButtonTouchable,
                 {
-                  backgroundColor: !text.trim()
+                  backgroundColor: !text.trim() || conversationBlocked
                     ? theme.colors.surfaceDisabled
                     : theme.colors.primary,
                 },
               ]}
               accessibilityLabel="Send message"
+              accessibilityRole="button"
               accessibilityState={{
-                disabled: !text.trim(),
+                disabled: !text.trim() || conversationBlocked,
               }}
             >
               <Icon source="send" size={24} color={theme.colors.onPrimary} />
@@ -2346,6 +2419,45 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
             icon: 'image-outline',
             onPress: () => setWallpaperSheetOpen(true),
           },
+          {
+            key: 'sensitive-filter',
+            label: `Sensitive content filter · ${filterSensitiveContent ? 'On' : 'Off'}`,
+            icon: filterSensitiveContent ? 'eye-off-outline' : 'eye-outline',
+            onPress: () => {
+              const next = !filterSensitiveContent;
+              setFilterSensitiveContent(next);
+              void setSensitiveContentFilterEnabled(next);
+            },
+          },
+          ...(thread.type === 'direct' && directParticipant?.userId
+            ? [{
+                key: conversationBlocked ? 'unblock-user' : 'block-user',
+                label: conversationBlocked ? 'Unblock user' : 'Block user',
+                icon: conversationBlocked ? 'person-add-outline' as const : 'ban-outline' as const,
+                destructive: !conversationBlocked,
+                onPress: () => {
+                  const targetId = directParticipant.userId;
+                  const nextBlocked = !conversationBlocked;
+                  appAlert(
+                    nextBlocked ? 'Block this user?' : 'Unblock this user?',
+                    nextBlocked
+                      ? 'Their messages will be hidden and neither of you will be able to message or call the other through ManaSplit.'
+                      : 'Messaging and calling will be available again.',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: nextBlocked ? 'Block' : 'Unblock',
+                        style: nextBlocked ? 'destructive' : 'default',
+                        onPress: () => void setUserBlocked(targetId, nextBlocked).catch((error) => {
+                          console.warn('[ChatRoom] Block update failed:', error);
+                          appAlert('Could not update block', 'Your block setting was not changed. Try again.');
+                        }),
+                      },
+                    ],
+                  );
+                },
+              }]
+            : []),
           // 1:1 recurring requests (doc 26) — backed by the hidden 2-person
           // ledger (doc 21). Group chats manage bills from Group Details.
           ...(thread.type === 'direct' && directParticipant && user
@@ -2586,6 +2698,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
           style={[styles.scrollDownButton, { backgroundColor: theme.colors.primary }]}
           onPress={() => listRef.current?.scrollToOffset({ offset: 0, animated: true })}
           activeOpacity={0.8}
+          accessibilityRole="button"
           accessibilityLabel="Scroll to latest message"
         >
           <Icon source="chevron-down" size={22} color={theme.colors.onPrimary} />
@@ -2595,19 +2708,48 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
       {/* Web drag-and-drop target overlay */}
       {isDropTargetActive && (
         <View style={styles.dropOverlay} pointerEvents="none">
-          <View style={[styles.dropOverlayCard, { backgroundColor: theme.colors.elevation?.level3 ?? theme.colors.surface }]}>
+          <ScrimBackdrop pointerEvents="none" />
+          <GlassCard
+            role="floating"
+            radius={20}
+            style={styles.dropOverlayCard}
+            contentStyle={styles.dropOverlayCardContent}
+          >
             <Icon source="tray-arrow-down" size={40} color={theme.colors.primary} />
             <Text style={[styles.dropOverlayText, { color: theme.colors.onSurface }]}>
               Drop files to send
             </Text>
-          </View>
+          </GlassCard>
+        </View>
+      )}
+
+      </View>
+
+      {chatLocked && (
+        <View
+          style={[styles.chatLockOverlay, { backgroundColor: theme.colors.appBackground }]}
+          pointerEvents="auto"
+          accessibilityViewIsModal
+          accessibilityLabel="Messages hidden"
+        >
+          <Icon source="lock-outline" size={40} color={theme.colors.onSurfaceVariant} />
+          <Text style={{ color: theme.colors.onSurface, fontWeight: '600', marginTop: 12, fontSize: 16 }}>
+            Messages hidden
+          </Text>
+          <Text style={{ color: theme.colors.onSurfaceVariant, fontSize: 13, marginTop: 4 }}>
+            Shake again or enter your code to reveal.
+          </Text>
         </View>
       )}
 
       {/* Locked-chat gate: fully opaque so no message content can be seen
           (or screenshotted) until Face ID passes. Sits above everything. */}
       {!lockGatePassed && (
-        <View style={[styles.lockGateOverlay, { backgroundColor: theme.colors.background }]}>
+        <View
+          style={[styles.lockGateOverlay, { backgroundColor: theme.colors.background }]}
+          accessibilityViewIsModal
+          accessibilityLabel="Locked chat"
+        >
           <Icon source="lock" size={44} color={theme.colors.primary} />
           <Text style={[styles.lockGateTitle, { color: theme.colors.onSurface }]}>
             Locked chat
@@ -2625,20 +2767,20 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
 const styles = StyleSheet.create({
   dropOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.35)',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 1000,
   },
   dropOverlayCard: {
-    paddingVertical: 28,
-    paddingHorizontal: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    gap: 10,
     borderWidth: 2,
     borderStyle: 'dashed',
     borderColor: 'rgba(128,128,128,0.5)',
+  },
+  dropOverlayCardContent: {
+    paddingVertical: 28,
+    paddingHorizontal: 40,
+    alignItems: 'center',
+    gap: 10,
   },
   dropOverlayText: {
     fontSize: 16,
@@ -2802,14 +2944,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   headerBackButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     overflow: 'hidden',
   },
   headerBackButtonGlass: {
     flex: 1,
-    borderRadius: 20,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2836,6 +2978,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   balancePillContent: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
@@ -2848,6 +2991,7 @@ const styles = StyleSheet.create({
     maxWidth: '88%',
   },
   nearbyPillContent: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
@@ -2882,14 +3026,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   headerCallButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     overflow: 'hidden',
   },
   headerCallButtonGlass: {
     flex: 1,
-    borderRadius: 20,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2900,7 +3044,7 @@ const styles = StyleSheet.create({
   replyPreview: {
     paddingVertical: 8,
     paddingHorizontal: 12,
-    paddingRight: 40,
+    paddingRight: 52,
     borderRadius: 12,
     borderLeftWidth: 3,
   },
@@ -2908,10 +3052,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 8,
     top: '50%',
-    transform: [{ translateY: -16 }],
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    transform: [{ translateY: -22 }],
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2920,26 +3064,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginBottom: 2,
   },
-  sendingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
-  },
-  sendingContent: {
-    alignItems: 'center',
-    padding: 24,
-    borderRadius: 16,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-  },
   scrollDownButton: {
     position: 'absolute',
     right: 16,
     bottom: 90,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 4,

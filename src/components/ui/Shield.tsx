@@ -211,7 +211,12 @@ export const LockedOverlay = () => {
   const wordmarkRise = fade.interpolate({ inputRange: [0, 1], outputRange: [14, 0] });
 
   return (
-    <Animated.View style={[styles.lockOverlay, { opacity: fade }]} pointerEvents="auto">
+    <Animated.View
+      style={[styles.lockOverlay, { opacity: fade }]}
+      pointerEvents="auto"
+      accessibilityViewIsModal
+      accessibilityLabel={`${APP_NAME} privacy lock`}
+    >
       <TouchableOpacity activeOpacity={1} onPress={handleWordmarkTap} hitSlop={40}>
         <Animated.View style={[styles.lockBrand, { transform: [{ translateY: wordmarkRise }] }]}>
           <MugguMark size={62} variant="reversed" />

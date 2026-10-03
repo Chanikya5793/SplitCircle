@@ -1,6 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { Divider, EmptyState, GlassCard, GuardedScreen } from '@/components/ui';
+import { Divider, EmptyState, GlassCard, GuardedScreen, ScrimBackdrop } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -151,7 +151,8 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
       await deleteExpense(groupId, expenseId);
       navigation.goBack();
     } catch (error) {
-      appAlert('Error', 'Failed to delete expense');
+      console.warn('[ExpenseDetails] Delete failed:', error);
+      appAlert('Could not delete expense', 'The expense is still in the group. Try again.');
     }
   };
 
@@ -160,7 +161,8 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
       await updateExpense(groupId, { ...expense, notes: note }, undefined, undefined, requestId);
       setIsEditingNote(false);
     } catch (error) {
-      appAlert('Error', 'Failed to save note');
+      console.warn('[ExpenseDetails] Note save failed:', error);
+      appAlert('Could not save note', 'Your note was not changed. Try again.');
     }
   };
 
@@ -206,10 +208,10 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
           </Text>
 
           {expense.recurring && (
-            <View style={[styles.recurringBanner, { backgroundColor: isDark ? 'rgba(100,180,255,0.12)' : 'rgba(33,150,243,0.08)' }]}>
-              <IconButton icon="autorenew" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+            <View style={[styles.recurringBanner, { backgroundColor: theme.colors.primaryContainer }]}>
+              <Icon source="autorenew" size={18} color={theme.colors.primary} />
               <Text style={{ color: theme.colors.onSurfaceVariant, flex: 1, fontSize: 13 }}>
-                This is a recurring expense. Editing it only changes this occurrence — future recurrences are unaffected.
+                This is a recurring expense. Editing it changes only this occurrence. Future expenses stay the same.
               </Text>
             </View>
           )}
@@ -223,12 +225,14 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
                 <TouchableOpacity
                   style={[styles.documentContainer, { backgroundColor: theme.colors.surfaceVariant }]}
                   onPress={() => Linking.openURL(expense.receipt!.url!)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open receipt document ${expense.receipt.fileName || 'Document'}`}
                 >
-                  <IconButton icon="file-document" size={40} iconColor={theme.colors.primary} />
+                  <Icon source="file-document" size={40} color={theme.colors.primary} />
                   <Text variant="bodyLarge" style={{ flex: 1, color: theme.colors.onSurface }}>
                     {expense.receipt.fileName || 'Document'}
                   </Text>
-                  <IconButton icon="open-in-new" size={20} iconColor={theme.colors.onSurfaceVariant} />
+                  <Icon source="open-in-new" size={20} color={theme.colors.onSurfaceVariant} />
                 </TouchableOpacity>
               ) : (
                 <TouchableOpacity onPress={() => setShowImageModal(true)}>
@@ -381,7 +385,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
               Split with
             </Text>
             <Text variant="bodySmall" style={[styles.splitModeNote, { color: theme.colors.onSurfaceVariant }]}>
-              A personal reminder only — it doesn't record a payment or change the group balance. Use Settle Up for that.
+              This is a personal reminder. It does not record a payment or change the group balance. Use Settle up for that.
             </Text>
             {expense.participants.map((p) => {
               // Per-participant settle ticks (doc 26): purely a presentational
@@ -450,7 +454,13 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
                 Notes & Comments
               </Text>
               {!isEditingNote && (
-                <IconButton icon="pencil" size={20} onPress={() => setIsEditingNote(true)} iconColor={theme.colors.primary} />
+                <IconButton
+                  icon="pencil"
+                  size={20}
+                  onPress={() => setIsEditingNote(true)}
+                  iconColor={theme.colors.primary}
+                  accessibilityLabel="Edit notes and comments"
+                />
               )}
             </View>
             {isEditingNote ? (
@@ -513,15 +523,18 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
           <Pressable
             style={styles.deleteDialogBackdrop}
             onPress={() => setShowDeleteDialog(false)}
+            accessibilityRole="button"
             accessibilityLabel="Dismiss delete confirmation"
-          />
+          >
+            <ScrimBackdrop pointerEvents="none" />
+          </Pressable>
           <View style={styles.deleteDialogWrap} pointerEvents="box-none">
             <GlassCard role="floating" style={styles.deleteDialogCard}>
               <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-                Delete Expense
+                Delete expense?
               </Text>
               <Text variant="bodyMedium" style={[styles.deleteDialogBody, { color: theme.colors.onSurfaceVariant }]}>
-                Are you sure you want to delete this expense? This cannot be undone.
+                Delete “{expense.title}” for everyone in this group? It will be removed from the group’s history and cannot be restored.
               </Text>
               <View style={styles.deleteDialogActions}>
                 <Button onPress={() => setShowDeleteDialog(false)}>Cancel</Button>
@@ -533,10 +546,28 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
           </View>
         </Modal>
 
-        <Modal visible={showImageModal} transparent={true} onRequestClose={() => setShowImageModal(false)}>
+        <Modal
+          visible={showImageModal}
+          transparent
+          statusBarTranslucent
+          animationType="fade"
+          onRequestClose={() => setShowImageModal(false)}
+        >
           <View style={styles.modalContainer}>
-            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowImageModal(false)}>
-              <Text style={{ color: 'white', fontSize: 18 }}>Close</Text>
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={() => setShowImageModal(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Close receipt preview"
+            >
+              <GlassCard
+                role="floating"
+                radius={22}
+                style={styles.modalCloseGlass}
+                contentStyle={styles.modalCloseGlassContent}
+              >
+                <Icon source="close" size={24} color={theme.colors.onSurface} />
+              </GlassCard>
             </TouchableOpacity>
             {expense.receipt?.url && (
               <Image source={{ uri: expense.receipt.url }} style={styles.fullImage} resizeMode="contain" />
@@ -557,7 +588,6 @@ const styles = StyleSheet.create({
   },
   deleteDialogBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.45)',
   },
   deleteDialogWrap: {
     flex: 1,
@@ -687,8 +717,11 @@ const styles = StyleSheet.create({
     top: 40,
     right: 20,
     zIndex: 1,
-    padding: 10,
+    width: 44,
+    height: 44,
   },
+  modalCloseGlass: { width: 44, height: 44 },
+  modalCloseGlassContent: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   fullImage: {
     width: '100%',
     height: '80%',

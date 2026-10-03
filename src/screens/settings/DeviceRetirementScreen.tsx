@@ -1,3 +1,4 @@
+import { DetailScreenScaffold } from '@/components/ui/DetailScreenScaffold';
 // "Before you sell or wipe this phone" (doc 31 §3.7, reframed 2026-07-26).
 //
 // WHAT THIS USED TO BE, AND WHY IT DIDN'T WORK. This screen tried to be both a
@@ -19,7 +20,7 @@
 // genuinely round-trip through the server, which is the property that
 // mattered — a structurally-intact-but-corrupt backup still fails.
 
-import { Divider, GlassCard } from '@/components/ui';
+import { Divider, GlassCard, SCREEN_GUTTER } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -31,9 +32,7 @@ import { formatBytes } from '@/components/backup/BackupInsightCards';
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, successHaptic } from '@/utils/haptics';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useHeaderHeight } from '@react-navigation/elements';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { Button, Text, TextInput } from 'react-native-paper';
 
 /** Typed verbatim to sign out without a verified backup. */
@@ -43,16 +42,13 @@ const FORCE_PHRASE = 'DELETE MY CHAT HISTORY';
 const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
 
 type CheckState =
-  | { kind: 'idle' }
-  | { kind: 'running'; message: string }
-  | { kind: 'verified'; batches: number }
-  | { kind: 'failed'; message: string };
+  { kind: 'idle' } | { kind: 'running'; message: string } | { kind: 'verified'; batches: number } | { kind: 'failed'; message: string };
+
+class RetirementCheckError extends Error {}
 
 export const DeviceRetirementScreen = () => {
   const { user } = useAuth();
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
-  const headerHeight = useHeaderHeight();
 
   const [manifest, setManifest] = useState<BackupManifest | null>(null);
   const [lastBackupAt, setLastBackupAt] = useState<number | null>(null);
@@ -86,9 +82,7 @@ export const DeviceRetirementScreen = () => {
     if (!user) return;
     return subscribeToPairedDevices(user.userId, (devices) => {
       void getCurrentDeviceId().then((own) => {
-        setOtherDevices(
-          devices.filter((d) => d.deviceId !== own && d.pairingStatus === 'confirmed').length,
-        );
+        setOtherDevices(devices.filter((d) => d.deviceId !== own && d.pairingStatus === 'confirmed').length);
       });
     });
   }, [user]);
@@ -112,7 +106,7 @@ export const DeviceRetirementScreen = () => {
     if (!user) return;
     try {
       const passphrase = await getStoredPassphrase();
-      if (!passphrase) throw new Error('Set a backup passphrase first.');
+      if (!passphrase) throw new RetirementCheckError('Set a backup passphrase first.');
 
       setCheck({ kind: 'running', message: 'Backing up…' });
       await runBackupNow(user.userId, (p) => {
@@ -127,12 +121,12 @@ export const DeviceRetirementScreen = () => {
 
       setCheck({ kind: 'running', message: 'Reading it back from iCloud…' });
       const fresh = await readBackupManifest(passphrase);
-      if (!fresh) throw new Error('The backup could not be read back from iCloud.');
+      if (!fresh) throw new RetirementCheckError('The backup could not be read back from iCloud.');
       setManifest(fresh);
 
       const result = await verifyBackup(passphrase, fresh);
       if (!result.ok) {
-        throw new Error(
+        throw new RetirementCheckError(
           `${result.missing.length} part(s) of the backup could not be read. It is NOT safe to wipe this phone yet.`,
         );
       }
@@ -143,9 +137,15 @@ export const DeviceRetirementScreen = () => {
       setLastBackupAt(Date.now());
     } catch (error) {
       errorHaptic();
+      if (!(error instanceof RetirementCheckError)) {
+        console.warn('[DeviceRetirement] Backup verification failed:', error);
+      }
       setCheck({
         kind: 'failed',
-        message: error instanceof Error ? error.message : 'The check could not finish.',
+        message:
+          error instanceof RetirementCheckError
+            ? error.message
+            : 'The safety check could not finish. Check your iCloud connection and try again.',
       });
     }
   };
@@ -154,8 +154,9 @@ export const DeviceRetirementScreen = () => {
     try {
       await revokeDevice(await getCurrentDeviceId());
     } catch (error) {
+      console.warn('[DeviceRetirement] Sign out failed:', error);
       errorHaptic();
-      appAlert('Could not sign out', error instanceof Error ? error.message : 'Please try again.');
+      appAlert('Could not sign out', 'This device is still linked to your account. Check your connection and try again.');
     }
   };
 
@@ -171,12 +172,7 @@ export const DeviceRetirementScreen = () => {
 
   return (
     <LiquidBackground>
-      <ScrollView
-        contentContainerStyle={[
-          styles.container,
-          { paddingTop: headerHeight + 16, paddingBottom: insets.bottom + 32 },
-        ]}
-      >
+      <DetailScreenScaffold horizontalInset={SCREEN_GUTTER} contentContainerStyle={styles.container}>
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
           <Text variant="headlineSmall" style={{ color: theme.colors.onSurface }}>
             {safe ? 'Safe to wipe this phone' : 'Check before you wipe this phone'}
@@ -188,8 +184,8 @@ export const DeviceRetirementScreen = () => {
           </Text>
           <Divider />
           <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-            Your groups, expenses, balances and settlements are stored on our servers and are not
-            affected by wiping this phone — they come back the moment you sign in anywhere.
+            Your groups, expenses, balances and settlements are stored on our servers and are not affected by wiping this phone. They come
+            back the moment you sign in anywhere.
           </Text>
         </GlassCard>
 
@@ -200,14 +196,13 @@ export const DeviceRetirementScreen = () => {
             Moving to a new phone?
           </Text>
           <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-            You don&apos;t need this screen. Install ManaSplit on the new phone, sign in, and
-            choose &ldquo;This is my new phone&rdquo; — it restores from this backup and asks what
-            to do with this one.
+            You don&apos;t need this screen. Install ManaSplit on the new phone, sign in, and choose &ldquo;This is my new phone&rdquo;. It
+            restores from this backup and asks what to do with this one.
           </Text>
           {otherDevices > 0 ? (
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              You have {otherDevices} other device{otherDevices === 1 ? '' : 's'} signed in to this
-              account.
+              You have {otherDevices} other device
+              {otherDevices === 1 ? '' : 's'} signed in to this account.
             </Text>
           ) : null}
         </GlassCard>
@@ -219,14 +214,15 @@ export const DeviceRetirementScreen = () => {
 
           {!enrolled ? (
             <Text variant="bodyMedium" style={{ color: theme.colors.danger }}>
-              No backup passphrase is set, so nothing has ever been backed up. Set one in iCloud
-              backup first.
+              No backup passphrase is set, so nothing has ever been backed up. Set one in iCloud backup first.
             </Text>
           ) : (
             <>
               <Text
                 variant="bodyMedium"
-                style={{ color: stale ? theme.colors.danger : theme.colors.onSurface }}
+                style={{
+                  color: stale ? theme.colors.danger : theme.colors.onSurface,
+                }}
               >
                 {lastBackupAt
                   ? stale
@@ -236,19 +232,13 @@ export const DeviceRetirementScreen = () => {
               </Text>
               {!messagesIncluded ? (
                 <Text variant="bodyMedium" style={{ color: theme.colors.danger }}>
-                  Chat messages are switched OFF in your backup settings, so your conversations are
-                  not in the backup at all.
+                  Chat messages are switched OFF in your backup settings, so your conversations are not in the backup at all.
                 </Text>
               ) : null}
               {manifest ? (
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                  {manifest.totalMessages.toLocaleString()} messages across {manifest.chats.length}{' '}
-                  chats
-                  {manifest.sizes
-                    ? ` · ${formatBytes(
-                        Object.values(manifest.sizes).reduce((sum: number, n) => sum + (n ?? 0), 0),
-                      )}`
-                    : ''}
+                  {manifest.totalMessages.toLocaleString()} messages across {manifest.chats.length} chats
+                  {manifest.sizes ? ` · ${formatBytes(Object.values(manifest.sizes).reduce((sum: number, n) => sum + (n ?? 0), 0))}` : ''}
                 </Text>
               ) : null}
             </>
@@ -265,8 +255,8 @@ export const DeviceRetirementScreen = () => {
 
           {check.kind === 'verified' ? (
             <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
-              ✓ Read back and decrypted {check.batches} batch{check.batches === 1 ? '' : 'es'} from
-              iCloud.
+              ✓ Read back and decrypted {check.batches} batch
+              {check.batches === 1 ? '' : 'es'} from iCloud.
             </Text>
           ) : null}
 
@@ -276,16 +266,12 @@ export const DeviceRetirementScreen = () => {
             </Text>
           ) : null}
 
-          <Button
-            mode="contained"
-            disabled={!enrolled || check.kind === 'running'}
-            onPress={() => void runSafetyCheck()}
-          >
+          <Button mode="contained" disabled={!enrolled || check.kind === 'running'} onPress={() => void runSafetyCheck()}>
             {check.kind === 'verified' ? 'Check again' : 'Back up and verify now'}
           </Button>
           <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-            This backs up, then downloads every part again and decrypts it — proving the backup is
-            genuinely readable, not just that it exists.
+            This backs up, then downloads every part again and decrypts it. Proving the backup is genuinely readable, not just that it
+            exists.
           </Text>
         </GlassCard>
 
@@ -300,7 +286,11 @@ export const DeviceRetirementScreen = () => {
               'Your chat history stays in your verified iCloud backup. This phone will lose access to your account.',
               [
                 { text: 'Cancel', style: 'cancel' },
-                { text: 'Sign out', style: 'destructive', onPress: () => void signOutThisDevice() },
+                {
+                  text: 'Sign out',
+                  style: 'destructive',
+                  onPress: () => void signOutThisDevice(),
+                },
               ],
             )
           }
@@ -316,8 +306,7 @@ export const DeviceRetirementScreen = () => {
                   Sign out without a verified backup
                 </Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                  Your chat history on this phone will be permanently lost and cannot be recovered
-                  by anyone, including us. Type{' '}
+                  Your chat history on this phone will be permanently lost and cannot be recovered by anyone, including us. Type{' '}
                   <Text style={{ color: theme.colors.danger }}>{FORCE_PHRASE}</Text> to confirm.
                 </Text>
                 <TextInput
@@ -338,24 +327,20 @@ export const DeviceRetirementScreen = () => {
                 </Button>
               </>
             ) : (
-              <Button
-                mode="text"
-                textColor={theme.colors.danger}
-                onPress={() => setShowEscapeHatch(true)}
-              >
+              <Button mode="text" textColor={theme.colors.danger} onPress={() => setShowEscapeHatch(true)}>
                 Sign out anyway, without a backup
               </Button>
             )}
           </GlassCard>
         ) : null}
-      </ScrollView>
+      </DetailScreenScaffold>
     </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
   // Tightened 16 -> 8 (2026-08-07, compact density pass).
-  container: { padding: 16, gap: 8 },
+  container: { gap: 8 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   card: { borderRadius: 20 },
   cardContent: { padding: 20, gap: 12 },

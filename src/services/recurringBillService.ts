@@ -14,25 +14,15 @@ import {
     normalizeRecurrenceRule,
 } from '@/utils/recurrence';
 import {
-    addDoc,
-    arrayUnion,
     collection,
-    deleteDoc,
     doc,
-    getDoc,
     getDocs,
     query,
-    runTransaction,
-    updateDoc,
     where,
-    writeBatch,
 } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 const COLLECTION_NAME = 'recurringBills';
-const MAX_GENERATION_CATCH_UP = 48;
-/** Variable bills: due occurrences kept awaiting an amount. Oldest drop off. */
-const MAX_PENDING_OCCURRENCES = 6;
 const functions = getFunctions(app);
 
 type TriggerRecurringBillsResponse = {
@@ -43,6 +33,40 @@ const triggerRecurringBillsForGroupCallable = httpsCallable<{ groupId: string },
     functions,
     'triggerRecurringBillsForGroup',
 );
+
+const confirmRecurringBillOccurrenceCallable = httpsCallable<
+    { groupId: string; billId: string; occurrenceAt: number; amount: number; expectedCurrency: string },
+    { expense: Expense; duplicate: boolean }
+>(functions, 'confirmRecurringBillOccurrence');
+
+type RecurringBillMutationInput =
+    | {
+        action: 'create';
+        billId: string;
+        groupId: string;
+        expectedCurrency: string;
+        bill: RecurringBillUpsertInput;
+    }
+    | {
+        action: 'update';
+        billId: string;
+        groupId: string;
+        expectedCurrency: string;
+        updates: Partial<Omit<RecurringBill, 'billId' | 'createdAt'>>;
+    }
+    | {
+        action: 'skip';
+        billId: string;
+        groupId: string;
+        expectedCurrency: string;
+        occurrenceAt: number;
+    }
+    | { action: 'delete'; billId: string; groupId: string };
+
+const mutateRecurringBillCallable = httpsCallable<
+    RecurringBillMutationInput,
+    { success: true; duplicate: boolean; billId: string }
+>(functions, 'mutateRecurringBill');
 
 type RecurringBillUpsertInput = Partial<Omit<RecurringBill, 'billId' | 'createdAt' | 'updatedAt' | 'lastGeneratedAt'>> & {
     groupId: string;
@@ -215,7 +239,8 @@ const normalizeRecurringBill = (billId: string, rawData: Record<string, unknown>
  * Create a new recurring bill
  */
 export const createRecurringBill = async (
-    bill: Omit<RecurringBillUpsertInput, 'createdAt' | 'updatedAt' | 'lastGeneratedAt'>
+    bill: Omit<RecurringBillUpsertInput, 'createdAt' | 'updatedAt' | 'lastGeneratedAt'>,
+    expectedCurrency: string,
 ): Promise<string> => {
     const now = Date.now();
     const startAt = getValidTimestamp(bill.startAt) ?? now;
@@ -224,16 +249,22 @@ export const createRecurringBill = async (
         : toLegacyRule(bill, startAt);
     const nextDueAt = getValidTimestamp(bill.nextDueAt) ?? findNextOccurrenceAt(recurrenceRule, startAt, startAt - 1) ?? startAt;
 
-    const docRef = await addDoc(collection(db, COLLECTION_NAME), {
+    const billId = doc(collection(db, COLLECTION_NAME)).id;
+    const payload = {
         ...bill,
         recurrenceRule,
         startAt,
         nextDueAt,
         isActive: bill.isActive ?? true,
-        createdAt: now,
-        updatedAt: now,
+    };
+    const response = await mutateRecurringBillCallable({
+        action: 'create',
+        billId,
+        groupId: bill.groupId,
+        expectedCurrency: expectedCurrency.toUpperCase(),
+        bill: payload,
     });
-    return docRef.id;
+    return response.data.billId;
 };
 
 /**
@@ -252,54 +283,35 @@ export const getRecurringBillsForGroup = async (groupId: string): Promise<Recurr
  */
 export const updateRecurringBill = async (
     billId: string,
-    updates: Partial<Omit<RecurringBill, 'billId' | 'createdAt'>>
+    groupId: string,
+    updates: Partial<Omit<RecurringBill, 'billId' | 'createdAt'>>,
+    expectedCurrency: string,
 ): Promise<void> => {
-    const docRef = doc(db, COLLECTION_NAME, billId);
-    const payload: Record<string, unknown> = {
-        ...updates,
-        updatedAt: Date.now(),
-    };
-
-    const shouldNormalizeRule = Boolean(
-        updates.recurrenceRule ||
-        updates.frequency ||
-        typeof updates.dayOfWeek === 'number' ||
-        typeof updates.dayOfMonth === 'number' ||
-        typeof updates.startAt === 'number',
-    );
-
-    if (shouldNormalizeRule) {
-        const snapshot = await getDoc(docRef);
-        if (snapshot.exists()) {
-            const mergedRaw = {
-                ...snapshot.data(),
-                ...updates,
-            } as Record<string, unknown>;
-            const normalized = normalizeRecurringBill(billId, mergedRaw);
-            payload.recurrenceRule = normalized.recurrenceRule;
-            payload.startAt = normalized.startAt;
-            if (typeof updates.nextDueAt !== 'number') {
-                payload.nextDueAt = normalized.nextDueAt;
-            }
-        }
-    }
-
-    await updateDoc(docRef, payload);
+    await mutateRecurringBillCallable({
+        action: 'update',
+        billId,
+        groupId,
+        expectedCurrency: expectedCurrency.toUpperCase(),
+        updates,
+    });
 };
 
 /**
  * Delete a recurring bill
  */
-export const deleteRecurringBill = async (billId: string): Promise<void> => {
-    const docRef = doc(db, COLLECTION_NAME, billId);
-    await deleteDoc(docRef);
+export const deleteRecurringBill = async (billId: string, groupId: string): Promise<void> => {
+    await mutateRecurringBillCallable({ action: 'delete', billId, groupId });
 };
 
 /**
  * Toggle recurring bill active status
  */
-export const toggleRecurringBillStatus = async (billId: string, isActive: boolean): Promise<void> => {
-    await updateRecurringBill(billId, { isActive });
+export const toggleRecurringBillStatus = async (
+    bill: Pick<RecurringBill, 'billId' | 'groupId'>,
+    isActive: boolean,
+    expectedCurrency: string,
+): Promise<void> => {
+    await updateRecurringBill(bill.billId, bill.groupId, { isActive }, expectedCurrency);
 };
 
 /**
@@ -391,37 +403,20 @@ export const confirmVariableOccurrence = async (
     bill: RecurringBill,
     occurrenceAt: number,
     amount: number,
+    expectedCurrency: string,
 ): Promise<Expense> => {
     if (!Number.isFinite(amount) || amount <= 0) {
         throw new Error('A positive amount is required to confirm this bill.');
     }
 
-    const billRef = doc(db, COLLECTION_NAME, bill.billId);
-    let expense!: Expense;
-    await runTransaction(db, async (txn) => {
-        const freshSnap = await txn.get(billRef);
-        if (!freshSnap.exists()) throw new Error('Recurring bill not found.');
-        const freshBill = normalizeRecurringBill(bill.billId, freshSnap.data());
-
-        const paidBy = resolveRotationPayer(freshBill);
-        expense = generateExpenseFromBill(freshBill, occurrenceAt, { amount, paidBy });
-
-        const groupRef = doc(db, 'groups', freshBill.groupId);
-        txn.update(groupRef, {
-            expenses: arrayUnion(expense),
-            updatedAt: Date.now(),
-        });
-        txn.set(doc(db, 'expenses', expense.expenseId), expense, { merge: true });
-        txn.update(billRef, {
-            pendingOccurrences: (freshBill.pendingOccurrences ?? []).filter((ts) => ts !== occurrenceAt),
-            lastGeneratedAt: occurrenceAt,
-            ...(freshBill.rotation
-                ? { rotation: { order: freshBill.rotation.order, index: (freshBill.rotation.index + 1) % freshBill.rotation.order.length } }
-                : {}),
-            updatedAt: Date.now(),
-        });
+    const response = await confirmRecurringBillOccurrenceCallable({
+        groupId: bill.groupId,
+        billId: bill.billId,
+        occurrenceAt,
+        amount,
+        expectedCurrency: expectedCurrency.toUpperCase(),
     });
-    return expense;
+    return response.data.expense;
 };
 
 /**
@@ -433,24 +428,17 @@ export const confirmVariableOccurrence = async (
  * confirmVariableOccurrence above — skipping one occurrence while a chat card
  * confirms a different one on the same bill must not clobber either write.
  */
-export const skipOccurrence = async (bill: RecurringBill, occurrenceAt: number): Promise<void> => {
-    const billRef = doc(db, COLLECTION_NAME, bill.billId);
-    await runTransaction(db, async (txn) => {
-        const freshSnap = await txn.get(billRef);
-        if (!freshSnap.exists()) throw new Error('Recurring bill not found.');
-        const freshBill = normalizeRecurringBill(bill.billId, freshSnap.data());
-
-        const updates: Record<string, unknown> = {
-            skippedOccurrences: [...new Set([...(freshBill.skippedOccurrences ?? []), occurrenceAt])].sort((a, b) => a - b),
-            pendingOccurrences: (freshBill.pendingOccurrences ?? []).filter((ts) => ts !== occurrenceAt),
-            updatedAt: Date.now(),
-        };
-        if (occurrenceAt === freshBill.nextDueAt) {
-            const next = getNextDueAt(freshBill.recurrenceRule, freshBill.startAt, occurrenceAt);
-            if (next) updates.nextDueAt = next;
-            else updates.isActive = false;
-        }
-        txn.update(billRef, updates);
+export const skipOccurrence = async (
+    bill: RecurringBill,
+    occurrenceAt: number,
+    expectedCurrency: string,
+): Promise<void> => {
+    await mutateRecurringBillCallable({
+        action: 'skip',
+        billId: bill.billId,
+        groupId: bill.groupId,
+        expectedCurrency: expectedCurrency.toUpperCase(),
+        occurrenceAt,
     });
 };
 
@@ -469,14 +457,14 @@ export const syncRecurringBillsForGroup = async (groupId: string): Promise<numbe
 let callableFailed = false;
 
 /**
- * Sync recurring bills, falling back to client-side generation when Cloud Functions
- * is unavailable (e.g., local/dev without deployed callable).
+ * Sync recurring bills through the server. If the callable is unavailable,
+ * leave state untouched so a client cannot bypass the financial-write boundary.
  */
 export const syncRecurringBillsForGroupWithFallback = async (
     groupId: string,
 ): Promise<number> => {
     if (callableFailed) {
-        return processDueBills(groupId);
+        return 0;
     }
     try {
         return await syncRecurringBillsForGroup(groupId);
@@ -484,117 +472,12 @@ export const syncRecurringBillsForGroupWithFallback = async (
         const code = (error as { code?: string })?.code ?? '';
         if (code === 'not-found' || code === 'functions/not-found') {
             if (!callableFailed) {
-                console.warn('Recurring bill Cloud Function not deployed. Using local fallback for this session.');
+                console.warn('Recurring bill Cloud Function is not deployed. Sync is paused for this session.');
                 callableFailed = true;
             }
         } else {
-            console.warn('Recurring bill callable sync failed, using local fallback:', error);
+            console.warn('Recurring bill callable sync failed; leaving recurring state unchanged:', error);
         }
-        return processDueBills(groupId);
+        return 0;
     }
-};
-
-/**
- * Process all due recurring bills for a group.
- * Writes directly to Firestore in atomic batches — matching the Cloud Function
- * backend's write pattern so that both paths produce identical, idempotent results.
- */
-export const processDueBills = async (
-    groupId: string,
-): Promise<number> => {
-    const bills = await getRecurringBillsForGroup(groupId);
-    const now = Date.now();
-    let generatedCount = 0;
-
-    for (const bill of bills) {
-        if (!bill.isActive) continue;
-
-        // Variable AND accept-gated bills both park instead of generating —
-        // the amount (variable) or the consent (1:1 request) arrives later.
-        const parksOccurrences = bill.amountMode === 'variable' || bill.requiresAccept === true;
-        const skipped = new Set(bill.skippedOccurrences ?? []);
-        let currentDueAt = bill.nextDueAt;
-        let processedForBill = 0;
-        let shouldDeactivate = false;
-        let lastGeneratedAt = bill.lastGeneratedAt;
-        let rotationIndex = bill.rotation?.index ?? 0;
-        const pending = [...(bill.pendingOccurrences ?? [])];
-        const expensesToAdd: Expense[] = [];
-
-        while (
-            currentDueAt <= now &&
-            processedForBill < MAX_GENERATION_CATCH_UP &&
-            (!bill.endAt || currentDueAt <= bill.endAt)
-        ) {
-            if (skipped.has(currentDueAt)) {
-                // Explicitly skipped: no expense, no rotation turn consumed.
-            } else if (parksOccurrences) {
-                if (!pending.includes(currentDueAt)) pending.push(currentDueAt);
-            } else {
-                const paidBy = bill.rotation
-                    ? bill.rotation.order[rotationIndex % bill.rotation.order.length]
-                    : bill.paidBy;
-                expensesToAdd.push(generateExpenseFromBill(bill, currentDueAt, { paidBy }));
-                lastGeneratedAt = currentDueAt;
-                if (bill.rotation) rotationIndex = (rotationIndex + 1) % bill.rotation.order.length;
-            }
-            processedForBill++;
-
-            const nextDueAt = getNextDueAt(bill.recurrenceRule, bill.startAt, currentDueAt);
-            if (!nextDueAt || nextDueAt <= currentDueAt) {
-                shouldDeactivate = true;
-                break;
-            }
-            currentDueAt = nextDueAt;
-        }
-
-        if (processedForBill > 0) {
-            const batch = writeBatch(db);
-            const billRef = doc(db, COLLECTION_NAME, bill.billId);
-
-            if (expensesToAdd.length > 0) {
-                const groupRef = doc(db, 'groups', groupId);
-                batch.update(groupRef, {
-                    expenses: arrayUnion(...expensesToAdd),
-                    updatedAt: Date.now(),
-                });
-                for (const expense of expensesToAdd) {
-                    const topLevelRef = doc(db, 'expenses', expense.expenseId);
-                    batch.set(topLevelRef, expense, { merge: true });
-                }
-            }
-
-            // Cap pendingOccurrences at MAX_PENDING_OCCURRENCES (oldest first
-            // out), but the ones truncated off must land in skippedOccurrences
-            // — otherwise they vanish with no expense, no skip record, and (since
-            // nextDueAt has already moved past them) no way to ever confirm or
-            // regenerate them.
-            const sortedPending = pending.sort((a, b) => a - b);
-            const keptPending = sortedPending.slice(-MAX_PENDING_OCCURRENCES);
-            const droppedPending = sortedPending.slice(0, -MAX_PENDING_OCCURRENCES);
-
-            batch.update(billRef, {
-                recurrenceRule: bill.recurrenceRule,
-                startAt: bill.startAt,
-                nextDueAt: currentDueAt,
-                isActive: shouldDeactivate ? false : bill.isActive,
-                lastGeneratedAt: lastGeneratedAt ?? null,
-                pendingOccurrences: keptPending,
-                ...(droppedPending.length > 0
-                    ? {
-                        skippedOccurrences: [...new Set([...(bill.skippedOccurrences ?? []), ...droppedPending])].sort(
-                            (a, b) => a - b,
-                        ),
-                    }
-                    : {}),
-                ...(bill.rotation ? { rotation: { order: bill.rotation.order, index: rotationIndex } } : {}),
-                updatedAt: Date.now(),
-            });
-
-            await batch.commit();
-            generatedCount += expensesToAdd.length;
-        }
-    }
-
-    return generatedCount;
 };

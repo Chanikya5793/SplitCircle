@@ -1,9 +1,10 @@
+import { DetailScreenScaffold } from '@/components/ui/DetailScreenScaffold';
 // Main device side of pairing (doc 31 §3.4). Biometric-gated code generation
 // (requestPairingCode already does the Face ID/Touch ID prompt before
 // returning a code — see pairingService.ts), QR + manual-code display, and
 // the mandatory confirmation step once a companion redeems it.
 
-import { GlassCard } from '@/components/ui';
+import { GlassCard, SCREEN_GUTTER } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -20,10 +21,8 @@ import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, successHaptic } from '@/utils/haptics';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import { useNavigation } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
 import QRCode from 'react-native-qrcode-svg';
 
@@ -35,21 +34,22 @@ type ScreenState =
   | { kind: 'error'; message: string };
 
 const errorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message.trim()) return error.message;
-  return 'Something went wrong. Please try again.';
+  console.warn('[LinkDevice] Operation failed:', error);
+  return 'This device could not be linked. Check your connection and try again.';
 };
 
 export const LinkDeviceScreen = () => {
   const navigation = useNavigation();
   const { user } = useAuth();
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
-  const headerHeight = useHeaderHeight();
   const [state, setState] = useState<ScreenState>({ kind: 'requesting' });
   const [ownDeviceId, setOwnDeviceId] = useState<string | null>(null);
   const [pendingDevices, setPendingDevices] = useState<PairedDevice[]>([]);
   /** Which device AND which action is resolving — see handleConfirm. */
-  const [resolving, setResolving] = useState<{ deviceId: string; confirm: boolean } | null>(null);
+  const [resolving, setResolving] = useState<{
+    deviceId: string;
+    confirm: boolean;
+  } | null>(null);
   const [scanning, setScanning] = useState(false);
   const [linking, setLinking] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -164,7 +164,11 @@ export const LinkDeviceScreen = () => {
           setState({ kind: 'denied_biometric' });
           return;
         }
-        setState({ kind: 'ready', code: result.code, expiresAt: result.expiresAt });
+        setState({
+          kind: 'ready',
+          code: result.code,
+          expiresAt: result.expiresAt,
+        });
       } catch (error) {
         if (!cancelled) setState({ kind: 'error', message: errorMessage(error) });
       }
@@ -176,9 +180,12 @@ export const LinkDeviceScreen = () => {
 
   useEffect(() => {
     if (state.kind !== 'ready') return;
-    const timer = setTimeout(() => {
-      setState((current) => (current.kind === 'ready' ? { kind: 'expired' } : current));
-    }, Math.max(0, state.expiresAt - Date.now()));
+    const timer = setTimeout(
+      () => {
+        setState((current) => (current.kind === 'ready' ? { kind: 'expired' } : current));
+      },
+      Math.max(0, state.expiresAt - Date.now()),
+    );
     return () => clearTimeout(timer);
   }, [state]);
 
@@ -207,7 +214,7 @@ export const LinkDeviceScreen = () => {
 
   return (
     <LiquidBackground>
-      <ScrollView contentContainerStyle={[styles.container, { paddingTop: headerHeight + 16, paddingBottom: insets.bottom + 32 }]} showsVerticalScrollIndicator={false}>
+      <DetailScreenScaffold horizontalInset={SCREEN_GUTTER} contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
           <Text variant="headlineSmall" style={[styles.title, { color: theme.colors.onSurface }]}>
             Link a device
@@ -221,7 +228,13 @@ export const LinkDeviceScreen = () => {
 
           {state.kind === 'denied_biometric' ? (
             <>
-              <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>
+              <Text
+                variant="bodyMedium"
+                style={{
+                  color: theme.colors.onSurfaceVariant,
+                  textAlign: 'center',
+                }}
+              >
                 Face ID / Touch ID confirmation is required to link a new device.
               </Text>
               <Button mode="contained" onPress={() => navigation.goBack()}>
@@ -243,7 +256,13 @@ export const LinkDeviceScreen = () => {
 
           {state.kind === 'expired' ? (
             <>
-              <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>
+              <Text
+                variant="bodyMedium"
+                style={{
+                  color: theme.colors.onSurfaceVariant,
+                  textAlign: 'center',
+                }}
+              >
                 This code expired. Go back and try again.
               </Text>
               <Button mode="contained" onPress={() => navigation.goBack()}>
@@ -254,8 +273,14 @@ export const LinkDeviceScreen = () => {
 
           {state.kind === 'ready' ? (
             <>
-              <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>
-                On your other device, open ManaSplit and scan this code — or enter it manually.
+              <Text
+                variant="bodyMedium"
+                style={{
+                  color: theme.colors.onSurfaceVariant,
+                  textAlign: 'center',
+                }}
+              >
+                On your other device, open ManaSplit and scan this code. Or enter it manually.
               </Text>
               <View style={styles.qrWrap}>
                 <QRCode value={state.code} size={220} />
@@ -263,7 +288,13 @@ export const LinkDeviceScreen = () => {
               <Text variant="displaySmall" style={[styles.manualCode, { color: theme.colors.primary }]}>
                 {state.code}
               </Text>
-              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>
+              <Text
+                variant="bodySmall"
+                style={{
+                  color: theme.colors.onSurfaceVariant,
+                  textAlign: 'center',
+                }}
+              >
                 Expires in a few minutes.
               </Text>
             </>
@@ -281,9 +312,14 @@ export const LinkDeviceScreen = () => {
 
           {scanning ? (
             <>
-              <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>
-                On the new device, choose &quot;Show a code for my other device to scan&quot;, then
-                point this camera at it.
+              <Text
+                variant="bodyMedium"
+                style={{
+                  color: theme.colors.onSurfaceVariant,
+                  textAlign: 'center',
+                }}
+              >
+                On the new device, choose &quot;Show a code for my other device to scan&quot;, then point this camera at it.
               </Text>
               <View style={styles.qrWrap}>
                 {!permission?.granted ? (
@@ -305,7 +341,13 @@ export const LinkDeviceScreen = () => {
                 </Text>
               ) : null}
               {linking ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
-              <Button compact onPress={() => { setScanning(false); setLinkError(null); }}>
+              <Button
+                compact
+                onPress={() => {
+                  setScanning(false);
+                  setLinkError(null);
+                }}
+              >
                 Show my code instead
               </Button>
             </>
@@ -326,7 +368,13 @@ export const LinkDeviceScreen = () => {
                     {device.confirmationCode}
                   </Text>
                 ) : null}
-                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>
+                <Text
+                  variant="bodySmall"
+                  style={{
+                    color: theme.colors.onSurfaceVariant,
+                    textAlign: 'center',
+                  }}
+                >
                   Only confirm if this code matches what's shown on that device.
                 </Text>
                 <View style={styles.confirmActions}>
@@ -352,7 +400,7 @@ export const LinkDeviceScreen = () => {
               </View>
             ))}
         </GlassCard>
-      </ScrollView>
+      </DetailScreenScaffold>
     </LiquidBackground>
   );
 };
@@ -361,7 +409,6 @@ const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 24,
   },
   card: {
     borderRadius: 20,

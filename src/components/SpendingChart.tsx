@@ -134,7 +134,7 @@ export const SpendingChart = ({ expenses, currency, rate = 1, showPieChart = tru
         <View style={styles.wrapper}>
             <GlassView style={styles.container}>
                 <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
-                    Spending Trend
+                    Spending trend
                 </Text>
                 <LineChart
                     data={{
@@ -154,7 +154,7 @@ export const SpendingChart = ({ expenses, currency, rate = 1, showPieChart = tru
             {showPieChart && pieData.length > 0 && (
                 <GlassView style={styles.container}>
                     <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
-                        By Category
+                        By category
                     </Text>
                     <PieChart
                         data={pieData}

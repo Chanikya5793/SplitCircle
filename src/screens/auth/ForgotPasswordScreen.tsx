@@ -1,6 +1,8 @@
 import { GlassCard } from '@/components/ui';
+import { AuthEntrance } from '@/components/brand';
 import { AppTextInput } from '@/components/ui/AppTextInput';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { PrimaryButton } from '@/components/PrimaryButton';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
@@ -46,6 +48,7 @@ export const ForgotPasswordScreen = ({ onBack }: ForgotPasswordScreenProps) => {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          <AuthEntrance>
           <GlassCard style={styles.card} contentStyle={styles.cardContent}>
             <Text variant="headlineMedium" style={styles.title}>
               Reset password
@@ -72,17 +75,17 @@ export const ForgotPasswordScreen = ({ onBack }: ForgotPasswordScreenProps) => {
             ) : null}
             {!isOnline ? (
               <Text style={{ color: theme.colors.muted, textAlign: 'center' }}>
-                You're offline — sending a reset link needs an internet connection.
+                You're offline. Sending a reset link needs an internet connection.
               </Text>
             ) : null}
-            <Button
+            <PrimaryButton
               mode="contained"
               onPress={handleSend}
               loading={loading}
               disabled={!email || loading || !isOnline}
             >
               Send reset link
-            </Button>
+            </PrimaryButton>
             {sent ? (
               <Text style={[styles.success, { color: theme.colors.success }]}>
                 Check {email.trim()} for instructions.
@@ -92,6 +95,7 @@ export const ForgotPasswordScreen = ({ onBack }: ForgotPasswordScreenProps) => {
               Back to sign in
             </Button>
           </GlassCard>
+          </AuthEntrance>
         </ScrollView>
       </KeyboardAvoidingView>
     </LiquidBackground>

@@ -1,9 +1,12 @@
+export { DetailScreenScaffold, type DetailScreenScaffoldProps } from './DetailScreenScaffold';
 export { AppButton, type AppButtonProps, type AppButtonVariant } from './AppButton';
 export { AppTextInput, type AppTextInputProps } from './AppTextInput';
 export { EmptyState, OfflineState, type EmptyStateProps, type OfflineStateProps } from './EmptyState';
 export { GlassCard, type GlassCardProps } from './GlassCard';
+export { ScrimBackdrop, type ScrimBackdropProps } from './ScrimBackdrop';
+export { SelectableChip, type SelectableChipProps } from './SelectableChip';
 export { Divider, type DividerProps } from './Divider';
-export { fullBleed, SCREEN_GUTTER, TRANSPARENT_HEADER_CLEARANCE } from './layout';
+export { fullBleed, readableHorizontalInsets, SCREEN_GUTTER, TRANSPARENT_HEADER_CLEARANCE } from './layout';
 export { ListSeparator, type ListSeparatorProps } from './ListSeparator';
 export { SegmentedControl, type SegmentedControlOption, type SegmentedControlProps } from './SegmentedControl';
 export type { SurfaceRole } from './surfaceRole';
@@ -25,6 +28,11 @@ export { GroupPhotoUploader } from './GroupPhotoUploader';
 export { StickyHeaderPill, type StickyHeaderPillProps } from './StickyHeaderPill';
 export { WallpaperPickerSheet, type WallpaperPickerSheetProps } from './WallpaperPickerSheet';
 export { GlassBackButton, type GlassBackButtonProps } from './GlassBackButton';
+export {
+  FloatingDetailHeader,
+  floatingDetailHeaderHeight,
+  type FloatingDetailHeaderProps,
+} from './FloatingDetailHeader';
 export { CurrencyConvertSheet } from './CurrencyConvertSheet';
 export { DisplayCurrencySheet, type DisplayCurrencySheetProps } from './DisplayCurrencySheet';
 export { MoneyInChatSheet, type MoneyInChatSheetProps } from './MoneyInChatSheet';

@@ -33,28 +33,20 @@ import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { usePressFeedback } from '@/hooks/usePressFeedback';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import { IconButton, List, Text } from 'react-native-paper';
+import { Icon, List, Text } from 'react-native-paper';
 
 export type ChatRowVariant = 'active' | 'archived' | 'locked';
 
-// iOS-standard swipe-action colors — these are affordance colors (like the
-// system Mail/Messages actions), intentionally consistent across light/dark.
-const ACTION_COLOR = {
-  archive: '#FF9500',
-  restore: '#34C759',
-  pin: '#0A84FF',
-  lock: '#5E5CE6',
-  unlock: '#34C759',
-} as const;
-
 const SwipeActionButton = ({
   color,
+  foreground,
   icon,
   label,
   grouped,
   onPress,
 }: {
   color: string;
+  foreground: string;
   icon: string;
   label: string;
   grouped?: boolean;
@@ -63,9 +55,11 @@ const SwipeActionButton = ({
   <RectButton
     style={[grouped ? styles.rowActionButtonGrouped : styles.rowActionButton, { backgroundColor: color }]}
     onPress={onPress}
+    accessibilityRole="button"
+    accessibilityLabel={label}
   >
-    <IconButton icon={icon} iconColor="#fff" size={22} style={{ margin: 0 }} />
-    <Text style={styles.rowActionText}>{label}</Text>
+    <Icon source={icon} color={foreground} size={22} />
+    <Text style={[styles.rowActionText, { color: foreground }]}>{label}</Text>
   </RectButton>
 );
 
@@ -97,6 +91,7 @@ const SwipeableChatRow = ({
   containerStyle?: StyleProp<ViewStyle>;
   children: ReactNode;
 }) => {
+  const { theme } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
 
   const runAction = (fn?: () => void) => {
@@ -110,7 +105,8 @@ const SwipeableChatRow = ({
       ? () => (
           <View style={styles.rowActionLeft}>
             <SwipeActionButton
-              color={ACTION_COLOR.pin}
+              color={theme.colors.primary}
+              foreground={theme.colors.onPrimary}
               icon={pinned ? 'pin-off' : 'pin'}
               label={pinned ? 'Unpin' : 'Pin'}
               onPress={() => runAction(onPin)}
@@ -123,21 +119,21 @@ const SwipeableChatRow = ({
     if (variant === 'locked') {
       return (
         <View style={styles.rowAction}>
-          <SwipeActionButton color={ACTION_COLOR.unlock} icon="lock-open-variant" label="Unlock" onPress={() => runAction(onUnlock)} />
+          <SwipeActionButton color={theme.colors.success} foreground={theme.colors.onSuccess} icon="lock-open-variant" label="Unlock" onPress={() => runAction(onUnlock)} />
         </View>
       );
     }
     if (variant === 'archived') {
       return (
         <View style={styles.rowAction}>
-          <SwipeActionButton color={ACTION_COLOR.restore} icon="archive-arrow-up" label="Restore" onPress={() => runAction(onArchiveToggle)} />
+          <SwipeActionButton color={theme.colors.success} foreground={theme.colors.onSuccess} icon="archive-arrow-up" label="Restore" onPress={() => runAction(onArchiveToggle)} />
         </View>
       );
     }
     return (
       <View style={styles.rowActionRow}>
-        <SwipeActionButton grouped color={ACTION_COLOR.lock} icon="lock" label="Lock" onPress={() => runAction(onLock)} />
-        <SwipeActionButton grouped color={ACTION_COLOR.archive} icon="archive" label="Archive" onPress={() => runAction(onArchiveToggle)} />
+        <SwipeActionButton grouped color={theme.colors.secondary} foreground={theme.colors.onSecondary} icon="lock" label="Lock" onPress={() => runAction(onLock)} />
+        <SwipeActionButton grouped color={theme.colors.tertiary} foreground={theme.colors.onTertiary} icon="archive" label="Archive" onPress={() => runAction(onArchiveToggle)} />
       </View>
     );
   };
@@ -286,7 +282,10 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
       successHaptic();
     } catch (error) {
       console.error('Failed to toggle chat archive', error);
-      appAlert('Error', `Failed to ${archived ? 'restore' : 'archive'} chat. Please try again.`);
+      appAlert(
+        archived ? 'Could not restore chat' : 'Could not archive chat',
+        archived ? 'The chat is still archived. Try again.' : 'The chat is still in your active list. Try again.',
+      );
     }
   };
 
@@ -302,7 +301,10 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
       successHaptic();
     } catch (error) {
       console.error('Failed to toggle chat pin', error);
-      appAlert('Error', `Failed to ${pinned ? 'unpin' : 'pin'} chat. Please try again.`);
+      appAlert(
+        pinned ? 'Could not unpin chat' : 'Could not pin chat',
+        'The chat order was not changed. Try again.',
+      );
     }
   };
 
@@ -313,7 +315,7 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
       successHaptic();
     } catch (error) {
       console.error('Failed to lock chat', error);
-      appAlert('Error', 'Failed to lock chat. Please try again.');
+      appAlert('Could not lock chat', 'The chat is still visible in your main list. Try again.');
     }
   };
 
@@ -324,7 +326,7 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
       successHaptic();
     } catch (error) {
       console.error('Failed to unlock chat', error);
-      appAlert('Error', 'Failed to unlock chat. Please try again.');
+      appAlert('Could not unlock chat', 'The chat remains protected. Try again.');
     }
   };
 
@@ -449,8 +451,8 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
           )}
           right={showRight ? () => (
             <View style={styles.rightAccessory}>
-              {muted && <IconButton icon="bell-off-outline" size={16} iconColor={theme.colors.onSurfaceVariant} style={styles.accessoryIcon} />}
-              {pinned && !locked && <IconButton icon="pin" size={16} iconColor={theme.colors.onSurfaceVariant} style={styles.accessoryIcon} />}
+              {muted && <Icon source="bell-off-outline" size={16} color={theme.colors.onSurfaceVariant} />}
+              {pinned && !locked && <Icon source="pin" size={16} color={theme.colors.onSurfaceVariant} />}
             </View>
           ) : undefined}
           onPress={handleOpen}
@@ -487,9 +489,10 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
           }}
           {...touchableProps}
           style={[styles.chatItemRow, theme?.surfaceStyle === 'flat' && styles.chatItemRowFlat]}
-          titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
+          titleStyle={{ ...theme.typography.subtitle, color: theme.colors.onSurface }}
+          titleNumberOfLines={theme.fontScale >= 1.5 ? 0 : 1}
           descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
-          descriptionNumberOfLines={1}
+          descriptionNumberOfLines={theme.fontScale >= 1.5 ? 2 : 1}
         />
         </Animated.View>
       </GlassView>
@@ -584,7 +587,6 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
   rowActionText: {
-    color: '#fff',
     fontSize: 12,
     fontWeight: '600',
     marginTop: -4,
@@ -598,9 +600,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'center',
-  },
-  accessoryIcon: {
-    margin: 0,
   },
 });
 

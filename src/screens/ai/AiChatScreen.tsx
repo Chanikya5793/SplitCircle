@@ -265,7 +265,8 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
         // Doc 25: register the turn snapshot so a later 👎 can capture it.
         noteTurn(replyId, turn.trace);
       } catch (err) {
-        append({ id: uid(), role: 'assistant', text: err instanceof Error ? err.message : 'Something went wrong. Try again.' });
+        console.warn('[AiChat] Reply failed:', err);
+        append({ id: uid(), role: 'assistant', text: 'I couldn’t answer that right now. Try again.' });
       } finally {
         setBusy(false);
         setPending(null);
@@ -436,7 +437,8 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
       setActionState(msg.id, 'done');
       append({ id: uid(), role: 'assistant', text: ok });
     } catch (err) {
-      append({ id: uid(), role: 'assistant', text: `Couldn't complete that: ${err instanceof Error ? err.message : 'unknown error'}.` });
+      console.warn('[AiChat] Action failed:', err);
+      append({ id: uid(), role: 'assistant', text: 'I couldn’t complete that action. Nothing was changed. Try again.' });
     } finally {
       setBusy(false);
     }
@@ -498,8 +500,11 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                   style={styles.sourceRow}
                   onPress={() => openSource(s)}
                   disabled={!s.expenseId}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Open ${s.title ?? 'expense'}`}
+                  accessibilityRole={s.expenseId ? 'button' : 'text'}
+                  accessibilityLabel={s.expenseId
+                    ? `Open ${s.title ?? 'expense'}`
+                    : `${s.title ?? 'Expense'} source details`}
+                  accessibilityState={{ disabled: !s.expenseId }}
                 >
                   <Text variant="bodySmall" style={{ color: theme.colors.primary, fontWeight: '700' }}>[{i + 1}]</Text>
                   <Text variant="bodySmall" style={{ flex: 1, color: theme.colors.onSurface }}>
@@ -536,6 +541,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                   style={[styles.choiceChip, { borderColor: theme.colors.primary }]}
                   accessibilityRole="button"
                   accessibilityLabel={c}
+                  accessibilityState={{ disabled: busy }}
                 >
                   <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>{c}</Text>
                 </TouchableOpacity>
@@ -563,18 +569,18 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
               </View>
             ) : feedback[item.id] === 'down' ? (
               <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, fontSize: 10, marginTop: 4 }}>
-                Noted — added to AI evals
+                Feedback noted on this device.
               </Text>
             ) : (
               <View style={styles.thumbRow}>
-                <TouchableOpacity onPress={() => onThumb(item, true)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Good answer">
+                <TouchableOpacity onPress={() => onThumb(item, true)} style={styles.thumbButton} accessibilityRole="button" accessibilityLabel="Good answer">
                   <Icon
                     source={feedback[item.id] === 'up' ? 'thumb-up' : 'thumb-up-outline'}
                     size={13}
                     color={feedback[item.id] === 'up' ? theme.colors.primary : theme.colors.onSurfaceVariant}
                   />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => onThumb(item, false)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Bad answer">
+                <TouchableOpacity onPress={() => onThumb(item, false)} style={styles.thumbButton} accessibilityRole="button" accessibilityLabel="Bad answer">
                   <Icon source="thumb-down-outline" size={13} color={theme.colors.onSurfaceVariant} />
                 </TouchableOpacity>
               </View>
@@ -585,10 +591,10 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
             item.action.type === 'navigate' ? (
               <View style={[styles.actionCard, { borderColor: theme.colors.outline }]}>
                 <View style={styles.actionButtons}>
-                  <TouchableOpacity onPress={() => setActionState(item.id, 'cancelled')} style={[styles.actionBtn, { borderColor: theme.colors.outline }]}>
+                  <TouchableOpacity onPress={() => setActionState(item.id, 'cancelled')} style={[styles.actionBtn, { borderColor: theme.colors.outline }]} accessibilityRole="button" accessibilityLabel="Not now">
                     <Text style={{ color: theme.colors.onSurfaceVariant, fontWeight: '700' }}>Not now</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => openTarget(item, (item.action as { target: NavTarget }).target)} style={[styles.actionBtn, { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }]}>
+                  <TouchableOpacity onPress={() => openTarget(item, (item.action as { target: NavTarget }).target)} style={[styles.actionBtn, { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }]} accessibilityRole="button" accessibilityLabel={`Open ${item.action.summary}`}>
                     <Text style={{ color: theme.colors.onPrimary, fontWeight: '700' }}>Open {item.action.summary}</Text>
                   </TouchableOpacity>
                 </View>
@@ -599,13 +605,16 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                   {item.action.summary}
                 </Text>
                 <View style={styles.actionButtons}>
-                  <TouchableOpacity onPress={() => setActionState(item.id, 'cancelled')} style={[styles.actionBtn, { borderColor: theme.colors.outline }]} disabled={busy}>
+                  <TouchableOpacity onPress={() => setActionState(item.id, 'cancelled')} style={[styles.actionBtn, { borderColor: theme.colors.outline }]} disabled={busy} accessibilityRole="button" accessibilityLabel="Cancel" accessibilityState={{ disabled: busy }}>
                     <Text style={{ color: theme.colors.onSurfaceVariant, fontWeight: '700' }}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => confirmAction(item)}
                     style={[styles.actionBtn, { backgroundColor: 'destructive' in item.action && item.action.destructive ? theme.colors.error : theme.colors.primary, borderColor: 'transparent' }]}
                     disabled={busy}
+                    accessibilityRole="button"
+                    accessibilityLabel={'destructive' in item.action && item.action.destructive ? 'Delete' : 'Confirm'}
+                    accessibilityState={{ disabled: busy }}
                   >
                     <Text style={{ color: 'destructive' in item.action && item.action.destructive ? theme.colors.onError : theme.colors.onPrimary, fontWeight: '700' }}>{'destructive' in item.action && item.action.destructive ? 'Delete' : 'Confirm'}</Text>
                   </TouchableOpacity>
@@ -717,7 +726,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
         {messages.length <= 1 ? (
           <View style={styles.quickRow}>
             {QUICK_PROMPTS.map((p) => (
-              <TouchableOpacity key={p} onPress={() => send(p)} style={[styles.quickChip, { backgroundColor: theme.colors.secondaryContainer }]}>
+              <TouchableOpacity key={p} onPress={() => send(p)} style={[styles.quickChip, { backgroundColor: theme.colors.secondaryContainer }]} accessibilityRole="button" accessibilityLabel={p}>
                 <Text variant="labelSmall" style={{ color: theme.colors.onSecondaryContainer }}>{p}</Text>
               </TouchableOpacity>
             ))}
@@ -745,7 +754,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
             onSubmitEditing={() => send()}
             blurOnSubmit
           />
-          <TouchableOpacity onPress={() => send()} disabled={busy || !input.trim()} style={styles.sendBtn} accessibilityLabel="Send">
+          <TouchableOpacity onPress={() => send()} disabled={busy || !input.trim()} style={styles.sendBtn} accessibilityRole="button" accessibilityLabel="Send" accessibilityState={{ disabled: busy || !input.trim() }}>
             <Icon source="arrow-up-circle" size={34} color={input.trim() && !busy ? theme.colors.primary : theme.colors.onSurfaceVariant} />
           </TouchableOpacity>
         </GlassView>
@@ -758,7 +767,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   headerRight: { flexDirection: 'row' },
-  headerIcon: { padding: 6 },
+  headerIcon: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   historyPanel: {
     position: 'absolute',
     left: 12,
@@ -778,22 +787,23 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', width: '100%' },
   bubble: { maxWidth: '88%', borderRadius: 18, paddingVertical: 10, paddingHorizontal: 14 },
   sources: { marginTop: 10, gap: 4 },
-  sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sourceRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   pendingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  thumbRow: { flexDirection: 'row', gap: 14, marginTop: 6 },
-  choiceChip: { borderRadius: 16, borderWidth: 1.5, paddingVertical: 6, paddingHorizontal: 14 },
+  thumbRow: { flexDirection: 'row', gap: 6, marginTop: 6 },
+  thumbButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  choiceChip: { minHeight: 44, justifyContent: 'center', borderRadius: 22, borderWidth: 1.5, paddingVertical: 6, paddingHorizontal: 14 },
   actionCard: { marginTop: 10, borderWidth: 1, borderRadius: 12, padding: 10 },
   actionButtons: { flexDirection: 'row', gap: 8, justifyContent: 'flex-end' },
-  actionBtn: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1 },
+  actionBtn: { minHeight: 44, justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1 },
   // SCREEN_GUTTER so the suggestion chips line up with the composer beneath
   // them — at 12 they sat 4pt further out than everything else on the screen.
   quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: SCREEN_GUTTER, paddingBottom: 8 },
-  quickChip: { borderRadius: 16, paddingVertical: 6, paddingHorizontal: 12 },
+  quickChip: { minHeight: 44, justifyContent: 'center', borderRadius: 22, paddingVertical: 6, paddingHorizontal: 12 },
   inputBarShell: { marginHorizontal: SCREEN_GUTTER, marginTop: 4, borderRadius: 24 },
   inputBarRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingLeft: 16, paddingRight: 6, paddingVertical: 4 },
   textInput: { flex: 1, backgroundColor: 'transparent', maxHeight: 120, fontSize: 15 },
-  sendBtn: { paddingBottom: 6 },
+  sendBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 });
 
 export default AiChatScreen;

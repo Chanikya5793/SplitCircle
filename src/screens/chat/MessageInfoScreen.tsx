@@ -8,6 +8,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatParticipant, ChatThread, MessageType } from '@/models';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
 import { resolveDisplayName, resolveInitials } from '@/utils/identity';
+import { avatarColorsForKey } from '@/utils/avatarColors';
 import {
     listenForMessageReceipts,
     registerReceiptParticipant,
@@ -35,20 +36,6 @@ interface ReceiptRow {
   deliveredAt?: number;
   readAt?: number;
 }
-
-const AVATAR_COLORS = [
-  '#E57373', '#F06292', '#BA68C8', '#9575CD', '#7986CB',
-  '#64B5F6', '#4FC3F7', '#4DD0E1', '#4DB6AC', '#81C784',
-  '#AED581', '#FF8A65', '#D4E157', '#FFD54F', '#FFB74D',
-];
-
-const getAvatarColor = (id: string): string => {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = id.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-};
 
 const formatReceiptTime = (epochMs: number): string => {
   const date = new Date(epochMs);
@@ -209,12 +196,14 @@ export const MessageInfoScreen = () => {
       return <Avatar.Image size={42} source={{ uri: participant.photoURL }} />;
     }
 
+    const avatar = avatarColorsForKey(participant.userId, isDark);
+
     return (
       <Avatar.Text
         size={42}
         label={resolveInitials(participant.displayName)}
-        style={{ backgroundColor: getAvatarColor(participant.userId) }}
-        color="#FFF"
+        style={{ backgroundColor: avatar.background }}
+        color={avatar.foreground}
         maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
       />
     );
@@ -325,7 +314,7 @@ export const MessageInfoScreen = () => {
                 variant="bodySmall"
                 style={[styles.emptyText, { color: theme.colors.onSurfaceVariant }]}
               >
-                You're offline — receipt status will update when you reconnect.
+                You're offline. Receipt status will update when you reconnect.
               </Text>
             </GlassView>
           ) : null}

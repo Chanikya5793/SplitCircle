@@ -1,7 +1,7 @@
 import React from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { IconButton, Text } from 'react-native-paper';
-import { GlassCard } from '@/components/ui';
+import { GlassCard, ScrimBackdrop, SelectableChip } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import Animated, {
     SlideInDown,
@@ -71,58 +71,19 @@ export const ChatFilterSortSheet: React.FC<ChatFilterSortSheetProps> = ({
         }
     }, [visible]);
 
-    const Chip = ({
-        label,
-        selected,
-        onPress,
-        icon,
-        disabled = false
-    }: {
-        label: string;
-        selected: boolean;
-        onPress: () => void;
-        icon?: string;
-        disabled?: boolean;
-    }) => (
-        <Pressable
-            onPress={disabled ? undefined : onPress}
-            style={[
-                styles.chip,
-                {
-                    backgroundColor: selected
-                        ? theme.colors.primary
-                        : isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
-                    borderColor: selected ? theme.colors.primary : 'transparent',
-                    opacity: disabled ? 0.4 : 1,
-                },
-            ]}
-        >
-            {icon && (
-                <IconButton
-                    icon={icon}
-                    size={16}
-                    iconColor={selected ? '#fff' : theme.colors.onSurface}
-                    style={{ margin: 0, marginRight: -4 }}
-                />
-            )}
-            <Text
-                variant="labelMedium"
-                style={{
-                    color: selected ? '#fff' : theme.colors.onSurface,
-                    fontWeight: selected ? '600' : '500',
-                }}
-            >
-                {label}
-            </Text>
-        </Pressable>
-    );
-
     if (!visible) return null;
 
     return (
-        <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+        <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose} statusBarTranslucent>
             <View style={styles.overlay}>
-                <Pressable style={styles.backdrop} onPress={onClose} />
+                <Pressable
+                    style={styles.backdrop}
+                    onPress={onClose}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close chat filters"
+                >
+                    <ScrimBackdrop pointerEvents="none" />
+                </Pressable>
 
                 <GestureDetector gesture={gesture}>
                     <Animated.View
@@ -145,6 +106,7 @@ export const ChatFilterSortSheet: React.FC<ChatFilterSortSheetProps> = ({
                                     size={22}
                                     onPress={onClose}
                                     iconColor={theme.colors.onSurfaceVariant}
+                                    accessibilityLabel="Close chat filters"
                                 />
                             </View>
 
@@ -155,9 +117,9 @@ export const ChatFilterSortSheet: React.FC<ChatFilterSortSheetProps> = ({
                                         Sort by
                                     </Text>
                                     <View style={styles.chipWrap}>
-                                        <Chip label="Activity" selected={sortField === 'updatedAt'} onPress={() => onSortFieldChange('updatedAt')} icon="clock-outline" />
-                                        <Chip label="Unread" selected={sortField === 'unread'} onPress={() => onSortFieldChange('unread')} icon="email-outline" />
-                                        <Chip label="Name" selected={sortField === 'name'} onPress={() => onSortFieldChange('name')} icon="alphabetical" />
+                                        <SelectableChip label="Activity" selected={sortField === 'updatedAt'} onPress={() => onSortFieldChange('updatedAt')} icon="clock-outline" />
+                                        <SelectableChip label="Unread" selected={sortField === 'unread'} onPress={() => onSortFieldChange('unread')} icon="email-outline" />
+                                        <SelectableChip label="Name" selected={sortField === 'name'} onPress={() => onSortFieldChange('name')} icon="alphabetical" />
                                     </View>
                                 </View>
 
@@ -167,7 +129,7 @@ export const ChatFilterSortSheet: React.FC<ChatFilterSortSheetProps> = ({
                                         Order
                                     </Text>
                                     <View style={styles.chipWrap}>
-                                        <Chip
+                                        <SelectableChip
                                             label={
                                                 sortField === 'updatedAt' ? 'Newest first' :
                                                     sortField === 'unread' ? 'Most unread' :
@@ -177,7 +139,7 @@ export const ChatFilterSortSheet: React.FC<ChatFilterSortSheetProps> = ({
                                             onPress={() => onSortOrderChange('desc')}
                                             icon="arrow-down"
                                         />
-                                        <Chip
+                                        <SelectableChip
                                             label={
                                                 sortField === 'updatedAt' ? 'Oldest first' :
                                                     sortField === 'unread' ? 'Least unread' :
@@ -197,9 +159,9 @@ export const ChatFilterSortSheet: React.FC<ChatFilterSortSheetProps> = ({
                                             Type
                                         </Text>
                                         <View style={styles.chipWrap}>
-                                            <Chip label="All" selected={filterType === 'all'} onPress={() => onFilterTypeChange('all')} />
-                                            <Chip label="Direct" selected={filterType === 'direct'} onPress={() => onFilterTypeChange('direct')} icon="account" />
-                                            <Chip label="Groups" selected={filterType === 'group'} onPress={() => onFilterTypeChange('group')} icon="account-group" />
+                                            <SelectableChip label="All" selected={filterType === 'all'} onPress={() => onFilterTypeChange('all')} />
+                                            <SelectableChip label="Direct" selected={filterType === 'direct'} onPress={() => onFilterTypeChange('direct')} icon="account" />
+                                            <SelectableChip label="Groups" selected={filterType === 'group'} onPress={() => onFilterTypeChange('group')} icon="account-group" />
                                         </View>
                                     </View>
                                 )}
@@ -219,7 +181,6 @@ const styles = StyleSheet.create({
     },
     backdrop: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.4)',
     },
     sheetContainer: {
         maxHeight: '70%',
@@ -265,13 +226,5 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: 10,
-    },
-    chip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 8,
-        paddingHorizontal: 14,
-        borderRadius: 50,
-        borderWidth: 1,
     },
 });

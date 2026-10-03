@@ -5,19 +5,18 @@
 
 import { useGroups } from '@/context/GroupContext';
 import { GlassCard } from './GlassCard';
+import { ScrimBackdrop } from './ScrimBackdrop';
 import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
 import type { Group } from '@/models';
-import {
-  COMMON_CURRENCIES,
-  getExchangeRate,
-} from '@/services/currencyRatesService';
+import { COMMON_CURRENCIES, getExchangeRate } from '@/services/currencyRatesService';
 import { formatRelativeTime } from '@/utils/format';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import React, { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ActivityIndicator, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { SlideInDown } from 'react-native-reanimated';
 
 interface CurrencyConvertSheetProps {
   visible: boolean;
@@ -40,9 +39,7 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
       const { rate, fetchedAt, stale } = await getExchangeRate(group.currency, target);
       const expenseCount = group.expenses?.length ?? 0;
       const rateLine = `1 ${group.currency} = ${rate.toFixed(4)} ${target}`;
-      const ageLine = stale
-        ? `Offline — using rates cached ${formatRelativeTime(fetchedAt)}.`
-        : 'European Central Bank reference rate.';
+      const ageLine = stale ? `Offline. Using rates cached ${formatRelativeTime(fetchedAt)}.` : 'European Central Bank reference rate.';
       appAlert(
         `Convert to ${target}?`,
         `${rateLine}\n${ageLine}\n\nEvery amount in this group (${expenseCount} ${expenseCount === 1 ? 'expense' : 'expenses'}, settlements, and balances) will be converted. This can't be undone automatically.`,
@@ -58,10 +55,8 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
                   successHaptic();
                   onClose();
                 } catch (error) {
-                  appAlert(
-                    'Conversion failed',
-                    error instanceof Error ? error.message : 'Please try again.',
-                  );
+                  console.warn('[CurrencyConvert] Conversion failed:', error);
+                  appAlert('Conversion failed', 'No group amounts were changed. Try again.');
                 }
               })();
             },
@@ -69,47 +64,61 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
         ],
       );
     } catch (error) {
-      appAlert('Exchange rate', error instanceof Error ? error.message : 'Could not fetch rates.');
+      console.warn('[CurrencyConvert] Rate lookup failed:', error);
+      appAlert('Could not get exchange rate', 'Check your connection and try again.');
     } finally {
       setBusyCurrency(null);
     }
   };
 
   return (
-    <Modal visible={visible} transparent statusBarTranslucent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close currency picker" />
-      <GlassCard role="floating" style={styles.sheetGlass} contentStyle={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
-        <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }]} />
-        <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
-          Convert currency
-        </Text>
-        <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
-          Currently {group.currency} · pick the new group currency
-        </Text>
-        <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 8 }}>
-          {options.map((code) => (
-            <TouchableOpacity
-              key={code}
-              onPress={() => void handlePick(code)}
-              disabled={busyCurrency !== null}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel={`Convert to ${code}`}
+    <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close currency picker">
+        <ScrimBackdrop pointerEvents="none" />
+      </Pressable>
+      {visible ? (
+        <Animated.View entering={SlideInDown.springify().damping(30).stiffness(350)} accessibilityViewIsModal>
+          <GlassCard role="floating" style={styles.sheetGlass} contentStyle={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
+            <View
               style={[
-                styles.row,
-                { borderBottomColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)' },
+                styles.grabber,
+                {
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)',
+                },
               ]}
-            >
-              <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                {code}
-              </Text>
-              {busyCurrency === code ? (
-                <ActivityIndicator size="small" color={theme.colors.primary} />
-              ) : null}
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </GlassCard>
+            />
+            <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
+              Convert currency
+            </Text>
+            <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
+              Currently {group.currency} · pick the new group currency
+            </Text>
+            <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 8 }}>
+              {options.map((code) => (
+                <TouchableOpacity
+                  key={code}
+                  onPress={() => void handlePick(code)}
+                  disabled={busyCurrency !== null}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Convert to ${code}`}
+                  style={[
+                    styles.row,
+                    {
+                      borderBottomColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)',
+                    },
+                  ]}
+                >
+                  <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                    {code}
+                  </Text>
+                  {busyCurrency === code ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </GlassCard>
+        </Animated.View>
+      ) : null}
     </Modal>
   );
 };
@@ -117,7 +126,6 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',  // modal scrim — intentionally scheme-independent
   },
   sheetGlass: {
     borderTopLeftRadius: 28,

@@ -1,9 +1,10 @@
+import { DetailScreenScaffold } from '@/components/ui/DetailScreenScaffold';
 // Linked Devices settings screen (doc 31 §3.4) — lists pairedDevices, lets
 // the user link a new one (main device only) or remove an existing one.
 // A companion device can remove itself; only the main device can remove a
 // DIFFERENT device (enforced server-side in pairing.ts's revokeDevice).
 
-import { Divider, GlassCard } from '@/components/ui';
+import { Divider, GlassCard, SCREEN_GUTTER } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -22,10 +23,8 @@ import { lastHandoffStatus } from '@/services/historyHandoffService';
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Button, List, Text } from 'react-native-paper';
 
 const MAX_DEVICES = 4; // doc 31 decision #21
@@ -34,8 +33,6 @@ export const LinkedDevicesScreen = () => {
   const navigation = useNavigation();
   const { user } = useAuth();
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
-  const headerHeight = useHeaderHeight();
   const [devices, setDevices] = useState<PairedDevice[] | null>(null);
   const [ownDeviceId, setOwnDeviceId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -64,7 +61,7 @@ export const LinkedDevicesScreen = () => {
   const handleApprove = (device: PairedDevice) => {
     appAlert(
       `Approve ${device.deviceName ?? 'this device'}?`,
-      'This device signed in to your account and is waiting for approval. Only approve it if it is yours and you are expecting it — once approved it can read your messages and history.',
+      'This device signed in to your account and is waiting for approval. Only approve it if it is yours and you are expecting it. Once approved it can read your messages and history.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -101,7 +98,7 @@ export const LinkedDevicesScreen = () => {
     if (!user) return;
     appAlert(
       'Reset encryption on this device?',
-      "Use this if messages won't decrypt. This device gets a fresh encryption identity and your other devices re-establish with it automatically.\n\nMessages already waiting for this device can't be recovered — they were encrypted to the old identity. New messages will work.",
+      "Use this if messages won't decrypt. This device gets a fresh encryption identity and your other devices re-establish with it automatically.\n\nMessages already waiting for this device can't be recovered because they were encrypted to the old identity. New messages will work.",
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -162,7 +159,9 @@ export const LinkedDevicesScreen = () => {
 
   return (
     <LiquidBackground>
-      <ScrollView contentContainerStyle={[styles.container, { paddingTop: headerHeight + 16, paddingBottom: insets.bottom + 32 }]} showsVerticalScrollIndicator={false}>
+      <DetailScreenScaffold
+        horizontalInset={SCREEN_GUTTER}
+        contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
           {devices === null ? (
             <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loading} />
@@ -323,7 +322,8 @@ export const LinkedDevicesScreen = () => {
                 lightHaptic();
               } catch (error) {
                 errorHaptic();
-                setHandoffNote(error instanceof Error ? error.message : 'Transfer failed.');
+                console.warn('[LinkedDevices] History transfer failed:', error);
+                setHandoffNote('History transfer failed. Keep both devices online and try again.');
               } finally {
                 setSyncing(false);
               }
@@ -332,7 +332,7 @@ export const LinkedDevicesScreen = () => {
             Retry history transfer
           </Button>
         </GlassCard>
-      </ScrollView>
+      </DetailScreenScaffold>
     </LiquidBackground>
   );
 };
@@ -347,7 +347,6 @@ const styles = StyleSheet.create({
   rowActions: { flexDirection: 'row', alignItems: 'flex-start', alignSelf: 'flex-start' },
   container: {
     flexGrow: 1,
-    padding: 24,
   },
   card: {
     borderRadius: 20,

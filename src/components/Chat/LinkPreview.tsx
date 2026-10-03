@@ -20,13 +20,13 @@ export const LinkPreview = ({ preview, isMine }: LinkPreviewProps) => {
   };
 
   const surface = isMine
-    ? 'rgba(0,0,0,0.18)'
+    ? theme.colors.outgoingInset
     : isDark
       ? 'rgba(255,255,255,0.08)'
       : 'rgba(0,0,0,0.04)';
-  const accent = isMine ? 'rgba(255,255,255,0.8)' : theme.colors.primary;
-  const titleColor = isMine ? '#fff' : theme.colors.onSurface;
-  const subColor = isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant;
+  const accent = isMine ? theme.colors.onOutgoingInset : theme.colors.primary;
+  const titleColor = isMine ? theme.colors.onOutgoingInset : theme.colors.onSurface;
+  const subColor = isMine ? theme.colors.onOutgoingInset : theme.colors.onSurfaceVariant;
 
   // Failed / minimal preview — render a compact link card so the user still
   // sees something tappable below their message instead of a dead URL.
@@ -35,6 +35,8 @@ export const LinkPreview = ({ preview, isMine }: LinkPreviewProps) => {
       <TouchableOpacity
         activeOpacity={0.85}
         onPress={handlePress}
+        accessibilityRole="link"
+        accessibilityLabel={getDomain(preview.url)}
         style={[styles.compactCard, { backgroundColor: surface, borderLeftColor: accent }]}
       >
         <Ionicons name="link" size={16} color={accent} />
@@ -49,6 +51,8 @@ export const LinkPreview = ({ preview, isMine }: LinkPreviewProps) => {
     <TouchableOpacity
       activeOpacity={0.85}
       onPress={handlePress}
+      accessibilityRole="link"
+      accessibilityLabel={`${preview.title || preview.siteName || 'Open link'}, ${getDomain(preview.url)}`}
       style={[styles.card, { backgroundColor: surface, borderLeftColor: accent }]}
     >
       {preview.imageUrl ? (
@@ -116,6 +120,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   compactCard: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,

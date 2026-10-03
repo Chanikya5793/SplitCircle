@@ -54,12 +54,7 @@ import {
 } from '@/utils/aiTools';
 import { getCallHistory } from '@/services/localCallStorage';
 import { getChatMessages } from '@/services/localMessageStorage';
-import {
-  getEntityFixes,
-  getInjection as getMemoryInjection,
-  recordClarifyPick,
-  recordTurnPattern,
-} from '@/services/aiMemoryService';
+import { getEntityFixes, getInjection as getMemoryInjection, recordClarifyPick, recordTurnPattern } from '@/services/aiMemoryService';
 import { extractClarifyAlias } from '@/utils/aiMemory';
 import type { Timeframe } from '@/utils/expenseAnalytics';
 import { numbersGrounded, stripChatDecorations } from '@/utils/aiText';
@@ -112,7 +107,12 @@ export interface AgenticTurnArgs {
   facts: string;
   group?: Group;
   currentUserId: string;
-  personalGroups?: { groupId: string; name: string; currency: string; expenses?: Group['expenses'] }[];
+  personalGroups?: {
+    groupId: string;
+    name: string;
+    currency: string;
+    expenses?: Group['expenses'];
+  }[];
   /** The group's chat id (doc 24 P5) — unlocks the on-device-only chat_search tool. */
   chatId?: string;
   recurringMonthly?: number;
@@ -164,7 +164,7 @@ const DEFAULT_CONTEXT = 4096;
 const ROUTER_TIMEOUT_MS = 8_000;
 const MODEL_CALL_TIMEOUT_MS = 15_000;
 
-const within = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+const within = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -178,8 +178,7 @@ const within = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> =>
   }
 };
 
-const budgetTokens = (): number =>
-  Math.max(1536, (getOnDeviceContextSize() || DEFAULT_CONTEXT) - RESPONSE_RESERVE);
+const budgetTokens = (): number => Math.max(1536, (getOnDeviceContextSize() || DEFAULT_CONTEXT) - RESPONSE_RESERVE);
 
 const dateLine = (now: number): string =>
   new Date(now).toLocaleDateString('en-US', {
@@ -192,23 +191,22 @@ const dateLine = (now: number): string =>
 const GROUNDING_NUDGE =
   '\n- IMPORTANT: your previous draft contained a number that is NOT in FACTS/TOOL RESULTS, or repeated an earlier answer. Write a fresh reply using only numbers present in the blocks.';
 
-const shortDate = (ms: number): string =>
-  new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const shortDate = (ms: number): string => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 /**
  * LOCAL-TIER providers (doc 24 P5). This data lives only on the device (the
  * app's Local storage tier) and the tools it feeds pin the turn on-device —
  * assembled prompts containing it never reach PCC.
  */
-function chatSearchProvider(
-  chatId: string,
-  nameOf: (userId: string) => string,
-): NonNullable<ToolCtx['chatSearch']> {
+function chatSearchProvider(chatId: string, nameOf: (userId: string) => string): NonNullable<ToolCtx['chatSearch']> {
   return async (query: string, tf: Timeframe | null, signal?: AbortSignal): Promise<ChatSearchResult> => {
     if (signal?.aborted) throw new Error('ABORTED');
     const messages = await getChatMessages(chatId);
     if (signal?.aborted) throw new Error('ABORTED');
-    const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
+    const terms = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length >= 2);
     const hits = messages.filter(
       (m) =>
         typeof m.content === 'string' &&
@@ -239,10 +237,7 @@ function callStatsProvider(chatId: string | undefined): NonNullable<ToolCtx['cal
         (!tf || (r.startedAt >= tf.startMs && r.startedAt <= tf.endMs)) &&
         (!q || r.otherParticipant.displayName.toLowerCase().includes(q)),
     );
-    const last = filtered.reduce<number | null>(
-      (mx, r) => (mx == null || r.startedAt > mx ? r.startedAt : mx),
-      null,
-    );
+    const last = filtered.reduce<number | null>((mx, r) => (mx == null || r.startedAt > mx ? r.startedAt : mx), null);
     return {
       calls: filtered.length,
       totalMinutes: Math.round(filtered.reduce((s, r) => s + (r.duration || 0), 0) / 60),
@@ -262,7 +257,10 @@ function buildToolCtx(a: AgenticTurnArgs, now: number): ToolCtx {
           groupId: a.group.groupId,
           name: a.group.name,
           currency: a.group.currency || 'USD',
-          members: (a.group.members ?? []).map((m) => ({ userId: m.userId, displayName: m.displayName })),
+          members: (a.group.members ?? []).map((m) => ({
+            userId: m.userId,
+            displayName: m.displayName,
+          })),
           expenses: a.group.expenses ?? [],
           settlements: a.group.settlements ?? [],
           budgets: a.group.budgets,
@@ -274,10 +272,11 @@ function buildToolCtx(a: AgenticTurnArgs, now: number): ToolCtx {
     recurringBills: a.recurringBills,
     chatSearch:
       a.chatId && a.group
-        ? chatSearchProvider(
-            a.chatId,
-            (userId) =>
-              resolveDisplayName(a.group?.members?.find((m) => m.userId === userId), 'someone'),
+        ? chatSearchProvider(a.chatId, (userId) =>
+            resolveDisplayName(
+              a.group?.members?.find((m) => m.userId === userId),
+              'someone',
+            ),
           )
         : undefined,
     callStats: callStatsProvider(a.chatId),
@@ -306,17 +305,10 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     // picks promote a fix and the alias never asks again. This runs BEFORE the
     // answer cache — an answered clarify must teach even when the reply is a
     // cache hit — and is awaited so the write can't race the next turn.
-    if (
-      !args.replay &&
-      resolvedClarify &&
-      lastMsg?.role === 'clarify' &&
-      (lastMsg.options?.length ?? 0) >= 2
-    ) {
+    if (!args.replay && resolvedClarify && lastMsg?.role === 'clarify' && (lastMsg.options?.length ?? 0) >= 2) {
       const priorUser = [...args.thread.messages].reverse().find((m) => m.role === 'user');
       const alias = extractClarifyAlias(priorUser?.text ?? '', lastMsg.options ?? []);
-      const choice = lastMsg.options?.find(
-        (o) => o.trim().toLowerCase() === args.userText.trim().toLowerCase(),
-      );
+      const choice = lastMsg.options?.find((o) => o.trim().toLowerCase() === args.userText.trim().toLowerCase());
       if (alias && choice) await recordClarifyPick(memScope, alias, choice);
     }
 
@@ -340,18 +332,11 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     // Doc 25 Q2 — memory rides every turn: the MEMORY block into instructions
     // (user chose it may reach PCC too) and entity fixes into the tool layer.
     const memScopes = ['global', memScope];
-    const [memoryBlock, entityFixes] = await Promise.all([
-      getMemoryInjection(memScopes),
-      getEntityFixes(memScopes),
-    ]);
+    const [memoryBlock, entityFixes] = await Promise.all([getMemoryInjection(memScopes), getEntityFixes(memScopes)]);
     if (Object.keys(entityFixes).length > 0) ctx.entityFixes = entityFixes;
-    const withMemory = (instructions: string): string =>
-      memoryBlock ? `${instructions}\n\n${memoryBlock}` : instructions;
-    const scopeLabel =
-      args.scopeLabel ?? (g ? `the group "${g.name}"` : 'your personal spending across all groups');
-    const categories = g
-      ? [...new Set(g.expenses.map((e) => ((e.category ?? 'General').trim() || 'General')))]
-      : [];
+    const withMemory = (instructions: string): string => (memoryBlock ? `${instructions}\n\n${memoryBlock}` : instructions);
+    const scopeLabel = args.scopeLabel ?? (g ? `the group "${g.name}"` : 'your personal spending across all groups');
+    const categories = g ? [...new Set(g.expenses.map((e) => (e.category ?? 'General').trim() || 'General'))] : [];
     // P5 privacy rule: local-tier tools (chat/calls) are never OFFERED when the
     // user pinned Private Cloud; on 'auto' they're offered, and using one pins
     // the whole turn on-device (narration included).
@@ -367,24 +352,25 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
       messages: args.thread.messages,
       userText: args.userText,
       budgetTokens: budgetTokens(),
-      driftNote: args.drifted
-        ? 'The data has changed since this conversation started — the facts below are current.'
-        : '',
+      driftNote: args.drifted ? 'The data has changed since this conversation started. The facts below are current.' : '',
       resolvedClarify,
     });
     const decision: AgentDecision = coerceDecision(
-      await within(routeTurn(
-        withMemory(
-          routerInstructions({
-            scopeLabel,
-            memberNames: g ? g.members.map((m) => m.displayName).filter(Boolean) : [],
-            categories,
-            dateLine: date,
-            toolCatalog: catalog,
-          }),
+      await within(
+        routeTurn(
+          withMemory(
+            routerInstructions({
+              scopeLabel,
+              memberNames: g ? g.members.map((m) => m.displayName).filter(Boolean) : [],
+              categories,
+              dateLine: date,
+              toolCatalog: catalog,
+            }),
+          ),
+          routerPrompt.prompt,
         ),
-        routerPrompt.prompt,
-      ), ROUTER_TIMEOUT_MS),
+        ROUTER_TIMEOUT_MS,
+      ),
     );
 
     // Doc 25 Q2 — observed-pattern counters (toggle-respected in the service).
@@ -401,11 +387,7 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     let loopSteps = 0;
     // True once a local-tier tool ran — the turn is pinned on-device (doc 24 P5).
     let usedLocal = false;
-    const makeTrace = (reply: {
-      role: 'assistant' | 'clarify';
-      text: string;
-      source?: 'ondevice' | 'pcc';
-    }): TurnTrace => ({
+    const makeTrace = (reply: { role: 'assistant' | 'clarify'; text: string; source?: 'ondevice' | 'pcc' }): TurnTrace => ({
       at: now,
       surface: args.thread.surface,
       scope: args.thread.scope,
@@ -440,10 +422,17 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
         role: 'assistant',
         text:
           stripChatDecorations(decision.abstainReply) ||
-          `Hey! Ask me anything about ${g ? `${g.name}'s` : 'your'} spending — a month, a person, a category, or say "summary" for exact totals.`,
+          `Hey! Ask me anything about ${g ? `${g.name}'s` : 'your'} spending. A month, a person, a category, or say "summary" for exact totals.`,
         source: 'ondevice',
       };
-      return { ...reply, trace: makeTrace({ role: 'assistant', text: reply.text, source: 'ondevice' }) };
+      return {
+        ...reply,
+        trace: makeTrace({
+          role: 'assistant',
+          text: reply.text,
+          source: 'ondevice',
+        }),
+      };
     }
 
     if (decision.intent === 'clarify' && !resolvedClarify) {
@@ -453,7 +442,14 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
         options: decision.clarifyOptions,
         source: 'ondevice',
       };
-      return { ...reply, trace: makeTrace({ role: 'clarify', text: reply.text, source: 'ondevice' }) };
+      return {
+        ...reply,
+        trace: makeTrace({
+          role: 'clarify',
+          text: reply.text,
+          source: 'ondevice',
+        }),
+      };
     }
 
     // ── Step 4: data loop (router's requests are hop 1) ─────────────────────
@@ -465,9 +461,7 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
       executedRequests.push(
         ...requests.map((r) => ({
           tool: r.tool,
-          args: [r.month, r.monthB, r.category, r.member, r.merchant, r.query]
-            .filter(Boolean)
-            .join(' '),
+          args: [r.month, r.monthB, r.category, r.member, r.merchant, r.query].filter(Boolean).join(' '),
         })),
       );
       const hopResults = await executeToolRequests(requests, ctx, seenKeys, {
@@ -477,9 +471,7 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
       results.push(...hopResults);
       if (
         includeLocal &&
-        hopResults.some((result) =>
-          !result.error && result.dataClasses?.some((kind) => kind === 'local_chat' || kind === 'local_calls'),
-        )
+        hopResults.some((result) => !result.error && result.dataClasses?.some((kind) => kind === 'local_chat' || kind === 'local_calls'))
       ) {
         usedLocal = true;
       }
@@ -491,15 +483,18 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
       try {
         loopSteps += 1;
         const step = coerceLoopStep(
-          await within(agentLoopStep(
-            loopInstructions(catalog),
-            assembleHopPrompt({
-              userText: args.userText,
-              results,
-              hop: loopSteps,
-              maxHops: MAX_HOPS - 1,
-            }),
-          ), dataDeadlineAt - Date.now()),
+          await within(
+            agentLoopStep(
+              loopInstructions(catalog),
+              assembleHopPrompt({
+                userText: args.userText,
+                results,
+                hop: loopSteps,
+                maxHops: MAX_HOPS - 1,
+              }),
+            ),
+            dataDeadlineAt - Date.now(),
+          ),
         );
         if (step.done) break;
         requests = step.requests;
@@ -521,7 +516,14 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
               options: parsed.ambiguous.slice(0, 4),
               source: 'ondevice',
             };
-            return { ...reply, trace: makeTrace({ role: 'clarify', text: reply.text, source: 'ondevice' }) };
+            return {
+              ...reply,
+              trace: makeTrace({
+                role: 'clarify',
+                text: reply.text,
+                source: 'ondevice',
+              }),
+            };
           }
         } catch {
           // Non-JSON results can't carry ambiguity.
@@ -545,9 +547,7 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
         messages: args.thread.messages,
         userText: args.userText,
         budgetTokens: budget,
-        driftNote: args.drifted
-          ? 'The data has changed since this conversation started — the facts below are current.'
-          : '',
+        driftNote: args.drifted ? 'The data has changed since this conversation started. The facts below are current.' : '',
       });
 
     const assembled = assemble(budgetTokens());
@@ -559,14 +559,8 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     // real reasoning; an explicit analyze ask earns .deep. On-device pref pins
     // local; PCC unavailability falls through gracefully (badge stays honest).
     const deepTurn = decision.complexity === 'deep';
-    const wantsDeep = /\b(analy[sz]e|deep ?dive|in depth|thorough(ly)?|detailed breakdown)\b/i.test(
-      args.userText,
-    );
-    const reasoning: 'light' | 'moderate' | 'deep' = deepTurn
-      ? wantsDeep
-        ? 'deep'
-        : 'moderate'
-      : 'light';
+    const wantsDeep = /\b(analy[sz]e|deep ?dive|in depth|thorough(ly)?|detailed breakdown)\b/i.test(args.userText);
+    const reasoning: 'light' | 'moderate' | 'deep' = deepTurn ? (wantsDeep ? 'deep' : 'moderate') : 'light';
 
     let text = '';
     let source: 'ondevice' | 'pcc' = 'ondevice';
@@ -592,10 +586,7 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     const narratePcc = async (): Promise<string> => {
       const big = assemble(PCC_BUDGET);
       // Memory may ride PCC prompts — explicit doc-25 user decision.
-      const out = await within(
-        tryPccPrompt(big.prompt, withMemory(narratorInstructions(narratorArgs)), reasoning),
-        MODEL_CALL_TIMEOUT_MS,
-      );
+      const out = await within(tryPccPrompt(big.prompt, withMemory(narratorInstructions(narratorArgs)), reasoning), MODEL_CALL_TIMEOUT_MS);
       return stripChatDecorations(out ?? '');
     };
 
@@ -630,8 +621,7 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     if (!text) return null;
 
     // Quality gates: grounded numbers + no self-repeats. One nudged retry.
-    const bad = (t: string): boolean =>
-      !t || !numbersGrounded(t, grounding) || repeatsRecent(t, args.thread.messages);
+    const bad = (t: string): boolean => !t || !numbersGrounded(t, grounding) || repeatsRecent(t, args.thread.messages);
     if (bad(text)) {
       try {
         const retry = await narrateOnDevice(GROUNDING_NUDGE);

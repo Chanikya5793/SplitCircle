@@ -36,11 +36,14 @@ export function rangeWindow(range: StatsRange, now: number): Timeframe | null {
   // quarter = current + previous 2 calendar months.
   const start = calendarWindow(now, 'month', -2);
   const end = calendarWindow(now, 'month', 0);
-  return { startMs: start.startMs, endMs: end.endMs, label: 'the last 3 months' };
+  return {
+    startMs: start.startMs,
+    endMs: end.endMs,
+    label: 'the last 3 months',
+  };
 }
 
-const inWindow = (e: Expense, tf: Timeframe | null): boolean =>
-  !tf || (e.createdAt >= tf.startMs && e.createdAt <= tf.endMs);
+const inWindow = (e: Expense, tf: Timeframe | null): boolean => !tf || (e.createdAt >= tf.startMs && e.createdAt <= tf.endMs);
 
 // ── Range aggregate ──────────────────────────────────────────────────────────
 
@@ -48,14 +51,15 @@ export interface RangeAggregate {
   total: number;
   userShare: number;
   count: number;
-  byCategory: { category: string; total: number; userShare: number; count: number }[];
+  byCategory: {
+    category: string;
+    total: number;
+    userShare: number;
+    count: number;
+  }[];
 }
 
-export function aggregateRange(
-  expenses: readonly Expense[],
-  tf: Timeframe | null,
-  userId: string,
-): RangeAggregate {
+export function aggregateRange(expenses: readonly Expense[], tf: Timeframe | null, userId: string): RangeAggregate {
   const rows = (expenses ?? []).filter(isSpend).filter((e) => inWindow(e, tf));
   const catMap = new Map<string, { category: string; total: number; userShare: number; count: number }>();
   let total = 0;
@@ -66,7 +70,12 @@ export function aggregateRange(
     total += amount;
     userShare += share;
     const cat = (e.category ?? 'General').trim() || 'General';
-    const agg = catMap.get(cat) ?? { category: cat, total: 0, userShare: 0, count: 0 };
+    const agg = catMap.get(cat) ?? {
+      category: cat,
+      total: 0,
+      userShare: 0,
+      count: 0,
+    };
     agg.total += amount;
     agg.userShare += share;
     agg.count += 1;
@@ -77,7 +86,11 @@ export function aggregateRange(
     userShare: cents(userShare),
     count: rows.length,
     byCategory: [...catMap.values()]
-      .map((c) => ({ ...c, total: cents(c.total), userShare: cents(c.userShare) }))
+      .map((c) => ({
+        ...c,
+        total: cents(c.total),
+        userShare: cents(c.userShare),
+      }))
       .sort((a, b) => b.total - a.total),
   };
 }
@@ -189,7 +202,10 @@ export interface MerchantRow {
 }
 
 /** Merchant ≈ normalized expense title; savings come from receipt OCR insights. */
-export function merchantAggregate(expenses: readonly Expense[], tf: Timeframe | null): {
+export function merchantAggregate(
+  expenses: readonly Expense[],
+  tf: Timeframe | null,
+): {
   merchants: MerchantRow[];
   totalSavings: number;
 } {
@@ -208,9 +224,7 @@ export function merchantAggregate(expenses: readonly Expense[], tf: Timeframe | 
     map.set(key, row);
   }
   return {
-    merchants: [...map.values()]
-      .map((r) => ({ ...r, total: cents(r.total), savings: cents(r.savings) }))
-      .sort((a, b) => b.total - a.total),
+    merchants: [...map.values()].map((r) => ({ ...r, total: cents(r.total), savings: cents(r.savings) })).sort((a, b) => b.total - a.total),
     totalSavings: cents(totalSavings),
   };
 }
@@ -229,11 +243,7 @@ export interface ForecastInfo {
   recurringCommitted: number;
 }
 
-export function buildForecast(
-  expenses: readonly Expense[],
-  now: number,
-  recurringMonthly: number = 0,
-): ForecastInfo {
+export function buildForecast(expenses: readonly Expense[], now: number, recurringMonthly: number = 0): ForecastInfo {
   const cur = calendarWindow(now, 'month', 0);
   const prev = calendarWindow(now, 'month', -1);
   const d = new Date(now);
@@ -253,7 +263,10 @@ export function buildForecast(
 
 /** Approximate a recurring bill's monthly commitment from its rule. */
 export function monthlyCommitment(
-  bills: readonly { amount: number; recurrenceRule?: { frequency?: string; interval?: number } }[],
+  bills: readonly {
+    amount: number;
+    recurrenceRule?: { frequency?: string; interval?: number };
+  }[],
 ): number {
   let total = 0;
   for (const b of bills ?? []) {
@@ -296,7 +309,12 @@ const DAY = 86400000;
 export function detectAnomalies(
   expenses: readonly Expense[],
   now: number,
-  opts: { recentDays?: number; baselineDays?: number; minBaselineCount?: number; minRatio?: number } = {},
+  opts: {
+    recentDays?: number;
+    baselineDays?: number;
+    minBaselineCount?: number;
+    minRatio?: number;
+  } = {},
 ): AnomalyInfo[] {
   const recentDays = opts.recentDays ?? 14;
   const baselineDays = opts.baselineDays ?? 90;
@@ -362,11 +380,7 @@ const startOfDayMs = (ms: number): number => {
 export function dailyHeatmap(expenses: readonly Expense[], now: number, weeks = 12): HeatmapData {
   const today = new Date(now);
   const todayMid = startOfDayMs(now);
-  const origin = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate() - today.getDay() - (weeks - 1) * 7,
-  );
+  const origin = new Date(today.getFullYear(), today.getMonth(), today.getDate() - today.getDay() - (weeks - 1) * 7);
   const originMid = origin.getTime();
 
   const grid: number[][] = Array.from({ length: weeks }, () => Array(7).fill(0));
@@ -424,10 +438,7 @@ export function settleVelocity(
   balances: Readonly<Record<string, number>>,
   now: number,
 ): SettleVelocityInfo {
-  const last = (settlements ?? []).reduce<number | null>(
-    (max, s) => (max == null || s.createdAt > max ? s.createdAt : max),
-    null,
-  );
+  const last = (settlements ?? []).reduce<number | null>((max, s) => (max == null || s.createdAt > max ? s.createdAt : max), null);
   const hasOpenDebts = Object.values(balances ?? {}).some((b) => Math.abs(b) >= 0.005);
   return {
     daysSinceLastSettlement: last == null ? null : Math.floor((now - last) / DAY),
@@ -463,7 +474,7 @@ export function budgetStatus(
     .filter(([, amount]) => Number(amount) > 0)
     .map(([category, amount]) => {
       const row = byCat.get(category.toLowerCase());
-      const spent = userId ? row?.userShare ?? 0 : row?.total ?? 0;
+      const spent = userId ? (row?.userShare ?? 0) : (row?.total ?? 0);
       return {
         category,
         budget: cents(Number(amount)),
@@ -496,7 +507,12 @@ export interface HeuristicInputs {
   velocity: SettleVelocityInfo;
   staleDays: number;
   /** Detected recurring-looking pattern not yet set up as a bill (doc 26). */
-  recurringSuggestion?: { title: string; medianAmount: number; cadence: 'weekly' | 'monthly'; occurrenceCount: number } | null;
+  recurringSuggestion?: {
+    title: string;
+    medianAmount: number;
+    cadence: 'weekly' | 'monthly';
+    occurrenceCount: number;
+  } | null;
 }
 
 export function buildHeuristicCards(inputs: HeuristicInputs): InsightCard[] {
@@ -524,7 +540,7 @@ export function buildHeuristicCards(inputs: HeuristicInputs): InsightCard[] {
       kind: 'anomaly',
       severity: 'warn',
       title: `${anomaly.title}: ${anomaly.ratio}× the usual`,
-      body: `Typical ${anomaly.category} in this group runs much lower — worth a look.`,
+      body: `Typical ${anomaly.category} in this group runs much lower. Worth a look.`,
       amount: anomaly.amount,
     });
   }
@@ -535,10 +551,7 @@ export function buildHeuristicCards(inputs: HeuristicInputs): InsightCard[] {
       id: `budget-${over.category}`,
       kind: 'budget',
       severity: over.pct >= 100 ? 'warn' : 'info',
-      title:
-        over.pct >= 100
-          ? `${over.category} budget exceeded (${over.pct}%)`
-          : `${over.category} at ${over.pct}% of budget`,
+      title: over.pct >= 100 ? `${over.category} budget exceeded (${over.pct}%)` : `${over.category} at ${over.pct}% of budget`,
       body: `Monthly ${over.category} budget is nearly used up.`,
       amount: over.spent,
     });
@@ -564,7 +577,7 @@ export function buildHeuristicCards(inputs: HeuristicInputs): InsightCard[] {
       kind: 'fairness',
       severity: 'info',
       title: `${inputs.fairness.topPayerName} fronts ${inputs.fairness.topPayerPct}% of spend`,
-      body: 'One person is covering most bills — a settle-up would even things out.',
+      body: 'One person is covering most bills. A settle-up would even things out.',
     });
   }
 
@@ -586,7 +599,7 @@ export function buildHeuristicCards(inputs: HeuristicInputs): InsightCard[] {
       kind: 'recurring',
       severity: 'info',
       title: `${rec.title} looks recurring`,
-      body: `Added ${rec.occurrenceCount} times on a ${rec.cadence} rhythm — set it up as a recurring bill and it handles itself.`,
+      body: `Added ${rec.occurrenceCount} times on a ${rec.cadence} rhythm. Set it up as a recurring bill and it handles itself.`,
       amount: rec.medianAmount,
     });
   }
@@ -601,7 +614,7 @@ export function buildHeuristicCards(inputs: HeuristicInputs): InsightCard[] {
       kind: 'velocity',
       severity: 'info',
       title: `No settle-up in ${inputs.velocity.daysSinceLastSettlement} days`,
-      body: 'Debts are open — settling now keeps balances easy.',
+      body: 'Debts are open. Settling now keeps balances easy.',
     });
   }
 
@@ -611,8 +624,18 @@ export function buildHeuristicCards(inputs: HeuristicInputs): InsightCard[] {
 // ── Question-driven extra context (doc 23 chat enrichment) ───────────────────
 
 const MONTHS_FULL = [
-  'january', 'february', 'march', 'april', 'may', 'june',
-  'july', 'august', 'september', 'october', 'november', 'december',
+  'january',
+  'february',
+  'march',
+  'april',
+  'may',
+  'june',
+  'july',
+  'august',
+  'september',
+  'october',
+  'november',
+  'december',
 ];
 
 /**
@@ -634,7 +657,11 @@ export function questionContext(
   const out: Record<string, unknown> = {};
 
   // Named calendar months (last 12) — "what about April?"
-  const monthHits: { month: string; total: number; top: { c: string; t: number }[] }[] = [];
+  const monthHits: {
+    month: string;
+    total: number;
+    top: { c: string; t: number }[];
+  }[] = [];
   for (let shift = 0; shift > -12 && monthHits.length < 3; shift--) {
     const tf = calendarWindow(now, 'month', shift);
     const d = new Date(tf.startMs);
@@ -650,8 +677,13 @@ export function questionContext(
   if (monthHits.length) out.months = monthHits;
 
   // Named categories — monthly trail so "why did X change" has history.
-  const cats = [...new Set(rows.map((e) => ((e.category ?? 'General').trim() || 'General')))];
-  const catHits: { category: string; total: number; count: number; byMonth: { m: string; t: number }[] }[] = [];
+  const cats = [...new Set(rows.map((e) => (e.category ?? 'General').trim() || 'General'))];
+  const catHits: {
+    category: string;
+    total: number;
+    count: number;
+    byMonth: { m: string; t: number }[];
+  }[] = [];
   for (const cat of cats) {
     if (catHits.length >= 2) break;
     if (cat.length < 3 || !q.includes(cat.toLowerCase())) continue;
@@ -659,10 +691,12 @@ export function questionContext(
     const byMonth: { m: string; t: number }[] = [];
     for (let shift = 0; shift > -6; shift--) {
       const tf = calendarWindow(now, 'month', shift);
-      const total = cents(
-        catRows.filter((e) => inWindow(e, tf)).reduce((s, e) => s + (Number(e.amount) || 0), 0),
-      );
-      if (total > 0) byMonth.push({ m: MONTHS_SHORT[new Date(tf.startMs).getMonth()], t: total });
+      const total = cents(catRows.filter((e) => inWindow(e, tf)).reduce((s, e) => s + (Number(e.amount) || 0), 0));
+      if (total > 0)
+        byMonth.push({
+          m: MONTHS_SHORT[new Date(tf.startMs).getMonth()],
+          t: total,
+        });
     }
     catHits.push({
       category: cat,
@@ -727,8 +761,17 @@ export function buildStatsFacts(args: {
     total: aggregate.total,
     count: aggregate.count,
     topCategories: aggregate.byCategory.slice(0, 5).map((c) => ({ c: c.category, t: c.total })),
-    trends: args.trends.slice(0, 5).map((t) => ({ c: t.category, cur: t.current, prev: t.previous, d: t.deltaPct })),
-    members: args.members.map((m) => ({ n: m.name, paid: m.paid, share: m.share })),
+    trends: args.trends.slice(0, 5).map((t) => ({
+      c: t.category,
+      cur: t.current,
+      prev: t.previous,
+      d: t.deltaPct,
+    })),
+    members: args.members.map((m) => ({
+      n: m.name,
+      paid: m.paid,
+      share: m.share,
+    })),
     topPayerPct: args.fairness?.topPayerPct ?? null,
     forecast: {
       mtd: args.forecast.monthToDate,
@@ -797,7 +840,10 @@ export function buildPersonalStats(
   const categoriesByCurrency: PersonalStatsBundle['categoriesByCurrency'] = {};
   for (const [currency, bucket] of catBuckets) {
     categoriesByCurrency[currency] = [...bucket.entries()]
-      .map(([category, yourShare]) => ({ category, yourShare: cents(yourShare) }))
+      .map(([category, yourShare]) => ({
+        category,
+        yourShare: cents(yourShare),
+      }))
       .sort((a, b) => b.yourShare - a.yourShare)
       .slice(0, 8);
   }

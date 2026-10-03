@@ -20,12 +20,13 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Share, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
+import { setUserBlocked, subscribeToBlockedUserIds } from '@/services/safetyService';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import { Avatar, Button, IconButton, List, Text, TextInput } from 'react-native-paper';
+import { Avatar, Button, Icon, IconButton, List, Text, TextInput } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const errorMessage = (error: unknown, fallback: string): string => {
-    if (error instanceof Error && error.message.trim()) return error.message;
+    console.warn('[GroupInfo] Operation failed:', error);
     return fallback;
 };
 
@@ -39,20 +40,22 @@ const SwipeableMemberRow = ({
     children: React.ReactNode;
 }) => {
     const swipeableRef = useRef<Swipeable>(null);
+    const { theme } = useTheme();
 
     const renderRightActions = () => (
         <View style={styles.memberSwipeAction}>
             <RectButton
-                style={styles.memberSwipeButton}
+                style={[styles.memberSwipeButton, { backgroundColor: theme.colors.danger }]}
                 accessibilityLabel={accessibilityLabel}
+                accessibilityRole="button"
                 onPress={() => {
                     errorHaptic();
                     swipeableRef.current?.close();
                     onRemove();
                 }}
             >
-                <IconButton icon="account-remove" iconColor="#fff" size={22} style={{ margin: 0 }} />
-                <Text style={styles.memberSwipeText}>Remove</Text>
+                <Icon source="account-remove" color={theme.colors.onDanger} size={22} />
+                <Text style={[styles.memberSwipeText, { color: theme.colors.onDanger }]}>Remove</Text>
             </RectButton>
         </View>
     );
@@ -95,6 +98,12 @@ export const GroupInfoScreen = () => {
     const [wallpaperSheetOpen, setWallpaperSheetOpen] = useState(false);
     const [currencySheetOpen, setCurrencySheetOpen] = useState(false);
     const [moneyInChatOpen, setMoneyInChatOpen] = useState(false);
+    const [blockedUserIds, setBlockedUserIds] = useState<Set<string>>(new Set());
+
+    useEffect(() => {
+        if (!user?.userId) return;
+        return subscribeToBlockedUserIds(user.userId, setBlockedUserIds);
+    }, [user?.userId]);
 
     const group = useMemo(() => groups.find((g) => g.groupId === groupId), [groups, groupId]);
 
@@ -287,17 +296,16 @@ export const GroupInfoScreen = () => {
     const openMemberMenu = (member: GroupMember) => {
         if (!me) return;
         if (member.userId === user?.userId) return; // Self-row → no-op
-        if (!isAdmin) return; // Non-admins: viewing only
 
         const options: { text: string; style?: 'default' | 'destructive' | 'cancel'; onPress?: () => void }[] = [];
 
-        if (isOwner && member.role === 'member') {
+        if (isAdmin && isOwner && member.role === 'member') {
             options.push({
                 text: 'Make admin',
                 onPress: () => void performMemberAction(member, 'promote'),
             });
         }
-        if (isOwner && member.role === 'admin') {
+        if (isAdmin && isOwner && member.role === 'admin') {
             options.push({
                 text: 'Remove admin role',
                 onPress: () => void performMemberAction(member, 'demote'),
@@ -311,6 +319,30 @@ export const GroupInfoScreen = () => {
                 onPress: () => confirmRemoveMember(member),
             });
         }
+
+        const isBlocked = blockedUserIds.has(member.userId);
+        options.push({
+            text: isBlocked ? 'Unblock user' : 'Block user',
+            style: isBlocked ? 'default' : 'destructive',
+            onPress: () => {
+                appAlert(
+                    isBlocked ? 'Unblock this user?' : 'Block this user?',
+                    isBlocked
+                        ? 'Their messages and calls will be available again.'
+                        : 'Their messages will be hidden and direct messaging and calling will be blocked in both directions.',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                            text: isBlocked ? 'Unblock' : 'Block',
+                            style: isBlocked ? 'default' : 'destructive',
+                            onPress: () => void setUserBlocked(member.userId, !isBlocked).catch((error) => {
+                                appAlert('Could not update block', errorMessage(error, 'Please try again.'));
+                            }),
+                        },
+                    ],
+                );
+            },
+        });
 
         if (options.length === 0) return;
 
@@ -326,7 +358,7 @@ export const GroupInfoScreen = () => {
         if (me.role === 'owner') {
             appAlert(
                 'Transfer ownership first',
-                'Promote another member to admin and ask the group to give you a successor before leaving.',
+                'Transfer ownership to another member before leaving the group.',
             );
             return;
         }
@@ -408,7 +440,7 @@ export const GroupInfoScreen = () => {
             );
         }
 
-        if (isAdmin && member.userId !== user?.userId && member.role !== 'owner') {
+        if (member.userId !== user?.userId) {
             items.push(
                 <IconButton
                     key="menu"
@@ -416,6 +448,7 @@ export const GroupInfoScreen = () => {
                     size={18}
                     onPress={() => openMemberMenu(member)}
                     style={{ margin: 0 }}
+                    accessibilityLabel={`Actions for ${resolveDisplayName(member)}`}
                 />,
             );
         }
@@ -479,16 +512,27 @@ export const GroupInfoScreen = () => {
                                     </Button>
                                 </View>
                             ) : (
-                                <TouchableOpacity onPress={startEditName} activeOpacity={isAdmin ? 0.7 : 1}>
+                                isAdmin ? (
+                                <TouchableOpacity
+                                    onPress={startEditName}
+                                    activeOpacity={0.7}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Edit group name"
+                                >
                                     <View style={styles.nameRow}>
                                         <Text variant="headlineSmall" style={[styles.groupName, { color: theme.colors.onSurface }]}>
                                             {group.name}
                                         </Text>
-                                        {isAdmin && (
-                                            <MaterialCommunityIcons name="pencil" size={20} color={theme.colors.primary} />
-                                        )}
+                                        <MaterialCommunityIcons name="pencil" size={20} color={theme.colors.primary} />
                                     </View>
                                 </TouchableOpacity>
+                                ) : (
+                                    <View style={styles.nameRow}>
+                                        <Text variant="headlineSmall" style={[styles.groupName, { color: theme.colors.onSurface }]}>
+                                            {group.name}
+                                        </Text>
+                                    </View>
+                                )
                             )}
 
                             {isEditingDescription ? (
@@ -513,10 +557,13 @@ export const GroupInfoScreen = () => {
                                     </View>
                                 </View>
                             ) : (
+                                isAdmin ? (
                                 <TouchableOpacity
                                     onPress={startEditDescription}
-                                    activeOpacity={isAdmin ? 0.7 : 1}
+                                    activeOpacity={0.7}
                                     style={styles.descriptionRow}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={group.description?.trim() ? 'Edit group description' : 'Add group description'}
                                 >
                                     <Text
                                         variant="bodyMedium"
@@ -524,14 +571,17 @@ export const GroupInfoScreen = () => {
                                     >
                                         {group.description?.trim()
                                             ? group.description
-                                            : isAdmin
-                                                ? 'Add a description'
-                                                : 'No description'}
+                                            : 'Add a description'}
                                     </Text>
-                                    {isAdmin && (
-                                        <MaterialCommunityIcons name="pencil" size={16} color={theme.colors.primary} />
-                                    )}
+                                    <MaterialCommunityIcons name="pencil" size={16} color={theme.colors.primary} />
                                 </TouchableOpacity>
+                                ) : (
+                                    <View style={styles.descriptionRow}>
+                                        <Text variant="bodyMedium" style={[styles.description, { color: theme.colors.onSurfaceVariant }]}>
+                                            {group.description?.trim() ? group.description : 'No description'}
+                                        </Text>
+                                    </View>
+                                )
                             )}
                         </View>
                     </View>
@@ -657,7 +707,7 @@ export const GroupInfoScreen = () => {
                                     onPress={() => {
                                         lightHaptic();
                                         void Share.share({
-                                            message: `Join "${group.name}" — use invite code ${group.inviteCode}`,
+                                            message: `Join "${group.name}". Use invite code ${group.inviteCode}`,
                                         });
                                     }}
                                 />
@@ -671,7 +721,7 @@ export const GroupInfoScreen = () => {
                         </Text>
                         {group.members.map((member, index) => {
                             const isSelf = member.userId === user?.userId;
-                            const isInteractive = isAdmin && !isSelf && member.role !== 'owner';
+                            const isInteractive = !isSelf;
                             const removable = canRemoveMember(member);
                             const resolvedName = resolveDisplayName(member);
                             const isPlaceholder = needsDisplayName(member);
@@ -958,13 +1008,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         width: 84,
         borderRadius: 16,
-        backgroundColor: '#FF3B30',
     },
     memberSwipeText: {
-        color: '#fff',
         fontSize: 12,
         fontWeight: '600',
-        marginTop: -4,
+        marginTop: 2,
     },
     roleBadge: {
         flexDirection: 'row',

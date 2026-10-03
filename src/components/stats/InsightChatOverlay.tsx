@@ -13,7 +13,7 @@
 import { GlassView } from '@/components/GlassView';
 import { AiEvidenceSheet } from '@/components/ai/AiEvidenceSheet';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GuardedScreen } from '@/components/ui';
+import { GuardedScreen, ScrimBackdrop } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { useChat } from '@/context/ChatContext';
@@ -412,7 +412,7 @@ export const InsightChatOverlay = ({
                 {
                   id: `err-${Date.now()}`,
                   role: 'assistant',
-                  text: "I couldn't reach the on-device model just now — try again in a moment.",
+                  text: "I couldn't reach the on-device model just now. Try again in a moment.",
                   createdAt: Date.now(),
                 },
               ],
@@ -476,10 +476,11 @@ export const InsightChatOverlay = ({
       );
     } catch (err) {
       // Keep the card pending; surface the failure as a thread message.
+      console.warn('[InsightChat] Action failed:', err);
       const errMsg: AiThreadMessage = {
         id: newMessageId(),
         role: 'assistant',
-        text: `Couldn't complete that: ${err instanceof Error ? err.message : 'unknown error'}.`,
+        text: 'I couldn’t complete that action. Nothing was changed. Try again.',
         createdAt: Date.now(),
       };
       const next = { ...thread, messages: [...thread.messages, errMsg] };
@@ -559,6 +560,7 @@ export const InsightChatOverlay = ({
                     disabled={busy}
                     accessibilityRole="button"
                     accessibilityLabel={opt}
+                    accessibilityState={{ disabled: busy }}
                   >
                     <GlassView role="floating" style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
                       <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600' }}>
@@ -586,7 +588,7 @@ export const InsightChatOverlay = ({
               : { borderTopLeftRadius: 4 },
           ]}
         >
-          <Text style={{ color: isUser ? '#fff' : theme.colors.onSurface, lineHeight: 20 }}>
+          <Text style={{ color: isUser ? theme.colors.onPrimary : theme.colors.onSurface, lineHeight: 20 }}>
             {item.text}
           </Text>
           {!isUser && !!item.assumption && (
@@ -611,6 +613,7 @@ export const InsightChatOverlay = ({
                     style={[styles.actionBtn, { borderColor: theme.colors.outline }]}
                     accessibilityRole="button"
                     accessibilityLabel="Not now"
+                    accessibilityState={{ disabled: busy }}
                   >
                     <Text style={{ color: theme.colors.onSurfaceVariant, fontWeight: '700' }}>Not now</Text>
                   </TouchableOpacity>
@@ -623,8 +626,9 @@ export const InsightChatOverlay = ({
                     ]}
                     accessibilityRole="button"
                     accessibilityLabel="Confirm"
+                    accessibilityState={{ disabled: busy }}
                   >
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>Confirm</Text>
+                    <Text style={{ color: theme.colors.onPrimary, fontWeight: '700' }}>Confirm</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
@@ -644,6 +648,7 @@ export const InsightChatOverlay = ({
                   disabled={busy}
                   accessibilityRole="button"
                   accessibilityLabel={opt}
+                  accessibilityState={{ disabled: busy }}
                 >
                   <GlassView role="floating" style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
                     <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600' }}>
@@ -704,15 +709,16 @@ export const InsightChatOverlay = ({
               </View>
             ) : feedback[item.id] === 'down' ? (
               <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, fontSize: 10, marginTop: 4 }}>
-                Noted — added to AI evals
+                Feedback noted on this device.
               </Text>
             ) : (
               <View style={styles.thumbRow}>
                 <TouchableOpacity
                   onPress={() => onThumb(item, true)}
-                  hitSlop={8}
+                  style={styles.thumbButton}
                   accessibilityRole="button"
                   accessibilityLabel="Good answer"
+                  accessibilityState={{ selected: feedback[item.id] === 'up' }}
                 >
                   <Icon
                     source={feedback[item.id] === 'up' ? 'thumb-up' : 'thumb-up-outline'}
@@ -722,7 +728,7 @@ export const InsightChatOverlay = ({
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => onThumb(item, false)}
-                  hitSlop={8}
+                  style={styles.thumbButton}
                   accessibilityRole="button"
                   accessibilityLabel="Bad answer"
                 >
@@ -737,7 +743,8 @@ export const InsightChatOverlay = ({
 
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={dismiss}>
-      <View style={[styles.scrim, { backgroundColor: 'rgba(0,0,0,0.45)' }]}>
+      <View style={styles.scrim}>
+        <ScrimBackdrop pointerEvents="none" />
         <Animated.View style={[styles.sheet, sheetStyle]}>
           <LiquidBackground style={styles.flex}>
             <GuardedScreen target="expenses" label="Insights hidden">
@@ -807,6 +814,7 @@ export const InsightChatOverlay = ({
                       onPress={toggleHistory}
                       accessibilityRole="button"
                       accessibilityLabel="Conversation history"
+                      accessibilityState={{ expanded: historyOpen }}
                     >
                       <GlassView role="floating" style={styles.glassCircle}>
                         <Icon
@@ -846,8 +854,9 @@ export const InsightChatOverlay = ({
                         key={o.key}
                         style={styles.menuRow}
                         onPress={() => changeEngine(o.key)}
-                        accessibilityRole="button"
+                        accessibilityRole="radio"
                         accessibilityLabel={`Use ${o.label}`}
+                        accessibilityState={{ checked: engine === o.key }}
                       >
                         <Icon
                           source={o.icon}
@@ -892,8 +901,9 @@ export const InsightChatOverlay = ({
                             key={r}
                             style={styles.menuRow}
                             onPress={() => changeContext(r)}
-                            accessibilityRole="button"
+                            accessibilityRole="radio"
                             accessibilityLabel={`Ground the chat in ${RANGE_LABELS[r]}`}
+                            accessibilityState={{ checked: contextRange === r }}
                           >
                             <Icon
                               source="calendar-range"
@@ -1047,6 +1057,7 @@ export const InsightChatOverlay = ({
                         disabled={busy}
                         accessibilityRole="button"
                         accessibilityLabel={p}
+                        accessibilityState={{ disabled: busy }}
                       >
                         <GlassView role="floating" style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
                           <Text
@@ -1090,6 +1101,7 @@ export const InsightChatOverlay = ({
                     style={styles.sendBtn}
                     accessibilityRole="button"
                     accessibilityLabel="Send"
+                    accessibilityState={{ disabled: busy || !input.trim() }}
                   >
                     <Icon
                       source="arrow-up-circle"
@@ -1172,9 +1184,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   glassCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1211,21 +1223,32 @@ const styles = StyleSheet.create({
   starterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
   clarifyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   pendingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  thumbRow: { flexDirection: 'row', gap: 14, marginTop: 6 },
+  thumbRow: { flexDirection: 'row', gap: 6, marginTop: 6 },
+  thumbButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   actionCard: { borderWidth: 1, borderRadius: 12, padding: 10, marginTop: 10, gap: 6 },
   actionButtons: { flexDirection: 'row', gap: 8, marginTop: 4 },
   actionBtn: {
     flex: 1,
     borderWidth: 1,
     borderRadius: 10,
+    minHeight: 44,
     paddingVertical: 8,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   starterChip: {
     borderRadius: 16,
     borderWidth: 1.5,
+    minHeight: 44,
     paddingVertical: 6,
     paddingHorizontal: 12,
+    justifyContent: 'center',
   },
   inputBarShell: {
     marginHorizontal: 12,
@@ -1248,5 +1271,11 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 12,
   },
-  sendBtn: { paddingBottom: 8 },
+  sendBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

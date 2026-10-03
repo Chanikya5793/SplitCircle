@@ -70,7 +70,7 @@ export const MentionAutocomplete = ({
                   label={resolveInitials(name)}
                   style={{ backgroundColor: theme.colors.primary }}
                   labelStyle={{ fontSize: 11, lineHeight: 28 }}
-                  color="#fff"
+                  color={theme.colors.onPrimary}
         maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
       />
               )}

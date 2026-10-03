@@ -1,6 +1,6 @@
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
-import { fullBleed, GlassCard, ListSeparator, SCREEN_GUTTER, SegmentedControl, StickyHeaderPill } from '@/components/ui';
+import { fullBleed, GlassCard, ListSeparator, SCREEN_GUTTER, ScrimBackdrop, SegmentedControl, StickyHeaderPill } from '@/components/ui';
 import { TopEdgeFade } from '@/components/ui/TopEdgeFade';
 import { ChatListSkeleton } from '@/components/SkeletonLoader';
 import { LiquidBackground } from '@/components/LiquidBackground';
@@ -134,6 +134,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
   const isFlat = theme?.surfaceStyle === 'flat';
   const missed = isMissedOrDeclined(entry);
   const nameColor = missed ? theme.colors.error : theme.colors.onSurface;
+  const largeText = theme.fontScale >= 1.5;
   const initials = resolveInitials(entry.otherParticipant.displayName, 'U');
 
   return (
@@ -148,9 +149,11 @@ const CallHistoryRow = memo(function CallHistoryRow({
           style={[styles.deleteAction, { backgroundColor: theme.colors.danger }]}
           onPress={() => onDelete(entry.callId)}
           activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete call with ${resolveDisplayName(entry.otherParticipant, 'Unknown')}`}
         >
-          <MaterialCommunityIcons name="delete" size={24} color="#fff" />
-          <Text style={styles.deleteActionText}>Delete</Text>
+          <MaterialCommunityIcons name="delete" size={24} color={theme.colors.onDanger} />
+          <Text style={[styles.deleteActionText, { color: theme.colors.onDanger }]}>Delete</Text>
         </TouchableOpacity>
       )}
       overshootRight={false}
@@ -169,19 +172,14 @@ const CallHistoryRow = memo(function CallHistoryRow({
               covered x 32..1048 of a full-width row and only 43 of its 54dp
               height. The row's insets therefore belong on the highlighted view
               itself, which is what makes the highlight fill the row. */}
-          <TouchableRipple
-            onPress={() => onPressInfo(entry)}
-            onLongPress={() => onLongPressRow(entry)}
-            borderless
-            {...touchableProps}
+          <Animated.View
+            style={[
+              styles.callRow,
+              largeText && styles.callRowLarge,
+              isFlat ? styles.callRowFlat : styles.callRowGlass,
+              pressHighlightStyle,
+            ]}
           >
-            <Animated.View
-              style={[
-                styles.callRow,
-                isFlat ? styles.callRowFlat : styles.callRowGlass,
-                pressHighlightStyle,
-              ]}
-            >
               {/* Left: Avatar + Delete button in edit mode */}
               <View style={styles.leftSection}>
                 {isEditing && (
@@ -193,6 +191,8 @@ const CallHistoryRow = memo(function CallHistoryRow({
                       onPress={() => onDelete(entry.callId)}
                       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                       style={styles.deleteCircle}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete call with ${resolveDisplayName(entry.otherParticipant, 'Unknown')}`}
                     >
                       <MaterialCommunityIcons
                         name="minus-circle"
@@ -220,10 +220,20 @@ const CallHistoryRow = memo(function CallHistoryRow({
               </View>
 
               {/* Center: Name + call info */}
-              <View style={styles.centerSection}>
+              <TouchableRipple
+                style={styles.centerSection}
+                onPress={() => onPressInfo(entry)}
+                onLongPress={() => onLongPressRow(entry)}
+                borderless
+                accessibilityRole="button"
+                accessibilityLabel={`${resolveDisplayName(entry.otherParticipant, 'Unknown')}, ${getSubtitle(entry)}, ${formatCallTime(entry.startedAt)}`}
+                accessibilityHint="Opens call details"
+                {...touchableProps}
+              >
+                <View>
                 <Text
                   style={[styles.callName, { color: nameColor }]}
-                  numberOfLines={1}
+                  numberOfLines={largeText ? 0 : 1}
                 >
                   {resolveDisplayName(entry.otherParticipant, 'Unknown')}
                 </Text>
@@ -241,23 +251,23 @@ const CallHistoryRow = memo(function CallHistoryRow({
                   />
                   <Text
                     style={[styles.callSubtitle, { color: theme.colors.onSurfaceVariant }]}
-                    numberOfLines={1}
+                    numberOfLines={largeText ? 0 : 1}
                   >
                     {getSubtitle(entry)}
                   </Text>
                 </View>
-              </View>
+                </View>
+              </TouchableRipple>
 
               {/* Right: Time + callback button */}
-              <View style={styles.rightSection}>
+              <View style={[styles.rightSection, largeText && styles.rightSectionLarge]}>
                 <Text style={[styles.callTime, { color: theme.colors.onSurfaceVariant }]}>
                   {formatCallTime(entry.startedAt)}
                 </Text>
                 {!isEditing && (
                   <TouchableOpacity
                     onPress={() => onCallBack(entry)}
-                    // Measured 22x23dp with hitSlop 10 (=42) — still under the
-                    // minimum, and unnamed so it announced its glyph.
+                    // The action has a full 44-point target and an explicit name.
                     style={styles.rowActionTarget}
                     accessibilityRole="button"
                     accessibilityLabel={`Call ${resolveDisplayName(entry.otherParticipant, 'Unknown')} back, ${entry.type === 'video' ? 'video' : 'audio'}`}
@@ -284,8 +294,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
                   </TouchableOpacity>
                 )}
               </View>
-            </Animated.View>
-          </TouchableRipple>
+          </Animated.View>
         </GlassView>
       </Animated.View>
       <ListSeparator />
@@ -299,6 +308,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   const { threads } = useChat();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
+  const largeText = theme.fontScale >= 1.5;
   const insets = useSafeAreaInsets();
   const { isShielded, isLockedDown, isVanished } = usePrivacyGuard();
   const callsShielded = isShielded('calls');
@@ -784,7 +794,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                 <Text
                   style={[styles.emptyTitle, { color: theme.colors.onSurface }]}
                 >
-                  No Recent Calls
+                  No recent calls
                 </Text>
                 <Text
                   style={[
@@ -820,7 +830,11 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
             <Pressable
               style={styles.sheetBackdrop}
               onPress={() => setShowNewCallSheet(false)}
-            />
+              accessibilityRole="button"
+              accessibilityLabel="Close new call sheet"
+            >
+              <ScrimBackdrop pointerEvents="none" />
+            </Pressable>
 
             <GestureDetector gesture={sheetGesture}>
               <Animated.View
@@ -849,7 +863,9 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                     </Text>
                     <TouchableOpacity
                       onPress={() => setShowNewCallSheet(false)}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      style={styles.sheetCloseButton}
+                      accessibilityRole="button"
+                      accessibilityLabel="Close new call"
                     >
                       <MaterialCommunityIcons
                         name="close-circle"
@@ -883,7 +899,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                       <View style={styles.sheetEmpty}>
                         <Text style={{ color: theme.colors.onSurfaceVariant }}>
                           {newCallBlocked
-                            ? 'Hidden — shake again or enter your code to reveal.'
+                            ? 'Hidden. Shake again or enter your code to reveal.'
                             : searchQuery
                               ? 'No contacts found.'
                               : 'No conversations yet. Start a chat first.'}
@@ -911,14 +927,14 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                           <View style={styles.sheetItemCenter}>
                             <Text
                               style={[styles.sheetItemName, { color: theme.colors.onSurface }]}
-                              numberOfLines={1}
+                              numberOfLines={largeText ? 0 : 1}
                             >
                               {name}
                             </Text>
                             {thread.groupId && (
                               <Text
                                 style={[styles.sheetItemSub, { color: theme.colors.onSurfaceVariant }]}
-                                numberOfLines={1}
+                                numberOfLines={largeText ? 0 : 1}
                               >
                                 Group · {thread.participants.length} members
                               </Text>
@@ -930,8 +946,9 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                               setShowNewCallSheet(false);
                               onStartCall(thread, 'audio');
                             }}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             style={styles.sheetCallBtn}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Audio call ${name}`}
                           >
                             <MaterialCommunityIcons
                               name="phone-outline"
@@ -945,8 +962,9 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                               setShowNewCallSheet(false);
                               onStartCall(thread, 'video');
                             }}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             style={styles.sheetCallBtn}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Video call ${name}`}
                           >
                             <MaterialCommunityIcons
                               name="video-outline"
@@ -1100,6 +1118,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
   },
+  callRowLarge: {
+    flexWrap: 'wrap',
+  },
   leftSection: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1107,9 +1128,14 @@ const styles = StyleSheet.create({
   },
   deleteCircle: {
     marginRight: 2,
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   centerSection: {
     flex: 1,
+    minWidth: 0,
     marginLeft: 12,
     justifyContent: 'center',
   },
@@ -1131,6 +1157,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 14,
   },
+  rightSectionLarge: {
+    width: '100%',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+  },
   callTime: {
     fontSize: 14,
   },
@@ -1146,7 +1177,6 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   deleteActionText: {
-    color: '#fff',
     fontSize: 12,
     fontWeight: '600',
     marginTop: 2,
@@ -1198,7 +1228,6 @@ const styles = StyleSheet.create({
   },
   sheetBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.4)',
   },
   sheetContainer: {
     maxHeight: '75%',
@@ -1253,6 +1282,13 @@ const styles = StyleSheet.create({
   },
   sheetItemCenter: {
     flex: 1,
+    minWidth: 0,
+  },
+  sheetCloseButton: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sheetItemName: {
     fontSize: 16,
@@ -1263,7 +1299,10 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   sheetCallBtn: {
-    padding: 8,
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sheetEmpty: {
     alignItems: 'center',

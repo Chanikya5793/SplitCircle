@@ -16,6 +16,9 @@ export type ColorScheme = 'light' | 'dark';
 
 /** Semantic colors layered on top of the Paper MD3 roles. */
 export interface SemanticColors {
+  outgoingMetadata: string;
+  outgoingInset: string;
+  onOutgoingInset: string;
   success: string;
   onSuccess: string;
   successContainer: string;
@@ -101,6 +104,9 @@ export const buildTheme = (
       ...base.colors,
       primary: accent.primary,
       onPrimary: accent.onPrimary,
+      outgoingMetadata: accent.onPrimary,
+      outgoingInset: accent.primaryContainer,
+      onOutgoingInset: accent.onPrimaryContainer,
       primaryContainer: accent.primaryContainer,
       onPrimaryContainer: accent.onPrimaryContainer,
       secondary: accent.secondary,

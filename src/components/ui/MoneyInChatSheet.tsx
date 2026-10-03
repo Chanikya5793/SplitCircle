@@ -26,6 +26,8 @@ import {
 import { Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassCard } from './GlassCard';
+import { ScrimBackdrop } from './ScrimBackdrop';
+import { SelectableChip } from './SelectableChip';
 
 export interface MoneyInChatSheetProps {
   visible: boolean;
@@ -51,6 +53,53 @@ const CADENCE_OPTIONS: { value: MoneyInChatSettings['insights']['digestCadence']
   { value: 'weekly', label: 'Weekly' },
   { value: 'monthly', label: 'Monthly' },
 ];
+
+const PolicySwitchRow = ({
+  label,
+  description,
+  value,
+  onValueChange,
+  borderColor,
+}: {
+  label: string;
+  description: string;
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+  borderColor: string;
+}) => {
+  const { theme } = useTheme();
+  const toggle = () => {
+    lightHaptic();
+    onValueChange(!value);
+  };
+
+  return (
+    <Pressable
+      style={[styles.switchRow, { borderTopColor: borderColor }]}
+      onPress={toggle}
+      accessibilityRole="switch"
+      accessibilityLabel={label}
+      accessibilityState={{ checked: value }}
+    >
+      <View style={styles.switchCopy}>
+        <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
+          {label}
+        </Text>
+        <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+          {description}
+        </Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onValueChange}
+        trackColor={{ true: theme.colors.primary }}
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      />
+    </Pressable>
+  );
+};
 
 export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetProps) => {
   const { theme, isDark } = useTheme();
@@ -108,31 +157,27 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
         successHaptic();
         onClose();
       })
-      .catch((error: unknown) =>
-        appAlert('Money in chat', error instanceof Error ? error.message : 'Could not save settings.'),
-      )
+      .catch((error: unknown) => {
+        console.warn('[MoneyInChat] Save failed:', error);
+        appAlert('Could not save money settings', 'Your previous settings are still active. Try again.');
+      })
       .finally(() => setSaving(false));
   };
 
   const translateY = slide.interpolate({ inputRange: [0, 1], outputRange: [sheetH + 60, 0] });
   const hairline = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)';
 
-  const chip = (selected: boolean) => [
-    styles.chip,
-    {
-      borderColor: selected ? theme.colors.primary : hairline,
-      backgroundColor: selected ? `${theme.colors.primary}1f` : 'transparent',
-    },
-  ];
-  const chipText = (selected: boolean) => ({
-    color: selected ? theme.colors.primary : theme.colors.onSurfaceVariant,
-    fontWeight: selected ? ('700' as const) : ('500' as const),
-  });
-
   return (
     <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay} pointerEvents="box-none">
-        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close Money in Chat settings" />
+        <Pressable
+          style={styles.backdrop}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close Money in Chat settings"
+        >
+          <ScrimBackdrop pointerEvents="none" />
+        </Pressable>
         <Animated.View onLayout={(e) => setSheetH(e.nativeEvent.layout.height)} style={{ transform: [{ translateY }] }}>
           <GlassCard role="floating"
             style={styles.sheet}
@@ -153,63 +198,39 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
               </Text>
               <View style={styles.chipRow}>
                 {AUTO_POST_OPTIONS.map((option) => (
-                  <TouchableOpacity
+                  <SelectableChip
                     key={option.value}
+                    label={option.label}
+                    selected={staged.autoPost === option.value}
+                    accessibilityRole="radio"
                     onPress={() => {
                       lightHaptic();
                       setStaged((s) => ({ ...s, autoPost: option.value }));
                     }}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Auto-post: ${option.label}`}
-                    style={chip(staged.autoPost === option.value)}
-                  >
-                    <Text variant="labelMedium" style={chipText(staged.autoPost === option.value)}>
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
+                  />
                 ))}
               </View>
 
-              <View
-                style={[
-                  styles.switchRow,
-                  { borderTopColor: hairline },
-                ]}
-              >
-                <View style={styles.switchCopy}>
-                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
-                    Stale-debt reminders
-                  </Text>
-                  <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                    ManaSplit nudges the chat when a debt sits unsettled
-                  </Text>
-                </View>
-                <Switch
-                  value={staged.nudges.enabled}
-                  onValueChange={(enabled) => {
-                    lightHaptic();
-                    setStaged((s) => ({ ...s, nudges: { ...s.nudges, enabled } }));
-                  }}
-                  trackColor={{ true: theme.colors.primary }}
-                />
-              </View>
+              <PolicySwitchRow
+                label="Stale-debt reminders"
+                description="ManaSplit nudges the chat when a debt sits unsettled"
+                value={staged.nudges.enabled}
+                onValueChange={(enabled) => setStaged((s) => ({ ...s, nudges: { ...s.nudges, enabled } }))}
+                borderColor={hairline}
+              />
               {staged.nudges.enabled && (
                 <View style={styles.chipRow}>
                   {STALE_DAYS_OPTIONS.map((days) => (
-                    <TouchableOpacity
+                    <SelectableChip
                       key={days}
+                      label={`${days} days`}
+                      selected={staged.nudges.staleDays === days}
+                      accessibilityRole="radio"
                       onPress={() => {
                         lightHaptic();
                         setStaged((s) => ({ ...s, nudges: { ...s.nudges, staleDays: days } }));
                       }}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Remind after ${days} days`}
-                      style={chip(staged.nudges.staleDays === days)}
-                    >
-                      <Text variant="labelMedium" style={chipText(staged.nudges.staleDays === days)}>
-                        {days} days
-                      </Text>
-                    </TouchableOpacity>
+                    />
                   ))}
                 </View>
               )}
@@ -222,70 +243,34 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
               </Text>
               <View style={styles.chipRow}>
                 {CREATOR_OPTIONS.map((option) => (
-                  <TouchableOpacity
+                  <SelectableChip
                     key={option.value}
+                    label={option.label}
+                    selected={staged.createFromChat === option.value}
+                    accessibilityRole="radio"
                     onPress={() => {
                       lightHaptic();
                       setStaged((s) => ({ ...s, createFromChat: option.value }));
                     }}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Create from chat: ${option.label}`}
-                    style={chip(staged.createFromChat === option.value)}
-                  >
-                    <Text variant="labelMedium" style={chipText(staged.createFromChat === option.value)}>
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
+                  />
                 ))}
               </View>
 
-              <View
-                style={[
-                  styles.switchRow,
-                  { borderTopColor: hairline },
-                ]}
-              >
-                <View style={styles.switchCopy}>
-                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
-                    Invite links
-                  </Text>
-                  <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                    Members can share the group invite from chat
-                  </Text>
-                </View>
-                <Switch
-                  value={staged.inviteLinks}
-                  onValueChange={(inviteLinks) => {
-                    lightHaptic();
-                    setStaged((s) => ({ ...s, inviteLinks }));
-                  }}
-                  trackColor={{ true: theme.colors.primary }}
-                />
-              </View>
+              <PolicySwitchRow
+                label="Invite links"
+                description="Members can share the group invite from chat"
+                value={staged.inviteLinks}
+                onValueChange={(inviteLinks) => setStaged((s) => ({ ...s, inviteLinks }))}
+                borderColor={hairline}
+              />
 
-              <View
-                style={[
-                  styles.switchRow,
-                  { borderTopColor: hairline },
-                ]}
-              >
-                <View style={styles.switchCopy}>
-                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
-                    Share receipts outside the app
-                  </Text>
-                  <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                    Expense/settlement cards can export as images
-                  </Text>
-                </View>
-                <Switch
-                  value={staged.outwardSharing}
-                  onValueChange={(outwardSharing) => {
-                    lightHaptic();
-                    setStaged((s) => ({ ...s, outwardSharing }));
-                  }}
-                  trackColor={{ true: theme.colors.primary }}
-                />
-              </View>
+              <PolicySwitchRow
+                label="Share receipts outside the app"
+                description="Expense and settlement cards can export as images"
+                value={staged.outwardSharing}
+                onValueChange={(outwardSharing) => setStaged((s) => ({ ...s, outwardSharing }))}
+                borderColor={hairline}
+              />
 
               {/* ── Insights in chat (ai_layer/docs/22) ── */}
               <Text
@@ -296,94 +281,42 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
               </Text>
               <View style={styles.chipRow}>
                 {CADENCE_OPTIONS.map((option) => (
-                  <TouchableOpacity
+                  <SelectableChip
                     key={option.value}
+                    label={option.label}
+                    selected={staged.insights.digestCadence === option.value}
+                    accessibilityRole="radio"
                     onPress={() => {
                       lightHaptic();
                       setStaged((s) => ({ ...s, insights: { ...s.insights, digestCadence: option.value } }));
                     }}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Digest cadence: ${option.label}`}
-                    style={chip(staged.insights.digestCadence === option.value)}
-                  >
-                    <Text variant="labelMedium" style={chipText(staged.insights.digestCadence === option.value)}>
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
+                  />
                 ))}
               </View>
 
-              <View
-                style={[
-                  styles.switchRow,
-                  { borderTopColor: hairline },
-                ]}
-              >
-                <View style={styles.switchCopy}>
-                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
-                    Unusual-spend alerts
-                  </Text>
-                  <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                    Post a quiet card when a spend far exceeds the usual
-                  </Text>
-                </View>
-                <Switch
-                  value={staged.insights.anomalyPosts}
-                  onValueChange={(anomalyPosts) => {
-                    lightHaptic();
-                    setStaged((s) => ({ ...s, insights: { ...s.insights, anomalyPosts } }));
-                  }}
-                  trackColor={{ true: theme.colors.primary }}
-                />
-              </View>
+              <PolicySwitchRow
+                label="Unusual-spend alerts"
+                description="Post a quiet card when a spend far exceeds the usual"
+                value={staged.insights.anomalyPosts}
+                onValueChange={(anomalyPosts) => setStaged((s) => ({ ...s, insights: { ...s.insights, anomalyPosts } }))}
+                borderColor={hairline}
+              />
 
-              <View
-                style={[
-                  styles.switchRow,
-                  { borderTopColor: hairline },
-                ]}
-              >
-                <View style={styles.switchCopy}>
-                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
-                    Budget alerts
-                  </Text>
-                  <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                    Post when a category crosses 80% / 100% of budget
-                  </Text>
-                </View>
-                <Switch
-                  value={staged.insights.budgetAlerts}
-                  onValueChange={(budgetAlerts) => {
-                    lightHaptic();
-                    setStaged((s) => ({ ...s, insights: { ...s.insights, budgetAlerts } }));
-                  }}
-                  trackColor={{ true: theme.colors.primary }}
-                />
-              </View>
+              <PolicySwitchRow
+                label="Budget alerts"
+                description="Post when a category crosses 80% or 100% of budget"
+                value={staged.insights.budgetAlerts}
+                onValueChange={(budgetAlerts) => setStaged((s) => ({ ...s, insights: { ...s.insights, budgetAlerts } }))}
+                borderColor={hairline}
+              />
 
-              <View
-                style={[
-                  styles.switchRow,
-                  { borderTopColor: hairline },
-                ]}
-              >
-                <View style={styles.switchCopy}>
-                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
-                    Fairness meter admins-only
-                  </Text>
-                  <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                    Hide the who-pays share from non-admin members
-                  </Text>
-                </View>
-                <Switch
-                  value={staged.insights.fairnessAdminsOnly}
-                  onValueChange={(fairnessAdminsOnly) => {
-                    lightHaptic();
-                    setStaged((s) => ({ ...s, insights: { ...s.insights, fairnessAdminsOnly } }));
-                  }}
-                  trackColor={{ true: theme.colors.primary }}
-                />
-              </View>
+              <PolicySwitchRow
+                label="Fairness meter for admins only"
+                description="Hide the who-pays share from non-admin members"
+                value={staged.insights.fairnessAdminsOnly}
+                onValueChange={(fairnessAdminsOnly) => setStaged((s) => ({ ...s, insights: { ...s.insights, fairnessAdminsOnly } }))}
+                borderColor={hairline}
+              />
 
               {/* ── Monthly category budgets ── */}
               {budgetCategories.length > 0 && (
@@ -472,7 +405,6 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.45)', // scrim — fades with the Modal
   },
   sheet: {
     borderTopLeftRadius: 28,
@@ -519,16 +451,11 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 10,
   },
-  chip: {
-    paddingVertical: 7,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
   switchRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    minHeight: 48,
     paddingVertical: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
   },

@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { ScrimBackdrop } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { AiToolEvidence } from '@/utils/aiTools';
 import type { AiAnswerSource, AiThreadSource } from '@/utils/aiThreads';
@@ -7,6 +8,7 @@ import { lightHaptic } from '@/utils/haptics';
 import { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Icon, Text } from 'react-native-paper';
+import Animated, { SlideInDown } from 'react-native-reanimated';
 
 interface AiEvidenceSheetProps {
   engine?: AiAnswerSource;
@@ -20,24 +22,24 @@ const ENGINE: Record<AiAnswerSource, { icon: string; label: string; detail: stri
   deterministic: {
     icon: 'calculator-variant-outline',
     label: 'Exact calculation',
-    detail: 'ManaSplit calculated this answer with deterministic app code; no model arithmetic was used.',
+    detail: 'ManaSplit calculated this answer directly from your expense and balance data.',
   },
   ondevice: {
     icon: 'chip',
     label: 'On-device',
-    detail: 'ManaSplit gathered the answer data through approved capabilities and Apple Intelligence worded it on this device.',
+    detail: 'ManaSplit gathered the relevant data, then Apple Intelligence wrote the answer on this device.',
   },
   pcc: {
     icon: 'cloud-lock-outline',
     label: 'Private Cloud',
-    detail: 'ManaSplit gathered the answer data through approved capabilities and Apple Private Cloud Compute worded the answer.',
+    detail: 'ManaSplit gathered the relevant data, then Apple Private Cloud Compute wrote the answer.',
   },
 };
 
 const DATA_CLASS: Record<string, string> = {
   persistent_money: 'Expense and balance data',
-  local_chat: 'Local chat history · on-device only',
-  local_calls: 'Local call history · on-device only',
+  local_chat: 'Messages stored on this device',
+  local_calls: 'Call history stored on this device',
 };
 
 export const AiEvidenceSheet = ({
@@ -68,9 +70,13 @@ export const AiEvidenceSheet = ({
         </Text>
       </TouchableOpacity>
 
-      <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
+      <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={close}>
         <View style={styles.modalRoot}>
-          <Pressable style={styles.backdrop} onPress={close} accessibilityLabel="Close answer details" />
+          <Pressable style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel="Close answer details">
+            <ScrimBackdrop pointerEvents="none" />
+          </Pressable>
+          {visible ? (
+          <Animated.View entering={SlideInDown.springify().damping(30).stiffness(350)} accessibilityViewIsModal>
           <GlassView role="floating" style={styles.sheet}>
             <View style={styles.header}>
               <View style={{ flex: 1 }}>
@@ -78,10 +84,10 @@ export const AiEvidenceSheet = ({
                   How this was answered
                 </Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
-                  Calculation and wording are disclosed separately.
+                  See what data ManaSplit used and where the answer was written.
                 </Text>
               </View>
-              <TouchableOpacity onPress={close} accessibilityRole="button" accessibilityLabel="Close">
+              <TouchableOpacity onPress={close} accessibilityRole="button" accessibilityLabel="Close answer details" style={styles.closeButton}>
                 <Icon source="close" size={22} color={theme.colors.onSurfaceVariant} />
               </TouchableOpacity>
             </View>
@@ -104,7 +110,7 @@ export const AiEvidenceSheet = ({
               {capabilities.length > 0 ? (
                 <View style={[styles.section, { borderColor: theme.colors.outlineVariant }]}>
                   <Text variant="titleSmall" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-                    Capabilities used
+                    Data used
                   </Text>
                   {capabilities.map((entry) => (
                     <View key={`${entry.tool}:${entry.version}`} style={styles.detailRow}>
@@ -112,7 +118,7 @@ export const AiEvidenceSheet = ({
                       <View style={{ flex: 1 }}>
                         <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>{entry.title}</Text>
                         <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                          {entry.dataClasses.map((kind) => DATA_CLASS[kind] ?? kind).join(' · ')} · contract v{entry.version}
+                          {entry.dataClasses.map((kind) => DATA_CLASS[kind] ?? kind).join(' · ')}
                         </Text>
                       </View>
                     </View>
@@ -123,17 +129,12 @@ export const AiEvidenceSheet = ({
               {sources.length > 0 ? (
                 <View style={[styles.section, { borderColor: theme.colors.outlineVariant }]}>
                   <Text variant="titleSmall" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-                    Expense evidence
+                    Expenses used
                   </Text>
-                  {sources.map((source, index) => (
-                    <TouchableOpacity
-                      key={`${source.expenseId ?? source.title ?? 'source'}:${index}`}
-                      style={styles.detailRow}
-                      disabled={!source.expenseId || !onOpenExpense}
-                      onPress={() => { close(); onOpenExpense?.(source); }}
-                      accessibilityRole={source.expenseId && onOpenExpense ? 'button' : undefined}
-                      accessibilityLabel={`Open ${source.title ?? 'expense'}`}
-                    >
+                  {sources.map((source, index) => {
+                    const canOpen = Boolean(source.expenseId && onOpenExpense);
+                    const rowContent = (
+                      <>
                       <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>
                         [{index + 1}]
                       </Text>
@@ -148,15 +149,34 @@ export const AiEvidenceSheet = ({
                       <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                         {formatCurrency(source.amount, source.currency ?? fallbackCurrency)}
                       </Text>
-                      {source.expenseId && onOpenExpense ? (
+                      {canOpen ? (
                         <Icon source="chevron-right" size={16} color={theme.colors.onSurfaceVariant} />
                       ) : null}
-                    </TouchableOpacity>
-                  ))}
+                      </>
+                    );
+                    const key = `${source.expenseId ?? source.title ?? 'source'}:${index}`;
+                    return canOpen ? (
+                      <TouchableOpacity
+                        key={key}
+                        style={styles.detailRow}
+                        onPress={() => { close(); onOpenExpense?.(source); }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Open ${source.title ?? 'expense'}`}
+                      >
+                        {rowContent}
+                      </TouchableOpacity>
+                    ) : (
+                      <View key={key} style={styles.detailRow}>
+                        {rowContent}
+                      </View>
+                    );
+                  })}
                 </View>
               ) : null}
             </ScrollView>
           </GlassView>
+          </Animated.View>
+          ) : null}
         </View>
       </Modal>
     </>
@@ -164,15 +184,16 @@ export const AiEvidenceSheet = ({
 };
 
 const styles = StyleSheet.create({
-  trigger: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, alignSelf: 'flex-start' },
+  trigger: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, alignSelf: 'flex-start', minHeight: 44 },
   modalRoot: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.38)' },
+  backdrop: { ...StyleSheet.absoluteFillObject },
   sheet: { maxHeight: '78%', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 20 },
   header: { flexDirection: 'row', alignItems: 'flex-start', padding: 18, gap: 12 },
+  closeButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   content: { paddingHorizontal: 16, paddingBottom: 12, gap: 10 },
   section: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, padding: 12, gap: 8 },
   sectionTitle: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 3 },
+  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, paddingVertical: 3 },
 });
 
 export default AiEvidenceSheet;

@@ -45,7 +45,7 @@ const METHOD_LABELS: Record<HistoryMethod, string> = {
   shares: 'Shares',
   adjustment: 'Adjustments',
   itemized: 'Receipt items',
-  income: 'By income',
+  income: 'Weighted split',
   consumption: 'By consumption',
   timeBased: 'Time-based',
   gamified: 'Fun mode',

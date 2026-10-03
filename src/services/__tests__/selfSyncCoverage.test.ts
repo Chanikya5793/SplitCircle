@@ -29,6 +29,18 @@ const rtdbMock = vi.hoisted(() => ({
   set: vi.fn(async () => undefined),
   ref: vi.fn((_db: unknown, path: string) => ({ path })),
 }));
+const callableMock = vi.hoisted(() => vi.fn(async (_request: {
+  recipientId: string;
+  messageId: string;
+  chatId: string;
+  payload: Record<string, unknown>;
+}) => ({ data: { queued: true } })));
+
+vi.mock('@/firebase', () => ({ app: {} }));
+vi.mock('firebase/functions', () => ({
+  getFunctions: vi.fn(() => ({})),
+  httpsCallable: vi.fn(() => callableMock),
+}));
 
 vi.mock('firebase/database', () => ({
   getDatabase: () => ({}),
@@ -89,6 +101,7 @@ describe('self-sync device coverage', () => {
     envelope.encryptMessageForRecipient.mockReset();
     rtdbMock.set.mockClear();
     rtdbMock.ref.mockClear();
+    callableMock.mockClear();
   });
 
   it('asks for best-effort coverage, never all-or-nothing, when mirroring to our own devices', async () => {
@@ -115,8 +128,8 @@ describe('self-sync device coverage', () => {
 
     await queueMessageToOwnDevices('me', message, false);
 
-    expect(rtdbMock.set).toHaveBeenCalledTimes(1);
-    const [, payload] = rtdbMock.set.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
+    expect(callableMock).toHaveBeenCalledTimes(1);
+    const payload = callableMock.mock.calls[0][0].payload as Record<string, unknown>;
     expect(payload.originDeviceId).toBe('this-device');
     expect(Object.keys(payload.envelopes as object)).toEqual(['healthy-sibling']);
     // Content must travel encrypted-only: the plaintext is blanked and lives
@@ -159,8 +172,8 @@ describe('self-sync device coverage', () => {
 
     await queueMessageToOwnDevices('me', replayedFromMeshQueue, false);
 
-    expect(rtdbMock.set).toHaveBeenCalledTimes(1);
-    const [, payload] = rtdbMock.set.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
+    expect(callableMock).toHaveBeenCalledTimes(1);
+    const payload = callableMock.mock.calls[0][0].payload as Record<string, unknown>;
     const containsUndefined = (value: unknown): boolean =>
       value !== null && typeof value === 'object'
         ? Object.values(value as Record<string, unknown>)

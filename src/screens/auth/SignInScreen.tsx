@@ -1,7 +1,8 @@
 import { GlassCard } from '@/components/ui';
 import { AppTextInput } from '@/components/ui/AppTextInput';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { MugguMark } from '@/components/brand';
+import { PrimaryButton } from '@/components/PrimaryButton';
+import { AuthEntrance, MugguLoader } from '@/components/brand';
 import { APP_NAME } from '@/constants/appInfo';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -45,6 +46,7 @@ export const SignInScreen = ({ onSwitchToRegister, onForgotPassword, onLinkDevic
 
   const canSubmit =
     Boolean(email && password) && isOnline && !loading && !googleLoading && !appleLoading && !authBusy;
+  const signingIn = loading || googleLoading || appleLoading || authBusy;
 
   const handleSignIn = async () => {
     if (!canSubmit) return;
@@ -98,12 +100,15 @@ export const SignInScreen = ({ onSwitchToRegister, onForgotPassword, onLinkDevic
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          <AuthEntrance>
           <GlassCard style={styles.card} contentStyle={styles.cardContent}>
             <View style={styles.brandMark}>
-              <MugguMark
+              <MugguLoader
                 size={68}
                 variant={isDark ? 'reversed' : 'primary'}
-                accessibilityLabel={`${APP_NAME} logo`}
+                loop={signingIn}
+                revealDurationMs={1100}
+                accessibilityLabel={signingIn ? `Signing in to ${APP_NAME}` : `${APP_NAME} logo`}
               />
             </View>
             <Text variant="headlineMedium" style={styles.title}>
@@ -154,18 +159,18 @@ export const SignInScreen = ({ onSwitchToRegister, onForgotPassword, onLinkDevic
             ) : null}
             {!isOnline ? (
               <Text style={{ color: theme.colors.muted, textAlign: 'center' }}>
-                You're offline — signing in needs an internet connection.
+                You're offline. Signing in needs an internet connection.
               </Text>
             ) : null}
-            <Button
+            <PrimaryButton
               mode="contained"
               onPress={handleSignIn}
               loading={loading}
               disabled={!canSubmit}
             >
               Sign in
-            </Button>
-            <Button
+            </PrimaryButton>
+            <PrimaryButton
               mode="outlined"
               style={styles.field}
               onPress={handleGoogle}
@@ -174,7 +179,7 @@ export const SignInScreen = ({ onSwitchToRegister, onForgotPassword, onLinkDevic
               icon="google"
             >
               Continue with Google
-            </Button>
+            </PrimaryButton>
             {Platform.OS === 'ios' && appleAvailable && (
               <View
                 pointerEvents={!isOnline || loading || googleLoading || appleLoading || authBusy ? 'none' : 'auto'}
@@ -205,6 +210,7 @@ export const SignInScreen = ({ onSwitchToRegister, onForgotPassword, onLinkDevic
               Have a code? Link this device
             </Button>
           </GlassCard>
+          </AuthEntrance>
         </ScrollView>
       </KeyboardAvoidingView>
     </LiquidBackground>

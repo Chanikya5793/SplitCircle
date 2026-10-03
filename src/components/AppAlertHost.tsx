@@ -25,7 +25,7 @@
 // style: it is the "get me out of here" affordance, and separating it makes it
 // findable without reading the list.
 
-import { GlassCard } from '@/components/ui';
+import { GlassCard, ScrimBackdrop } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { registerAppAlertHost, type AppAlertRequest } from '@/utils/appAlert';
 import { lightHaptic } from '@/utils/haptics';
@@ -172,7 +172,9 @@ export function AppAlertHost() {
           onPress={handleDismiss}
           accessibilityRole="button"
           accessibilityLabel={`Close ${current.title || 'menu'}`}
-        />
+        >
+          <ScrimBackdrop pointerEvents="none" />
+        </Pressable>
         <Animated.View
           onLayout={(e) => setSheetH(e.nativeEvent.layout.height)}
           style={[styles.sheetWrap, { paddingBottom: insets.bottom + 10 }, { transform: [{ translateY }] }]}
@@ -236,7 +238,6 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.45)',
   },
   sheetWrap: {
     paddingHorizontal: 10,

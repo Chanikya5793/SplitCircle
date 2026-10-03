@@ -2,6 +2,16 @@
 
 Current design contract. Rules only — history lives in git.
 
+## Refinement direction
+
+- Selected direction: **B, Refined Glass**. Keep the glass identity while reducing
+  competing emphasis through calmer ambient color, coherent surface groups, and
+  quiet inner rows. Apply the audit findings one at a time.
+- Ambient background motion respects Reduce Motion and stays still until the OS
+  preference is known. Stop its loops when the screen loses focus or the app becomes
+  inactive; resume after interactions settle. Disabling motion freezes the current
+  composition without resetting its position. This does not disable glass material.
+
 ## Theme & tokens
 
 - One theme source: `src/theme/` (`useTheme()` returns Paper MD3 + semantic tokens).
@@ -21,7 +31,7 @@ Current design contract. Rules only — history lives in git.
   ListRow, EmptyState, OfflineState, SyncBadge, MoneyText, SectionLabel). Reuse these;
   no new UI libraries; keep react-native-paper.
 
-## Two surface styles, ONE primitive
+## Two surface styles, one material contract
 
 The app ships two surface treatments, user-selectable in Settings ▸ Appearance
 and persisted with mode/accent (`ThemeContext.surfaceStyle`, doc 37):
@@ -37,22 +47,48 @@ hand-rolls its own material is a bug in BOTH modes, because `surfaceStyle`
 cannot reach it: in glass it drifts (the Calls-tab incident below), and in flat
 it stays a card while everything around it flattens.
 
-**Every bounded surface declares a structural role** (`ui/surfaceRole.ts`),
-which is read only in flat mode — glass ignores it entirely, which is what keeps
-the shipping UI byte-identical:
+Every bounded surface uses `GlassCard` and declares its structural role through
+`ui/surfaceRole.ts`. The deprecated `GlassView` shim forwards the same role.
 
-- **`role="section"`** (default) — a content card. Goes fully borderless in
-  flat; grouping is carried by section labels and dividers.
-- **`role="floating"`** — chrome that sits OFF the canvas over unrelated
-  scrolling content: sheets, menus, dropdowns, autocompletes, toasts, sticky
-  header pills, circular icon buttons, modals. **Keeps an opaque fill in flat.**
+| Role | Glass preference | Flat preference | Reduce Transparency |
+|---|---|---|---|
+| `section` (default) | Material around a coherent content group | Borderless, no fill/radius/elevation | Opaque card under Glass; stays borderless under Flat |
+| `floating` | Material protecting overlay content | Opaque fill and hairline | Opaque fill and hairline |
+| `glass` | Deliberate material accent | Retains the material path | Opaque card; never bypasses accessibility |
 
-*Test: if deleting the surface entirely would leave its content floating over
-unrelated scrolling content, it is `floating`.* A borderless toast is an
-invisible toast. Getting this wrong is invisible in glass mode and invisible to
-`tsc` — `role="section"` is always valid TypeScript — so it is enforced by
-`src/utils/__tests__/surfaceRoleCoverage.test.ts`, which fails if any glass
-surface inside a `<Modal>` is neither floating nor nested inside one.
+Use `section` for content groups. Use `floating` when removing the surface would
+leave content over unrelated scrolling content: sheets, menus, dropdowns, toasts,
+sticky headers and floating icon controls. Nested rows normally share their parent
+material; they do not each need another material layer.
+
+Use `glass` only for the existing deliberate accents: group header/balance,
+DebtsList, friend hero/balance, and SegmentedControl. It is not a shortcut to bypass
+Flat on ordinary content. New accents require an explicit design rationale.
+The actual native/blur/Android fallback and radii are resolved by GlassCard.
+Current Flat glass accents retain compact token radii and opaque fallback tints;
+this contract does not promise identical appearance across material tiers.
+
+Reduce Transparency overrides every material role. It does not change the user's
+saved appearance preference or turn a Glass layout into a borderless layout.
+Numeric radii retain deliberate geometry such as circular controls; token radii
+use the compact scale when Flat or Reduce Transparency is active.
+
+`surfaceRoleCoverage.test.ts` checks that a surface inside a Modal has a protecting
+`floating`/`glass` ancestor or is itself protecting. Use `floating` for new modal
+chrome; passing the structural test does not justify an unnecessary `glass` accent.
+
+### Screen-edge geometry
+
+- Every screen keeps `SCREEN_GUTTER` between readable content and both display
+  edges in Glass and Flat. Removing section material never removes this inset.
+- Add the device's left and right safe-area insets outside that gutter when the
+  display has horizontal obstructions, including landscape orientations.
+- `fullBleed` is reserved for row-list chrome whose press highlight or divider
+  needs to reach the screen boundary. It cancels the screen gutter on the card,
+  while `ListRow` or the row's own inner container restores the readable inset.
+- Ordinary copy, headings, controls, empty states, forms and timelines do not use
+  `fullBleed`. Any non-row content inside a full-width section must restore
+  `SCREEN_GUTTER` on a nested child because Flat `GlassCard` resets card padding.
 
 **Flat mode implies contrast obligations.** With no card fill, whatever the
 user picks as their background IS the text background. `muted` measures 2.92:1
@@ -60,22 +96,23 @@ over the worst blob with no material to lift it. Solid background presets exist
 for this (`constants/solidBackgrounds.ts`) and are contrast-tested; never add
 one without running `solidBackgroundContrast.test.ts`.
 
-### Glass mode — the original contract
+### Refined Glass composition
 
-Everything below describes the `glass` treatment, which remains the default.
+Glass is the default material, with one calm ambient canvas and coherent content
+groups. Give useful content and the main action more emphasis than the material.
+Use quiet inner rows and dividers instead of nested decorative cards. Financial
+forms, split editors and stats keep a readable data hierarchy. Their material
+still resolves through GlassCard, including Flat and accessibility fallbacks.
 
-**EVERY screen/overlay ships GLASS-FIRST** (LiquidBackground canvas + glass cards,
-bubbles, chrome) — lists, home, settings, chats, browsing, stats, conversational
-surfaces, and `BillSplitScreen` (`src/components/BillSplit/`, the split-method editor
-a "Split options" tap opens). There is no solid exception anymore: `BillSplitScreen`
-used to ship a deliberate near-opaque "dense editor" treatment (rationale: legibility
-at high row density, blobs never competing with dense data) — reverted 2026-07-22 after
-user feedback that the split editor read as visibly un-glass next to the rest of the
-app; it's ambient like everything else now. Its OTHER dense-editor behavioral rules
-(docked footer, zero reserved clearance, page-swipe between modes — see "Dense editors"
-below) still apply; only the material changed. Any popup/menu/dialog a screen presents
-directly (payer picker, category picker, receipt picker, etc.) MUST be glass. When in
-doubt: glass.
+The default ambient blob layer uses 40% of its prior intensity (effective 18%
+per blob); explicitly selected blob/photo/solid wallpapers keep their own
+presentation. Expenses leads with distinct, uncapped per-currency balances.
+New group is the sole floating action; Friends and Join via code remain visible
+as quiet in-flow controls. At large text sizes creation moves into the footer.
+
+App-owned sheets, menus and pickers use `role="floating"`. Native authentication,
+permission, media and call controls retain their platform treatment. Avatars,
+badges, progress indicators and media are content/geometry, not cards to flatten.
 
 **Full-screen overlays are gesture-dismissable.** Anything that covers the screen
 (chat overlays, full-screen results) closes on a swipe-down: grabber bar + 1:1 finger
@@ -103,8 +140,8 @@ and shows the live engine where a conversation is ongoing. Context injections
 **One primitive.** ALL glass goes through `GlassCard` (`src/components/ui/GlassCard.tsx`);
 `GlassView` is a deprecated shim over it (and forwards `role`). Never hand-roll BlurView
 + rgba tints for a surface that should be glass — that's how the Calls tab drifted.
-Three-tier material, resolved once at startup. **Flat mode bypasses all three tiers**
-— no blur, no native material, no Android elevation on any of them:
+Three-tier material, resolved once at startup. **Flat section/floating roles bypass all three tiers**; deliberate `glass` accents
+retain the material path. Reduce Transparency bypasses material for every role:
 
 | Tier | Path | Notes |
 |---|---|---|
@@ -215,15 +252,16 @@ Add Expense screen that opens it; see the note above): glass like everywhere els
 still governed by these density/behavior rules unique to a high-row-count editor:
 - Cards are `GlassCard` (`SolidCard` in `AdvancedModeContent.tsx` is the shared wrapper —
   one edit there covers every mode). Full-screen celebratory reveals (winner overlays)
-  use a full-bleed `BlurView` backdrop, not a bounded card — same pattern as
+  use the full-bleed `ScrimBackdrop` primitive, not a bounded card — same pattern as
   `MessageActionSheet`'s context-menu backdrop.
 - Every vertical pixel works: footers dock in normal flow (header / flex ScrollView /
   footer), zero reserved clearance; pageSheets get ~14px top padding, not 56.
 - **Primary actions dock, never scroll away.** A form's commit/cancel (e.g. Add Expense
   Save/Cancel) lives in a docked bar below a flex ScrollView, always in reach — the user
   never scrolls to the bottom of the fields to find Save.
-- Row lists live in iOS inset-grouped solid cards with hairline dividers — never naked
-  on the canvas. Last row drops its divider.
+- Row lists share one inset-grouped GlassCard with quiet hairline dividers.
+  Flat sections use borderless grouping; do not add per-row material. The last row
+  drops its divider.
 - Content > chrome: no per-section title banners when a selector already names the
   surface; hints are single quiet lines.
 - **The footer earns its place or it's gone.** It is the ONE docked commit: a compact
@@ -322,3 +360,21 @@ No hardcoded placeholder suggestions, ever. No data → zero pixels.
 - No navigation-structure or data-context API changes during styling work.
 - Don't break the three-tier storage DNA (CLAUDE.md).
 - All in-app brand copy via `APP_NAME` (`constants/appInfo.ts`).
+
+## Screen families
+
+- Transparent native-header details use `DetailScreenScaffold`: it owns measured
+  header clearance, TopEdgeFade, content/indicator insets and standard
+  RefreshControl offset. Keep LiquidBackground and privacy guards outside it;
+  dialogs, sheets and floating actions remain siblings. Use bottomSpacing for
+  extra bottom clearance. Custom refresh components must handle their own offset.
+- Plans, Security Center, stats, backup/device details and Edit Name are the
+  adopted examples. Edit Name retains its outer KeyboardAvoidingView; Personal
+  Stats retains automatic keyboard insets. Stats keep their larger bottom gaps.
+- Root virtualized lists retain FlatList with their existing sticky header and
+  tab-bar clearance. Do not replace virtualization to adopt a scroll shell.
+- Custom collapsing titles use ScreenScaffold or its LargeTitle/header primitives;
+  they do not share native-header geometry. Group Info is a custom-header example.
+- Conversation composers, full-screen calls, native authentication and modal
+  sheets keep purpose-specific keyboard, safe-area and interaction ownership.
+  Never wrap an opaque-header or nested/inset scroll screen in DetailScreenScaffold.

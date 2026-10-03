@@ -2,11 +2,7 @@ import { getInfoAsync } from 'expo-file-system/legacy';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { Image, Platform } from 'react-native';
 import { nativeLog } from '../../modules/splitcircle-media';
-import {
-  Video as VideoCompressor,
-  getVideoMetaData,
-  getImageMetaData,
-} from 'react-native-compressor';
+import { Video as VideoCompressor, getVideoMetaData, getImageMetaData } from 'react-native-compressor';
 
 /**
  * Sentinel thrown when a picked asset's underlying file isn't actually
@@ -50,20 +46,16 @@ export const ensureMediaSourceAvailable = async (uri: string): Promise<void> => 
   try {
     const info = await getInfoAsync(uri);
     if (!info.exists) {
-      throw new MediaSourceUnavailableError(
-        'Source file is no longer available on this device. Pick it again.',
-      );
+      throw new MediaSourceUnavailableError('Source file is no longer available on this device. Pick it again.');
     }
     if ('size' in info && info.size === 0) {
       throw new MediaSourceUnavailableError(
-        'Source file is empty — the iCloud download may have failed. Try again on a stronger connection.',
+        'Source file is empty. The iCloud download may have failed. Try again on a stronger connection.',
       );
     }
   } catch (err) {
     if (err instanceof MediaSourceUnavailableError) throw err;
-    throw new MediaSourceUnavailableError(
-      'Could not read the source file. Pick it again or check your network.',
-    );
+    throw new MediaSourceUnavailableError('Could not read the source file. Pick it again or check your network.');
   }
 };
 
@@ -153,14 +145,8 @@ export interface ProcessedVideo extends ProcessedMedia, SourceVideoMetadata {}
 
 /** Apply EXIF orientation to raw pixel dimensions. Orientations 5–8 imply
  *  a 90/270° rotation, which swaps width and height in display space. */
-const orient = (
-  rawWidth: number,
-  rawHeight: number,
-  orientation: number,
-): { width: number; height: number } =>
-  orientation >= 5 && orientation <= 8
-    ? { width: rawHeight, height: rawWidth }
-    : { width: rawWidth, height: rawHeight };
+const orient = (rawWidth: number, rawHeight: number, orientation: number): { width: number; height: number } =>
+  orientation >= 5 && orientation <= 8 ? { width: rawHeight, height: rawWidth } : { width: rawWidth, height: rawHeight };
 
 const parseExifDateTime = (value: unknown): number | undefined => {
   if (typeof value !== 'string') return undefined;
@@ -201,12 +187,9 @@ export const readImageSourceMetadata = async (
     const exif: Record<string, unknown> = (native.exif ?? {}) as Record<string, unknown>;
     const tiff = (exif['{TIFF}'] as Record<string, unknown> | undefined) ?? {};
     const exifSub = (exif['{Exif}'] as Record<string, unknown> | undefined) ?? {};
-    cameraMake = (typeof exif.Make === 'string' ? exif.Make : undefined)
-      ?? (typeof tiff.Make === 'string' ? tiff.Make : undefined);
-    cameraModel = (typeof exif.Model === 'string' ? exif.Model : undefined)
-      ?? (typeof tiff.Model === 'string' ? tiff.Model : undefined);
-    takenAt = parseExifDateTime(exif.DateTimeOriginal)
-      ?? parseExifDateTime(exifSub.DateTimeOriginal);
+    cameraMake = (typeof exif.Make === 'string' ? exif.Make : undefined) ?? (typeof tiff.Make === 'string' ? tiff.Make : undefined);
+    cameraModel = (typeof exif.Model === 'string' ? exif.Model : undefined) ?? (typeof tiff.Model === 'string' ? tiff.Model : undefined);
+    takenAt = parseExifDateTime(exif.DateTimeOriginal) ?? parseExifDateTime(exifSub.DateTimeOriginal);
   } catch {
     try {
       const dims = await new Promise<{ w: number; h: number }>((resolve, reject) => {
@@ -247,10 +230,7 @@ export const readImageSourceMetadata = async (
  * `getImageMetaData`, swap axes when needed, and pass a single-axis resize
  * so expo-image-manipulator preserves aspect ratio.
  */
-export const processImage = async (
-  uri: string,
-  quality: QualityLevel,
-): Promise<ProcessedImage> => {
+export const processImage = async (uri: string, quality: QualityLevel): Promise<ProcessedImage> => {
   await ensureMediaSourceAvailable(uri);
 
   const maxDimension = IMAGE_MAX_EDGE[quality];
@@ -339,8 +319,7 @@ export const processVideo = async (
       try {
         const video = document.createElement('video');
         video.preload = 'metadata';
-        video.onloadedmetadata = () =>
-          resolve({ w: video.videoWidth ?? 0, h: video.videoHeight ?? 0 });
+        video.onloadedmetadata = () => resolve({ w: video.videoWidth ?? 0, h: video.videoHeight ?? 0 });
         video.onerror = () => resolve({ w: 0, h: 0 });
         video.src = uri;
       } catch {
@@ -399,7 +378,13 @@ export const processVideo = async (
   // through — the upload cap is still enforced downstream.
   if (maxEdge === null) {
     onProgress?.(1);
-    return { uri, width: srcWidth, height: srcHeight, size: srcSize, ...sourceMeta };
+    return {
+      uri,
+      width: srcWidth,
+      height: srcHeight,
+      size: srcSize,
+      ...sourceMeta,
+    };
   }
 
   // Don't re-encode a file that is already close to what we would produce.
@@ -422,15 +407,20 @@ export const processVideo = async (
   // narrow the union from that check, so name the remaining cases explicitly.
   const targetBitrate = quality === 'SD' ? VIDEO_BITRATE_BPS.SD : VIDEO_BITRATE_BPS.HD;
   const projectedBytes = durationSec > 0 ? (targetBitrate * durationSec) / 8 : 0;
-  const alreadyEfficient =
-    projectedBytes > 0 && srcSize > 0 && srcSize <= projectedBytes * 1.4;
+  const alreadyEfficient = projectedBytes > 0 && srcSize > 0 && srcSize <= projectedBytes * 1.4;
   const withinUploadCap = srcSize > 0 && srcSize <= UPLOAD_SIZE_LIMIT_BYTES;
 
   if (longestEdge > 0 && longestEdge <= maxEdge && withinUploadCap && alreadyEfficient) {
     nativeLog(
       `compress SKIPPED: ${Math.round(srcSize / 1048576)}MB at ${longestEdge}px is already near target ${Math.round(projectedBytes / 1048576)}MB`,
     );
-    return { uri, width: srcWidth, height: srcHeight, size: srcSize, ...sourceMeta };
+    return {
+      uri,
+      width: srcWidth,
+      height: srcHeight,
+      size: srcSize,
+      ...sourceMeta,
+    };
   }
 
   // Keep a background assertion alive for the transcode. Without one, the app
@@ -512,7 +502,13 @@ export const processVideo = async (
     // If the "compressed" file ended up larger than the source (can happen
     // for short clips that were already efficient), keep the original.
     if (srcSize > 0 && outSize > srcSize) {
-      return { uri, width: srcWidth, height: srcHeight, size: srcSize, ...sourceMeta };
+      return {
+        uri,
+        width: srcWidth,
+        height: srcHeight,
+        size: srcSize,
+        ...sourceMeta,
+      };
     }
 
     return {
@@ -525,7 +521,13 @@ export const processVideo = async (
   } catch (err) {
     console.warn('Video compression failed, sending original:', err);
     nativeLog(`compress failed at ${Math.round(lastFraction * 100)}%: ${String(err)}`);
-    return { uri, width: srcWidth, height: srcHeight, size: srcSize, ...sourceMeta };
+    return {
+      uri,
+      width: srcWidth,
+      height: srcHeight,
+      size: srcSize,
+      ...sourceMeta,
+    };
   } finally {
     clearInterval(stallWatch);
     if (backgroundTaskActive) {
@@ -564,7 +566,7 @@ const VIDEO_BITRATE_BPS: Record<Exclude<QualityLevel, 'ORIGINAL'>, number> = {
  *  longest edge to `maxEdge` and JPEG-encode at a quality factor; bytes per
  *  pixel for a typical JPEG-quality-0.6/0.8 photo is roughly 0.25–0.4. */
 const IMAGE_BYTES_PER_PIXEL: Record<Exclude<QualityLevel, 'ORIGINAL'>, number> = {
-  HD: 0.40,
+  HD: 0.4,
   SD: 0.25,
 };
 
@@ -584,10 +586,7 @@ interface EstimateInput {
  * `null` when we don't have enough metadata to guess (e.g. unknown duration
  * for a video) — callers should treat null as "can't tell, let it through."
  */
-export const estimateProcessedSize = (
-  item: EstimateInput,
-  quality: QualityLevel,
-): number | null => {
+export const estimateProcessedSize = (item: EstimateInput, quality: QualityLevel): number | null => {
   const isVideo = item.type === 'video';
   const isImage = item.type === 'image' || item.type === 'camera';
 
@@ -601,7 +600,7 @@ export const estimateProcessedSize = (
   if (isVideo) {
     if (!item.duration || item.duration <= 0) return null;
     const durationSec = item.duration / 1000;
-    const projected = Math.round(VIDEO_BITRATE_BPS[quality] * durationSec / 8);
+    const projected = Math.round((VIDEO_BITRATE_BPS[quality] * durationSec) / 8);
     // Compression can only ever make things smaller in our pipeline (we
     // fall back to the source when the encoder produces a larger file).
     if (item.fileSize && projected > item.fileSize) return item.fileSize;

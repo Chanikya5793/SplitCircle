@@ -79,7 +79,6 @@ const ASPECT_RATIO = SCREEN_W / SCREEN_H;
 const DEFAULT_DELTA = 0.02;
 /** Span used when jumping to a specific chosen place, where precision matters. */
 const FOCUS_DELTA = 0.006;
-const LIVE_LOCATION_DURATION_MINUTES = 15;
 
 /** Visible height of the sheet when resting. Its FULL height is derived per
  *  device from the safe area, so the collapse offset is a runtime value. */
@@ -479,7 +478,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     } catch (error) {
       console.error('Error getting location:', error);
       if (isMountedRef.current && isVisibleRef.current) {
-        appAlert('Error', 'Could not fetch location');
+        appAlert('Could not find your location', 'Check location access and try again.');
       }
     } finally {
       if (isMountedRef.current && isVisibleRef.current) setLoading(false);
@@ -685,34 +684,6 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     requestClose();
   };
 
-  const handleLiveLocation = async () => {
-    if (isExpoGo) {
-      appAlert(
-        'Development Build Required',
-        'Live location sharing requires a development or production build.',
-      );
-      return;
-    }
-    try {
-      const { status: fg } = await Location.getForegroundPermissionsAsync();
-      if (fg !== 'granted') {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') {
-          appAlert('Permission Denied', 'Foreground location permission is required first.');
-          return;
-        }
-      }
-      const { status: bg } = await Location.getBackgroundPermissionsAsync();
-      if (bg !== 'granted') {
-        await Location.requestBackgroundPermissionsAsync();
-      }
-      appAlert('Coming Soon', 'Live location sharing will be available in the next update.');
-    } catch (error) {
-      console.error('Live location error:', error);
-      appAlert('Error', 'Could not enable live location.');
-    }
-  };
-
   const openSettings = async () => {
     if (Platform.OS === 'ios') {
       await Linking.openSettings();
@@ -744,7 +715,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="fade"
       presentationStyle="fullScreen"
       statusBarTranslucent
       onRequestClose={handleClose}
@@ -884,6 +855,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                 }}
                 hitSlop={10}
                 style={styles.searchIcon}
+                accessibilityRole="button"
                 accessibilityLabel={inSearchMode ? 'Cancel search' : 'Close'}
               >
                 <Ionicons name="chevron-back" size={22} color={theme.colors.onSurface} />
@@ -902,6 +874,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                 onSubmitEditing={() => void runSearch(searchQuery)}
                 returnKeyType="search"
                 autoCorrect={false}
+                accessibilityLabel="Search places or addresses"
               />
               {isSearching ? (
                 <ActivityIndicator size="small" color={theme.colors.primary} style={styles.searchIcon} />
@@ -913,6 +886,8 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                   }}
                   hitSlop={10}
                   style={styles.searchIcon}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear location search"
                 >
                   <Ionicons name="close-circle" size={20} color={theme.colors.onSurfaceVariant} />
                 </TouchableOpacity>
@@ -933,6 +908,8 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
             <Animated.View
               style={[styles.mapKindWrap, { top: insets.top + 72 }, chromeStyle]}
               pointerEvents={inSearchMode ? 'none' : 'box-none'}
+              accessibilityElementsHidden={inSearchMode}
+              importantForAccessibility={inSearchMode ? 'no-hide-descendants' : 'auto'}
             >
               <GlassCard role="floating" radius="pill" style={styles.mapKindCard} contentStyle={styles.mapKindContent}>
                 {MAP_KINDS.map((kind) => {
@@ -949,6 +926,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                         active && { backgroundColor: theme.colors.primary },
                       ]}
                       accessibilityRole="button"
+                      accessibilityLabel={`${kind.label} map`}
                       accessibilityState={{ selected: active }}
                     >
                       <Text
@@ -970,8 +948,14 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
             <Animated.View
               style={[styles.locateWrap, { bottom: SHEET_COLLAPSED_H + 18 }, chromeStyle]}
               pointerEvents={inSearchMode ? 'none' : 'box-none'}
+              accessibilityElementsHidden={inSearchMode}
+              importantForAccessibility={inSearchMode ? 'no-hide-descendants' : 'auto'}
             >
-              <TouchableOpacity onPress={goToCurrentLocation} accessibilityLabel="Go to my location">
+              <TouchableOpacity
+                onPress={goToCurrentLocation}
+                accessibilityRole="button"
+                accessibilityLabel="Go to my location"
+              >
                 <GlassCard role="floating" radius={24} style={styles.locateButton} contentStyle={styles.locateContent}>
                   <Ionicons name="locate" size={20} color={theme.colors.primary} />
                 </GlassCard>
@@ -990,6 +974,8 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                   const under = coordinateUnderPin(region);
                   void loadNearby(under.latitude, under.longitude);
                 }}
+                accessibilityRole="button"
+                accessibilityLabel="Search this map area"
               >
                 <GlassCard role="floating" radius="lg" style={styles.searchAreaCard} contentStyle={styles.searchAreaContent}>
                   <Ionicons name="refresh" size={15} color={theme.colors.primary} />
@@ -1019,7 +1005,9 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                     }
                   }}
                   style={styles.grabZone}
+                  accessibilityRole="button"
                   accessibilityLabel="Expand place list"
+                  accessibilityState={{ expanded: listScrollEnabled }}
                 >
                   <View style={[styles.grabber, { backgroundColor: theme.colors.onSurfaceVariant }]} />
                 </TouchableOpacity>
@@ -1048,6 +1036,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                   onChangeText={setCaption}
                   maxLength={500}
                   onFocus={expandSheet}
+                  accessibilityLabel="Location note"
                   style={[
                     styles.captionInput,
                     {
@@ -1068,13 +1057,6 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                   >
                     Send this location
                   </Button>
-                  <TouchableOpacity
-                    onPress={handleLiveLocation}
-                    style={styles.liveButton}
-                    accessibilityLabel={`Share live location for ${LIVE_LOCATION_DURATION_MINUTES} minutes`}
-                  >
-                    <Ionicons name="navigate-circle-outline" size={22} color={theme.colors.primary} />
-                  </TouchableOpacity>
                 </View>
                 </>
                 )}
@@ -1103,6 +1085,8 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                           key={`c-${item.id}-${item.title}`}
                           style={styles.row}
                           onPress={() => void chooseCompletion(item)}
+                          accessibilityRole="button"
+                          accessibilityLabel={[item.title, item.subtitle].filter(Boolean).join(', ')}
                         >
                           <Ionicons name="location-outline" size={18} color={theme.colors.primary} />
                           <View style={styles.rowText}>
@@ -1146,6 +1130,8 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                                   address: item.address,
                                 })
                               }
+                              accessibilityRole="button"
+                              accessibilityLabel={[item.name, item.address].filter(Boolean).join(', ')}
                             >
                               <Ionicons
                                 name={section.key === 'recent' ? 'time-outline' : 'location-outline'}
@@ -1227,13 +1213,23 @@ const styles = StyleSheet.create({
   searchWrap: { position: 'absolute', left: 12, right: 12 },
   searchCard: { width: '100%' },
   searchCardContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 4 },
-  searchIcon: { paddingHorizontal: 8, paddingVertical: 8 },
+  searchIcon: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   searchInput: { flex: 1, fontSize: 16, paddingVertical: 10 },
 
   mapKindWrap: { position: 'absolute', right: 12 },
   mapKindCard: {},
   mapKindContent: { flexDirection: 'row', padding: 3, gap: 2 },
-  mapKindItem: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999 },
+  mapKindItem: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    borderRadius: 999,
+  },
   mapKindLabel: { fontSize: 12, fontWeight: '700' },
   locateWrap: { position: 'absolute', right: 12 },
   locateButton: { width: 48, height: 48 },
@@ -1252,7 +1248,12 @@ const styles = StyleSheet.create({
   sheet: { position: 'absolute', left: 8, right: 8, bottom: 0 },
   sheetCard: { flex: 1 },
   sheetContent: { flex: 1, paddingHorizontal: 16 },
-  grabZone: { alignItems: 'center', paddingTop: 8, paddingBottom: 10, marginHorizontal: -16 },
+  grabZone: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: -16,
+  },
   grabber: { width: 40, height: 4, borderRadius: 2, opacity: 0.5 },
 
   selectedRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
@@ -1270,13 +1271,6 @@ const styles = StyleSheet.create({
 
   actionRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
   sendButton: { flex: 1, borderRadius: 12 },
-  liveButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 
   list: { marginTop: 14, flex: 1 },
   sectionTitle: {

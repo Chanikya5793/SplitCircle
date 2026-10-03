@@ -216,8 +216,9 @@ export const runBackupNow = async (
     // A run that got past every precondition and then broke is a different
     // condition from a refusal, and the screen says so — this is the one the
     // user cannot fix by changing a setting.
+    console.error('Backup run failed', error);
     await log('failed', {
-      message: error instanceof Error ? error.message : 'Backup failed.',
+      message: 'Backup could not finish. Try again.',
     });
     throw error;
   } finally {

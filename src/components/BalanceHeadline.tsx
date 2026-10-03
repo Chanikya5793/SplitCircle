@@ -11,6 +11,7 @@
 
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
 import { computeOverallBalance, splitOwedAndOwing, type CurrencyTotal } from '@/utils/myBalance';
@@ -24,13 +25,16 @@ const joinAmounts = (totals: CurrencyTotal[]) =>
 export interface BalanceHeadlineProps {
   /** Restrict to these groups. Omit for every group the user is in. */
   groupIds?: string[];
+  /** Larger per-currency balances for the Expenses overview. */
+  prominent?: boolean;
   style?: object;
 }
 
-export const BalanceHeadline = ({ groupIds, style }: BalanceHeadlineProps) => {
+export const BalanceHeadline = ({ groupIds, prominent = false, style }: BalanceHeadlineProps) => {
   const { theme } = useTheme();
   const { user } = useAuth();
-  const { groups } = useGroups();
+  const { groups, loading } = useGroups();
+  const { isShielded, duress } = usePrivacyGuard();
 
   const scoped = useMemo(
     () => (groupIds ? groups.filter((g) => groupIds.includes(g.groupId)) : groups),
@@ -39,13 +43,64 @@ export const BalanceHeadline = ({ groupIds, style }: BalanceHeadlineProps) => {
 
   // Hidden groups are excluded — a hidden 1:1 ledger must not surface its
   // balance on a screen the user can hand to someone else.
-  const visible = useMemo(() => scoped.filter((g) => !g.hidden), [scoped]);
+  const visible = useMemo(() => scoped.filter((g) => !g.hidden && !isShielded('expenses', g.groupId)), [scoped, isShielded]);
 
   const totals = useMemo(
     () => computeOverallBalance(user?.userId, visible),
     [user?.userId, visible],
   );
   const { owed, owing } = useMemo(() => splitOwedAndOwing(totals), [totals]);
+
+  // Outside the decoy state, do not imply all-settled when every balance is protected.
+  if (!duress && scoped.some((g) => !g.hidden && isShielded('expenses', g.groupId)) && visible.length === 0) return null;
+
+  if (prominent) {
+    // Keep cached balances visible during refresh, but an empty cold-start
+    // cache cannot establish that the user is settled up.
+    if (loading && groups.length === 0) {
+      return (
+        <View style={[styles.wrap, style]} accessibilityState={{ busy: true }}>
+          <Text style={[theme.typography.body, { color: theme.colors.onSurfaceVariant }]}>
+            Loading balances…
+          </Text>
+        </View>
+      );
+    }
+
+    if (owed.length === 0 && owing.length === 0) {
+      return (
+        <View style={[styles.wrap, style]}>
+          <Text style={[theme.typography.headline, { color: theme.colors.moneyNeutral }]}>
+            You're all settled up
+          </Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={[styles.wrap, { gap: theme.spacing.md }, style]}>
+        {[
+          { label: 'You are owed', amounts: owed, color: theme.colors.moneyPositive },
+          { label: 'You owe', amounts: owing, color: theme.colors.moneyNegative },
+        ].flatMap(({ label, amounts, color }) => amounts.map((total) => (
+          <View
+            key={`${label}-${total.currency}`}
+            accessible
+            accessibilityRole="summary"
+            accessibilityLabel={`${label} ${formatCurrency(total.amount, total.currency)}, ${total.currency}`}
+            style={{ gap: theme.spacing.xs }}
+          >
+            <Text style={[theme.typography.body, { color: theme.colors.onSurfaceVariant }]}>
+              {label} · {total.currency}
+            </Text>
+            <Text style={[theme.typography.headline, styles.prominentAmount, { color }]}>
+              {formatCurrency(total.amount, total.currency)}
+            </Text>
+          </View>
+        )))}
+      </View>
+    );
+  }
 
   if (owed.length === 0 && owing.length === 0) {
     return (
@@ -83,6 +138,10 @@ const styles = StyleSheet.create({
   wrap: {
     gap: 2,
     paddingBottom: 4,
+  },
+  prominentAmount: {
+    fontVariant: ['tabular-nums'],
+    flexShrink: 1,
   },
   /** The amount is a NESTED Text inside the label, not a sibling in a flex row.
    *

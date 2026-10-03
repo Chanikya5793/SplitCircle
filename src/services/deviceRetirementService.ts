@@ -19,11 +19,7 @@ import { getLocalMessageStats } from '@/services/localMessageStorage';
 import { getLastBackupInfo } from '@/services/backupRunner';
 import { getCurrentDeviceId } from '@/services/pairingService';
 import { getIdentityKeyForDevice, listSignalDevices } from '@/services/signalCryptoService';
-import {
-  RECORD_TYPE,
-  readBackupManifest,
-  type BackupManifest,
-} from '@/services/backupService';
+import { RECORD_TYPE, readBackupManifest, type BackupManifest } from '@/services/backupService';
 import { backupChunk, beginBackupSession, endBackupSession } from '../../modules/splitcircle-backup';
 
 /** A backup older than this is treated as stale — §3.7 forces a fresh one. */
@@ -116,7 +112,11 @@ const attestationPayload = (a: Omit<RetirementAttestation, 'signature' | 'identi
     totalMessages: a.totalMessages,
     chats: [...a.chats]
       .sort((x, y) => x.chatId.localeCompare(y.chatId))
-      .map((c) => ({ chatId: c.chatId, count: c.count, latestTimestamp: c.latestTimestamp })),
+      .map((c) => ({
+        chatId: c.chatId,
+        count: c.count,
+        latestTimestamp: c.latestTimestamp,
+      })),
   });
 
 /**
@@ -129,7 +129,11 @@ const attestationPayload = (a: Omit<RetirementAttestation, 'signature' | 'identi
  */
 const reconcile = async (
   manifest: BackupManifest,
-): Promise<{ ok: boolean; missingChats: string[]; missingMessages: number }> => {
+): Promise<{
+  ok: boolean;
+  missingChats: string[];
+  missingMessages: number;
+}> => {
   const local = await getLocalMessageStats();
   const byChat = new Map(manifest.chats.map((c) => [c.chatId, c]));
 
@@ -160,10 +164,7 @@ const reconcile = async (
  * Every failure path adds a blocker rather than throwing, so the UI can show
  * all reasons at once instead of one-at-a-time whack-a-mole.
  */
-export const assessRetirementReadiness = async (
-  userId: string,
-  passphrase: string,
-): Promise<RetirementReadiness> => {
+export const assessRetirementReadiness = async (userId: string, passphrase: string): Promise<RetirementReadiness> => {
   const blockers: RetirementBlocker[] = [];
   let manifest: BackupManifest | null = null;
 
@@ -206,9 +207,7 @@ export const assessRetirementReadiness = async (
   // backing up", blaming a transfer that never started. Naming the real cause
   // matters here more than anywhere else in the app: the user is about to wipe
   // the only device holding these messages.
-  const messagesIncluded = manifest.contents
-    ? manifest.contents.messages === true
-    : true; // Pre-selection backups are messages-only by definition.
+  const messagesIncluded = manifest.contents ? manifest.contents.messages === true : true; // Pre-selection backups are messages-only by definition.
   if (!messagesIncluded) {
     blockers.push({
       code: 'messages_excluded',
@@ -249,7 +248,11 @@ export const assessRetirementReadiness = async (
         message: 'Start the retirement check to publish your backup details for your other device.',
       });
     } else {
-      const ack = await readVerifiedAck(userId, passphrase, others.map((d) => d.deviceId));
+      const ack = await readVerifiedAck(
+        userId,
+        passphrase,
+        others.map((d) => d.deviceId),
+      );
       if (!ack) {
         blockers.push({
           code: 'awaiting_verification',
@@ -294,11 +297,7 @@ const readAttestation = async (passphrase: string): Promise<RetirementAttestatio
  * An unverified ack is discarded rather than trusted: writing to the container
  * proves only iCloud access, and this gate is what unlocks wiping a phone.
  */
-const readVerifiedAck = async (
-  userId: string,
-  passphrase: string,
-  deviceIds: string[],
-): Promise<RestoreVerified | null> => {
+const readVerifiedAck = async (userId: string, passphrase: string, deviceIds: string[]): Promise<RestoreVerified | null> => {
   const candidates: RestoreVerified[] = [];
 
   await beginBackupSession(passphrase);
@@ -341,11 +340,7 @@ const readVerifiedAck = async (
  * iCloud access, whereas the signature proves this is the device peers already
  * know.
  */
-export const publishRetirementAttestation = async (
-  userId: string,
-  passphrase: string,
-  manifest: BackupManifest,
-): Promise<void> => {
+export const publishRetirementAttestation = async (userId: string, passphrase: string, manifest: BackupManifest): Promise<void> => {
   const deviceId = await getCurrentDeviceId();
   const base = {
     version: 1 as const,
@@ -370,7 +365,11 @@ export const publishRetirementAttestation = async (
     throw new Error('This device has not published its encryption keys yet.');
   }
 
-  const attestation: RetirementAttestation = { ...base, signature, identityKey };
+  const attestation: RetirementAttestation = {
+    ...base,
+    signature,
+    identityKey,
+  };
 
   await beginBackupSession(passphrase);
   try {
@@ -394,7 +393,11 @@ export const verifyBackupAsSecondDevice = async (
 ): Promise<{ ok: boolean; batchesDecrypted: number; failures: string[] }> => {
   const attestation = await readAttestation(passphrase);
   if (!attestation) {
-    return { ok: false, batchesDecrypted: 0, failures: ['No attestation published yet.'] };
+    return {
+      ok: false,
+      batchesDecrypted: 0,
+      failures: ['No attestation published yet.'],
+    };
   }
 
   // A device must not verify its OWN attestation. §3.7's trust anchor is an
@@ -408,24 +411,30 @@ export const verifyBackupAsSecondDevice = async (
     return {
       ok: false,
       batchesDecrypted: 0,
-      failures: ['This device published the attestation — another device has to verify it.'],
+      failures: ['This device published the attestation. Another device has to verify it.'],
     };
   }
 
-  const signatureValid = await verifyWithIdentity(
-    attestationPayload(attestation),
-    attestation.signature,
-    attestation.identityKey,
-  ).catch(() => false);
+  const signatureValid = await verifyWithIdentity(attestationPayload(attestation), attestation.signature, attestation.identityKey).catch(
+    () => false,
+  );
   if (!signatureValid) {
     // Refuse rather than verify an attestation we can't attribute — otherwise
     // anyone with container write access could declare a backup complete.
-    return { ok: false, batchesDecrypted: 0, failures: ['Attestation signature is not valid.'] };
+    return {
+      ok: false,
+      batchesDecrypted: 0,
+      failures: ['Attestation signature is not valid.'],
+    };
   }
 
   const manifest = await readBackupManifest(passphrase);
   if (!manifest) {
-    return { ok: false, batchesDecrypted: 0, failures: ['Backup manifest could not be read.'] };
+    return {
+      ok: false,
+      batchesDecrypted: 0,
+      failures: ['Backup manifest could not be read.'],
+    };
   }
 
   const failures: string[] = [];
@@ -475,12 +484,7 @@ export const verifyBackupAsSecondDevice = async (
 
   await beginBackupSession(passphrase);
   try {
-    await backupChunk(
-      RECORD_TYPE.manifest,
-      `${VERIFIED_RECORD_ID_PREFIX}${ack.verifierDeviceId}`,
-      encodeJson(ack),
-      {},
-    );
+    await backupChunk(RECORD_TYPE.manifest, `${VERIFIED_RECORD_ID_PREFIX}${ack.verifierDeviceId}`, encodeJson(ack), {});
   } finally {
     await endBackupSession();
   }

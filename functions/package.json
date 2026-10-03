@@ -8,17 +8,22 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
-    "test": "vitest run"
+    "internal-test:access": "npm run build --silent && node scripts/manage-internal-test-access.mjs",
+    "test": "vitest run",
+    "test:emulators": "bash scripts/test-emulators.sh"
   },
   "engines": {
     "node": "22"
   },
   "main": "lib/index.js",
   "dependencies": {
+    "@apple/app-store-server-library": "^3.1.0",
+    "@google-cloud/firestore": "7.11.6",
     "@google-cloud/kms": "^6.0.0",
     "@parse/node-apn": "^6.4.1",
     "firebase-admin": "^13.6.0",
     "firebase-functions": "^7.0.5",
+    "google-auth-library": "9.15.1",
     "livekit-server-sdk": "^1.1.3",
     "openai": "^6.32.0",
     "uuid": "11.1.0",
@@ -26,10 +31,15 @@
   },
   "overrides": {
     "@tootallnate/once": "^3.0.1",
-    "axios": "^1.13.5",
-    "fast-xml-parser": "^4.5.4",
+    "axios": "1.20.0",
+    "fast-xml-parser": "5.11.1",
     "qs": "^6.14.2",
-    "protobufjs": "^8.7.0"
+    "protobufjs": "^8.7.0",
+    "@grpc/grpc-js": "1.14.4",
+    "form-data": "4.0.6",
+    "node-forge": "1.4.0",
+    "path-to-regexp": "0.1.13",
+    "websocket-driver": "0.7.5"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",

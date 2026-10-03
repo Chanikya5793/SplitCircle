@@ -34,7 +34,7 @@ import {
 } from '@/services/mesh/transportPreferences';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useState, useSyncExternalStore } from 'react';
-import { Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Icon, Switch, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -136,7 +136,7 @@ export const NearbyMeshScreen = () => {
                 {diagnostics ? summariseMesh(diagnostics) : 'Checking…'}
               </Text>
               <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
-                Shows what this phone can see right now — not a map of the whole mesh.
+                Shows what this phone can see right now. It is not a map of every nearby phone.
                 A message can still reach a device that isn’t listed here.
               </Text>
             </View>
@@ -146,9 +146,15 @@ export const NearbyMeshScreen = () => {
         {/* Transports -------------------------------------------------------- */}
         <GlassView style={styles.card}>
           <Text variant="titleSmall" style={[styles.cardTitle, { color: theme.colors.onSurface }]}>
-            Transports
+            Connection methods
           </Text>
-          <View style={styles.listRow}>
+          <Pressable
+            style={styles.listRow}
+            onPress={() => { void setNearbyEnabled(!prefs.nearbyEnabled); }}
+            accessibilityRole="switch"
+            accessibilityLabel="Nearby messaging"
+            accessibilityState={{ checked: prefs.nearbyEnabled }}
+          >
             <Icon
               source="access-point-network"
               size={18}
@@ -159,14 +165,17 @@ export const NearbyMeshScreen = () => {
                 Nearby messaging
               </Text>
               <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
-                Master switch for every radio below.
+                Controls every connection method below.
               </Text>
             </View>
             <Switch
               value={prefs.nearbyEnabled}
               onValueChange={(next) => { void setNearbyEnabled(next); }}
+              pointerEvents="none"
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
             />
-          </View>
+          </Pressable>
 
           {(diagnostics?.transports ?? [])
             // MultipeerConnectivity is Apple-only and can NEVER work on
@@ -180,7 +189,15 @@ export const NearbyMeshScreen = () => {
             // broken, which is the confusion this screen exists to remove.
             const enabled = !prefs.disabledTransports.includes(transport.id);
             return (
-              <View key={transport.id} style={styles.listRow}>
+              <Pressable
+                key={transport.id}
+                style={styles.listRow}
+                disabled={!prefs.nearbyEnabled}
+                onPress={() => { void setTransportEnabled(transport.id, !enabled); }}
+                accessibilityRole="switch"
+                accessibilityLabel={TRANSPORT_LABEL[transport.id] ?? transport.id.toUpperCase()}
+                accessibilityState={{ checked: enabled, disabled: !prefs.nearbyEnabled }}
+              >
                 <Icon
                   source={TRANSPORT_ICON[transport.id] ?? 'lan-connect'}
                   size={18}
@@ -203,28 +220,30 @@ export const NearbyMeshScreen = () => {
                         a radio switched off, a permission not granted, or no
                         network. */}
                     {!prefs.nearbyEnabled
-                      ? 'Off — nearby messaging is disabled'
+                      ? 'Off because nearby messaging is disabled'
                       : !enabled
                         ? 'Off'
                         : transport.available
                           ? `${transport.neighbourCount} connected`
                           : transport.id === 'lan'
-                            ? 'On, but not running — no local network'
-                            : 'On, but not running — check the radio and app permissions'}
+                            ? 'Waiting for both phones to join Wi-Fi'
+                            : 'Waiting for Bluetooth and nearby device access'}
                   </Text>
                 </View>
                 <Switch
                   value={enabled}
                   disabled={!prefs.nearbyEnabled}
                   onValueChange={(next) => { void setTransportEnabled(transport.id, next); }}
+                  pointerEvents="none"
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
                 />
-              </View>
+              </Pressable>
             );
           })}
           {diagnostics && !diagnostics.bleEnabled ? (
             <Text variant="bodySmall" style={[styles.note, { color: theme.colors.onSurfaceVariant }]}>
-              Bluetooth mesh is off in this build. It’s the only transport that can
-              reach Android.
+              Bluetooth connections are unavailable in this version. Android phones require Bluetooth.
             </Text>
           ) : null}
         </GlassView>
@@ -241,8 +260,7 @@ export const NearbyMeshScreen = () => {
           </View>
           {(diagnostics?.neighbours.length ?? 0) === 0 ? (
             <Text variant="bodySmall" style={[styles.note, { color: theme.colors.onSurfaceVariant }]}>
-              Nothing in range. Devices appear here once they connect and prove who
-              they are.
+              Nothing in range. Recognized phones appear here after they connect.
             </Text>
           ) : (
             diagnostics?.neighbours.map((peer) => (
@@ -258,7 +276,7 @@ export const NearbyMeshScreen = () => {
                   </Text>
                   <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
                     {peer.transports.map((t) => TRANSPORT_LABEL[t] ?? t).join(' · ')}
-                    {peer.trusted ? '' : ' · not trusted'}
+                    {peer.trusted ? '' : ' · not recognized'}
                   </Text>
                 </View>
               </View>
@@ -274,7 +292,7 @@ export const NearbyMeshScreen = () => {
           <View style={styles.listRow}>
             <Icon source="tray-full" size={18} color={theme.colors.onSurfaceVariant} />
             <Text variant="bodyMedium" style={{ flex: 1, color: theme.colors.onSurface }}>
-              Queued messages
+              Messages waiting
             </Text>
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
               {diagnostics?.queuedMessages ?? 0}
@@ -284,7 +302,7 @@ export const NearbyMeshScreen = () => {
             <View style={styles.listRow}>
               <Icon source="routes" size={18} color={theme.colors.onSurfaceVariant} />
               <Text variant="bodyMedium" style={{ flex: 1, color: theme.colors.onSurface }}>
-                Held for a route
+                Waiting for a connection
               </Text>
               <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                 {diagnostics.routerPending}
@@ -385,10 +403,10 @@ export const NearbyMeshScreen = () => {
             What nearby devices can see
           </Text>
           <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, lineHeight: 18 }}>
-            Message contents stay encrypted end to end — a phone that passes your
-            message along cannot read it. It can see that a message travelled, how
-            big it was, and when. That’s true of any relay network, and it’s why
-            only devices you already share a chat with are allowed to relay yours.
+            Message contents stay encrypted from sender to recipient. A nearby phone
+            that passes your message along cannot read it. It can see when a message
+            travelled and how large it was. Only phones belonging to people you
+            already share a conversation with may pass it along.
           </Text>
         </GlassView>
       </ScrollView>
@@ -404,7 +422,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   rowCopy: { flex: 1 },
   statusIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  listRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  listRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48 },
   note: { lineHeight: 18 },
 });
 

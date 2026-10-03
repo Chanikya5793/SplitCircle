@@ -96,8 +96,9 @@ export const ListRow = ({
   // sideways. It stays INSIDE the press highlight, so insetting the text never
   // pulls the highlight off the screen edges.
   const insetH = inset ?? theme.spacing.md;
+  const largeText = theme.fontScale >= 1.5;
   const content = (
-    <View style={[styles.row, { paddingVertical: theme.spacing.sm + 2, paddingHorizontal: insetH }, style]}>
+    <View style={[styles.row, { flexWrap: largeText ? 'wrap' : 'nowrap', minHeight: 48, paddingVertical: theme.spacing.sm + 2, paddingHorizontal: insetH }, style]}>
       {icon ? (
         <View
           style={[
@@ -113,7 +114,6 @@ export const ListRow = ({
       ) : null}
       <View style={styles.copy}>
         <Text
-          numberOfLines={1}
           style={{
             color: destructive ? theme.colors.danger : theme.colors.onSurface,
             fontSize: theme.typography.body.fontSize,
@@ -130,7 +130,6 @@ export const ListRow = ({
         </Text>
         {subtitle ? (
           <Text
-            numberOfLines={2}
             style={{
               color: theme.colors.muted,
               fontSize: theme.typography.caption.fontSize,
@@ -142,7 +141,7 @@ export const ListRow = ({
           </Text>
         ) : null}
       </View>
-      {labelledTrailing}
+      {labelledTrailing ? <View style={largeText ? { width: '100%', alignItems: 'flex-end' } : undefined}>{labelledTrailing}</View> : null}
       {showChevron ? <Icon source="chevron-right" size={20} color={theme.colors.muted} /> : null}
     </View>
   );
@@ -179,6 +178,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  copy: { flex: 1 },
+  copy: { flex: 1, minWidth: 0 },
   disabled: { opacity: 0.5 },
 });

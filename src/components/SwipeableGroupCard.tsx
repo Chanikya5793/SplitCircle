@@ -14,7 +14,7 @@ import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
-import { ActivityIndicator, Icon, IconButton, Text, TouchableRipple } from 'react-native-paper';
+import { ActivityIndicator, Icon, Text, TouchableRipple } from 'react-native-paper';
 
 interface SwipeableGroupCardProps {
   group: Group;
@@ -85,15 +85,31 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
     return (
       <RNAnimated.View style={[styles.rightAction, !isFlat && styles.rightActionGlass, { transform: [{ translateX }, { scale }] }]}>
         <RectButton
-          style={[styles.archiveButton, { backgroundColor: archived ? '#34C759' : (theme.colors.tertiary || '#FF9500') }]}
+          style={[
+            styles.archiveButton,
+            { backgroundColor: archived ? theme.colors.success : theme.colors.tertiary },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={`${archived ? 'Restore' : 'Archive'} ${displayName}`}
           onPress={() => {
             heavyHaptic();
             swipeableRef.current?.close();
             onArchive?.(group);
           }}
         >
-          <IconButton icon={archived ? 'archive-arrow-up' : 'archive'} iconColor="#fff" size={24} />
-          <Text style={styles.actionText}>{archived ? 'Restore' : 'Archive'}</Text>
+          <Icon
+            source={archived ? 'archive-arrow-up' : 'archive'}
+            color={archived ? theme.colors.onSuccess : theme.colors.onTertiary}
+            size={24}
+          />
+          <Text
+            style={[
+              styles.actionText,
+              { color: archived ? theme.colors.onSuccess : theme.colors.onTertiary },
+            ]}
+          >
+            {archived ? 'Restore' : 'Archive'}
+          </Text>
         </RectButton>
       </RNAnimated.View>
     );
@@ -292,7 +308,6 @@ const styles = StyleSheet.create({
     borderRadius: 24,
   },
   actionText: {
-    color: '#fff',
     fontSize: 12,
     fontWeight: '600',
     marginTop: -8,

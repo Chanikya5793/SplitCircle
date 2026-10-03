@@ -149,14 +149,14 @@ export function routerInstructions(a: RouterArgs): string {
     'For each user message produce ONE decision:',
     '- intent "abstain": greetings, thanks, small talk, or anything not about money/this data. Write a one-line friendly abstainReply. No requests.',
     '- intent "clarify": ONLY when the answer would materially differ between readings (a name matches several members; a month could be two different years; the target of "he/that" is unrecoverable). Ask ONE short clarifyQuestion with 2-4 clarifyOptions the user can tap. Never clarify twice in a row.',
-    '- intent "answer": everything else. List the tool requests needed FIRST (up to 3; only what the question needs — the FACTS block may already suffice, then request nothing). For mild ambiguity do NOT clarify: proceed and state your reading in "assumption" (e.g. "April means April 2026").',
+    '- intent "answer": everything else. List the tool requests needed FIRST (up to 3; only what the question needs. The FACTS block may already suffice, then request nothing). For mild ambiguity do NOT clarify: proceed and state your reading in "assumption" (e.g. "April means April 2026").',
     '- complexity: "simple" for direct lookups, "moderate" for one comparison or trail, "deep" for multi-step "why"/analysis questions.',
     '- confidence: how sure you are you understood the request (0-1).',
     '',
     'Examples:',
     'Message: "how much on food in april?" → answer, requests [category_breakdown month:"april"], assumption "April 2026".',
     'Message: "why was last month so expensive?" → answer, complexity deep, requests [compare_ranges month:"last month" monthB:"2 months ago", top_expenses month:"last month"].',
-    'Message: "hello!" → abstain, abstainReply "Hey! Ask me anything about the spending here — a month, a person, a category, or say summary."',
+    'Message: "hello!" → abstain, abstainReply "Hey! Ask me anything about the spending here. A month, a person, a category, or say summary."',
   ]
     .filter((line) => line !== '')
     .join('\n');
@@ -191,7 +191,7 @@ export function narratorInstructions(a: NarratorArgs): string {
     '- Answer the CURRENT question directly; never repeat an earlier answer from the conversation.',
     '- If an ASSUMPTION line is present, weave it in naturally ("Assuming you mean April 2026, …").',
     '- If a NOTE says the data changed since the conversation started, acknowledge it briefly.',
-    '- End with ONE practical next step when it genuinely helps (settle up, set a budget, check an expense) — you cannot perform actions yourself.',
+    '- End with ONE practical next step when it genuinely helps (settle up, set a budget, check an expense). You cannot perform actions yourself.',
   ].join('\n');
 }
 
@@ -243,11 +243,11 @@ function fitTurns(
 export function assembleRouterPrompt(a: TurnPromptArgs): AssembledTurnPrompt {
   const head =
     (a.driftNote ? `NOTE: ${a.driftNote}\n\n` : '') +
-    `FACTS (final numbers — quote only, never recompute):\n${a.facts}\n\n` +
+    `FACTS (final numbers. Quote only, never recompute):\n${a.facts}\n\n` +
     (a.summary?.trim() ? `EARLIER IN THIS CONVERSATION (summary):\n${a.summary.trim()}\n\n` : '');
   const tail =
     (a.resolvedClarify
-      ? 'The user just answered your clarifying question — decide and proceed, do NOT clarify again.\n'
+      ? 'The user just answered your clarifying question. Decide and proceed, do NOT clarify again.\n'
       : '') + `Message: ${a.userText}`;
   const fixed = estimateTokens(head) + estimateTokens(tail);
   const turns = fitTurns(a.messages, fixed, a.budgetTokens);
@@ -278,9 +278,9 @@ export interface NarratorPromptArgs extends TurnPromptArgs {
 export function assembleNarratorPrompt(a: NarratorPromptArgs): AssembledTurnPrompt {
   const head =
     (a.driftNote ? `NOTE: ${a.driftNote}\n\n` : '') +
-    `FACTS (final numbers — quote only, never recompute):\n${a.facts}\n\n` +
+    `FACTS (final numbers. Quote only, never recompute):\n${a.facts}\n\n` +
     (a.results.length
-      ? `TOOL RESULTS (final numbers — quote only, never recompute):\n${toolResultsBlock(a.results)}\n\n`
+      ? `TOOL RESULTS (final numbers. Quote only, never recompute):\n${toolResultsBlock(a.results)}\n\n`
       : '') +
     (a.assumption ? `ASSUMPTION: ${a.assumption}\n\n` : '') +
     (a.summary?.trim() ? `EARLIER IN THIS CONVERSATION (summary):\n${a.summary.trim()}\n\n` : '');

@@ -3,7 +3,7 @@
 // (segmented tabs + "Advanced Splits" accordion + 2×3 grid + breadcrumb),
 // reclaiming ~300px of vertical space and removing a whole navigation level.
 // Selected pill is solid accent; everything else is quiet. The rail scrolls
-// horizontally and auto-centers the selection.
+// horizontally and reveals the selection only when it is clipped.
 
 import { useTheme } from '@/context/ThemeContext';
 import { mediumHaptic } from '@/utils/haptics';
@@ -17,20 +17,21 @@ interface RailItem {
   label: string;
   icon: string;
   advanced: boolean;
+  description: string;
 }
 
 const ITEMS: RailItem[] = [
-  { key: 'equal', label: 'Equal', icon: 'equal', advanced: false },
-  { key: 'exact', label: 'Exact', icon: 'currency-usd', advanced: false },
-  { key: 'percentage', label: 'Percent', icon: 'percent', advanced: false },
-  { key: 'shares', label: 'Shares', icon: 'chart-pie', advanced: false },
-  { key: 'adjustment', label: 'Adjust', icon: 'plus-minus-variant', advanced: false },
-  { key: 'itemized', label: 'Receipt', icon: 'receipt', advanced: true },
-  { key: 'income', label: 'Income', icon: 'cash-multiple', advanced: true },
-  { key: 'consumption', label: 'Consumed', icon: 'food-apple', advanced: true },
-  { key: 'timeBased', label: 'Time', icon: 'calendar-clock', advanced: true },
-  { key: 'gamified', label: 'Fun', icon: 'dice-multiple', advanced: true },
-  { key: 'itemType', label: 'Category', icon: 'tag-multiple', advanced: true },
+  { key: 'equal', label: 'Equally', icon: 'equal', advanced: false, description: 'Divide the total equally among the included people.' },
+  { key: 'exact', label: 'Exact amounts', icon: 'calculator-variant-outline', advanced: false, description: 'Enter the amount each person pays. The amounts must add up to the total.' },
+  { key: 'percentage', label: 'Percentages', icon: 'percent', advanced: false, description: 'Enter each person’s percentage. Together they must add up to 100%.' },
+  { key: 'shares', label: 'Shares', icon: 'chart-pie', advanced: false, description: 'Give each person a number of shares. Two shares pay twice as much as one.' },
+  { key: 'adjustment', label: 'Adjust amounts', icon: 'plus-minus-variant', advanced: false, description: 'Add or subtract amounts for each person, then divide the remainder equally.' },
+  { key: 'itemized', label: 'By receipt item', icon: 'receipt', advanced: true, description: 'Assign receipt items to people and choose how to split tax and tip.' },
+  { key: 'income', label: 'By weight', icon: 'scale-balance', advanced: true, description: 'Enter a weight for each person. Higher weights pay a larger share.' },
+  { key: 'consumption', label: 'By portions', icon: 'food-apple', advanced: true, description: 'Set the total portions, then enter how many each person had.' },
+  { key: 'timeBased', label: 'By time', icon: 'calendar-clock', advanced: true, description: 'Choose the billing period and the days each person stayed.' },
+  { key: 'gamified', label: 'Games', icon: 'dice-multiple', advanced: true, description: 'Choose a game, review its result, then confirm the split.' },
+  { key: 'itemType', label: 'By category', icon: 'tag-multiple', advanced: true, description: 'Enter an amount for each category and exclude anyone who should not pay for it.' },
 ];
 
 interface MethodRailProps {
@@ -67,9 +68,9 @@ export const MethodRail = React.memo(({ activeMethod, onSelectBasic, onSelectAdv
     const visibleRight = scrollX.current + viewport;
 
     if (layout.x < visibleLeft + EDGE_PEEK) {
-      scrollRef.current?.scrollTo({ x: Math.max(0, layout.x - EDGE_PEEK), animated: true });
+      scrollRef.current?.scrollTo({ x: Math.max(0, layout.x - EDGE_PEEK), animated: !theme.reduceMotion });
     } else if (layout.x + layout.width > visibleRight - EDGE_PEEK) {
-      scrollRef.current?.scrollTo({ x: layout.x + layout.width - viewport + EDGE_PEEK, animated: true });
+      scrollRef.current?.scrollTo({ x: layout.x + layout.width - viewport + EDGE_PEEK, animated: !theme.reduceMotion });
     }
     return true;
   };
@@ -77,7 +78,7 @@ export const MethodRail = React.memo(({ activeMethod, onSelectBasic, onSelectAdv
   useEffect(() => {
     revealActivePill();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeMethod]);
+  }, [activeMethod, theme.reduceMotion]);
 
   // On first mount the effect above runs before any pill has reported its
   // layout, so reopening an expense saved with an advanced method would leave
@@ -97,7 +98,10 @@ export const MethodRail = React.memo(({ activeMethod, onSelectBasic, onSelectAdv
     maybeInitialReveal();
   };
 
+  const activeItem = ITEMS.find((item) => item.key === activeMethod);
+
   return (
+    <View>
     <ScrollView
       ref={scrollRef}
       horizontal
@@ -114,6 +118,8 @@ export const MethodRail = React.memo(({ activeMethod, onSelectBasic, onSelectAdv
             key={item.key}
             accessibilityRole="button"
             accessibilityState={{ selected }}
+            accessibilityLabel={item.label}
+            accessibilityHint={item.description}
             activeOpacity={0.75}
             onLayout={(event) => {
               pillLayouts.current[item.key] = {
@@ -138,10 +144,10 @@ export const MethodRail = React.memo(({ activeMethod, onSelectBasic, onSelectAdv
               },
             ]}
           >
-            <Icon source={item.icon} size={16} color={selected ? '#FFF' : theme.colors.muted} />
+            <Icon source={item.icon} size={16} color={selected ? theme.colors.onPrimary : theme.colors.muted} />
             <Text
               style={{
-                color: selected ? '#FFF' : theme.colors.onSurface,
+                color: selected ? theme.colors.onPrimary : theme.colors.onSurface,
                 fontSize: 12,
                 fontWeight: selected ? '800' : '600',
               }}
@@ -154,6 +160,13 @@ export const MethodRail = React.memo(({ activeMethod, onSelectBasic, onSelectAdv
         );
       })}
     </ScrollView>
+    <Text
+      style={[styles.explanation, theme.typography.caption, { color: theme.colors.onSurfaceVariant }]}
+      accessibilityLiveRegion="polite"
+    >
+      {activeItem?.description}
+    </Text>
+    </View>
   );
 });
 
@@ -167,9 +180,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 14,
-    height: 38,
-    borderRadius: 19,
+    minHeight: 48,
+    paddingVertical: 10,
+    borderRadius: 24,
     borderWidth: 1,
+  },
+  explanation: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
   advancedDot: {
     width: 5,

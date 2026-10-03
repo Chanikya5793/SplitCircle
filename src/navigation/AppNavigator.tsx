@@ -1,3 +1,4 @@
+import { StickyHeaderPill } from '@/components/ui/StickyHeaderPill';
 import { GlassView } from '@/components/GlassView';
 import { IncomingCallModal } from '@/components/IncomingCallModal';
 import { appAlert } from '@/utils/appAlert';
@@ -39,6 +40,7 @@ import { PersonalStatsScreen } from '@/screens/stats/PersonalStatsScreen';
 import { AiChatScreen } from '@/screens/ai/AiChatScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { NotificationSettingsScreen } from '@/screens/settings/NotificationSettingsScreen';
+import { PlansAndCreditsScreen } from '@/screens/settings/PlansAndCreditsScreen';
 import { AiEvalsScreen } from '@/screens/settings/AiEvalsScreen';
 import { AiMemoryScreen } from '@/screens/settings/AiMemoryScreen';
 import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
@@ -81,6 +83,8 @@ import { AppStack, AuthStack, NativeTab } from './stacks';
 import { navigationRef } from './navigationRef';
 import { useDeepLinks } from '@/services/deepLinkService';
 import { usePendingExpenseFlush } from '@/services/pendingExpenseService';
+import { useMonetizationUsageFlush } from '@/services/monetizationUsageQueue';
+import { useMonetizedOperationFinalizationFlush } from '@/services/monetizedOperationFinalizationQueue';
 
 type GroupWithFallback = Group | undefined;
 type TabIconKey = 'expenses' | 'chat' | 'calls' | 'settings' | 'search';
@@ -242,7 +246,7 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
       console.error('Unable to open chat', error);
       appAlert(
         'Could not open the group chat',
-        error instanceof Error ? error.message : 'Please try again.',
+        'The chat could not be prepared. Try again from the group.',
       );
     }
   };
@@ -251,33 +255,33 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
     return (
       <View style={styles.groupAccessoryInlineWrap}>
         <View style={styles.groupAccessoryInlineGlass}>
-          <TouchableOpacity onPress={openSettle} style={[styles.groupAccessoryInlineQuick, { backgroundColor: theme.colors.success }]} activeOpacity={0.85}>
+          <TouchableOpacity onPress={openSettle} style={[styles.groupAccessoryInlineQuick, { backgroundColor: theme.colors.success }]} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Settle up">
             <View style={styles.groupAccessoryInlineQuickInner}>
-              <Icon source="handshake" size={16} color="#fff" />
+              <Icon source="handshake" size={16} color={theme.colors.onSuccess} />
             </View>
           </TouchableOpacity>
 
           <View style={styles.groupAccessoryInlineUtilityCluster}>
-            <TouchableOpacity onPress={openStats} style={styles.groupAccessoryInlineUtilityButton} activeOpacity={0.85}>
+            <TouchableOpacity onPress={openStats} style={styles.groupAccessoryInlineUtilityButton} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Group statistics">
               <View style={styles.groupAccessoryInlineUtilityButtonInner}>
                 <Icon source="chart-pie" size={16} color={theme.colors.primary} />
               </View>
             </TouchableOpacity>
-            <TouchableOpacity onPress={openChat} style={styles.groupAccessoryInlineUtilityButton} activeOpacity={0.85}>
+            <TouchableOpacity onPress={openChat} style={styles.groupAccessoryInlineUtilityButton} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Open group chat">
               <View style={styles.groupAccessoryInlineUtilityButtonInner}>
                 <Icon source="chat" size={16} color={theme.colors.primary} />
               </View>
             </TouchableOpacity>
-            <TouchableOpacity onPress={openBills} style={styles.groupAccessoryInlineUtilityButton} activeOpacity={0.85}>
+            <TouchableOpacity onPress={openBills} style={styles.groupAccessoryInlineUtilityButton} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Recurring bills">
               <View style={styles.groupAccessoryInlineUtilityButtonInner}>
                 <Icon source="repeat" size={16} color={theme.colors.primary} />
               </View>
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity onPress={openAddExpense} style={[styles.groupAccessoryInlinePrimary, { backgroundColor: theme.colors.primary }]} activeOpacity={0.85}>
+          <TouchableOpacity onPress={openAddExpense} style={[styles.groupAccessoryInlinePrimary, { backgroundColor: theme.colors.primary }]} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Add expense">
             <View style={styles.groupAccessoryInlinePrimaryInner}>
-              <Icon source="plus" size={17} color="#fff" />
+              <Icon source="plus" size={17} color={theme.colors.onPrimary} />
             </View>
           </TouchableOpacity>
         </View>
@@ -289,36 +293,36 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
     <View style={styles.groupAccessoryRegularWrap}>
       <View style={styles.groupAccessoryRegularGlass}>
         <View style={styles.groupAccessoryRegularRow}>
-          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryPill, { backgroundColor: theme.colors.success }]} borderless>
+          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryPill, { backgroundColor: theme.colors.success }]} borderless accessibilityRole="button" accessibilityLabel="Settle up">
             <View style={styles.groupAccessoryPillInner}>
-              <Icon source="handshake" size={17} color="#fff" />
-              <Text variant="labelSmall" style={styles.groupAccessoryPrimaryText}>Settle</Text>
+              <Icon source="handshake" size={17} color={theme.colors.onSuccess} />
+              <Text variant="labelSmall" style={[styles.groupAccessoryPrimaryText, { color: theme.colors.onSuccess }]}>Settle</Text>
             </View>
           </TouchableRipple>
           <View style={styles.groupAccessoryUtilityCluster}>
-            <TouchableRipple onPress={openStats} style={styles.groupAccessoryUtilityButton} borderless>
+            <TouchableRipple onPress={openStats} style={styles.groupAccessoryUtilityButton} borderless accessibilityRole="button" accessibilityLabel="Group statistics">
               <View style={styles.groupAccessoryUtilityButtonInner}>
                 <Icon source="chart-pie" size={17} color={theme.colors.primary} />
                 <Text variant="labelSmall" style={[styles.groupAccessoryUtilityText, { color: theme.colors.onSurface }]}>Stats</Text>
               </View>
             </TouchableRipple>
-            <TouchableRipple onPress={openChat} style={styles.groupAccessoryUtilityButton} borderless>
+            <TouchableRipple onPress={openChat} style={styles.groupAccessoryUtilityButton} borderless accessibilityRole="button" accessibilityLabel="Open group chat">
               <View style={styles.groupAccessoryUtilityButtonInner}>
                 <Icon source="chat" size={17} color={theme.colors.primary} />
                 <Text variant="labelSmall" style={[styles.groupAccessoryUtilityText, { color: theme.colors.onSurface }]}>Chat</Text>
               </View>
             </TouchableRipple>
-            <TouchableRipple onPress={openBills} style={styles.groupAccessoryUtilityButton} borderless>
+            <TouchableRipple onPress={openBills} style={styles.groupAccessoryUtilityButton} borderless accessibilityRole="button" accessibilityLabel="Recurring bills">
               <View style={styles.groupAccessoryUtilityButtonInner}>
                 <Icon source="repeat" size={17} color={theme.colors.primary} />
                 <Text variant="labelSmall" style={[styles.groupAccessoryUtilityText, { color: theme.colors.onSurface }]}>Bills</Text>
               </View>
             </TouchableRipple>
           </View>
-          <TouchableRipple onPress={openAddExpense} style={[styles.groupAccessoryPill, { backgroundColor: theme.colors.primary }]} borderless>
+          <TouchableRipple onPress={openAddExpense} style={[styles.groupAccessoryPill, { backgroundColor: theme.colors.primary }]} borderless accessibilityRole="button" accessibilityLabel="Add expense">
             <View style={styles.groupAccessoryPillInner}>
-              <Icon source="plus" size={17} color="#fff" />
-              <Text variant="labelSmall" style={styles.groupAccessoryPrimaryText}>Add</Text>
+              <Icon source="plus" size={17} color={theme.colors.onPrimary} />
+              <Text variant="labelSmall" style={[styles.groupAccessoryPrimaryText, { color: theme.colors.onPrimary }]}>Add</Text>
             </View>
           </TouchableRipple>
         </View>
@@ -449,7 +453,7 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
       console.error('Unable to open chat', error);
       appAlert(
         'Could not open the group chat',
-        error instanceof Error ? error.message : 'Please try again.',
+        'The chat could not be prepared. Try again from the group.',
       );
     }
   };
@@ -1208,15 +1212,33 @@ const AppStackNavigator = () => {
         }}
       />
       <AppStack.Screen
+        name={ROUTES.APP.PLANS_AND_CREDITS}
+        component={PlansAndCreditsScreen}
+        options={{
+          title: SCREEN_TITLES.plansAndCredits,
+          headerTitle: () => (
+            <StickyHeaderPill>
+              <Text numberOfLines={1} style={[theme.typography.subtitle, { color: theme.colors.onSurface }]}>
+                {SCREEN_TITLES.plansAndCredits}
+              </Text>
+            </StickyHeaderPill>
+          ),
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <AppStack.Screen
         name={ROUTES.APP.AI_INDEX}
         component={AiIndexScreen}
         options={{ title: SCREEN_TITLES.aiIndex }}
       />
+      {__DEV__ ? (
       <AppStack.Screen
         name={ROUTES.APP.AI_EVALS}
         component={AiEvalsScreen}
         options={{ title: SCREEN_TITLES.aiEvals }}
       />
+      ) : null}
       <AppStack.Screen
         name={ROUTES.APP.AI_MEMORY}
         component={AiMemoryScreen}
@@ -1366,7 +1388,7 @@ const AppleNameNudgeToast = () => {
   return (
     <GlassToast
       visible={appleNameCaptureIncomplete}
-      message="We couldn't get your name from Apple — tap to add one."
+      message="We couldn't get your name from Apple. Tap to add one."
       icon="account-edit-outline"
       duration={10000}
       bottomOffset={insets.bottom + 88}
@@ -1391,7 +1413,13 @@ const MinimizedCallBanner = () => {
   }
 
   return (
-    <TouchableOpacity activeOpacity={0.92} onPress={showActiveCallUi} style={styles.callBannerWrap}>
+    <TouchableOpacity
+      activeOpacity={0.92}
+      onPress={showActiveCallUi}
+      style={styles.callBannerWrap}
+      accessibilityRole="button"
+      accessibilityLabel={`Return to ${activeCallRequest.type === 'video' ? 'video' : 'audio'} call in progress`}
+    >
       <GlassView role="floating" style={styles.callBanner}>
         <View
           style={[
@@ -1666,6 +1694,8 @@ const styles = StyleSheet.create({
   },
   groupAccessoryUtilityButton: {
     flex: 1,
+    minHeight: 44,
+    minWidth: 44,
     borderRadius: 50,
     overflow: 'hidden',
   },
@@ -1681,6 +1711,7 @@ const styles = StyleSheet.create({
     lineHeight: 13,
   },
   groupAccessoryPill: {
+    minHeight: 44,
     borderRadius: 50,
     overflow: 'hidden',
   },
@@ -1694,7 +1725,6 @@ const styles = StyleSheet.create({
     minWidth: 90,
   },
   groupAccessoryPrimaryText: {
-    color: '#fff',
     fontWeight: '700',
     fontSize: 13,
     lineHeight: 16,
@@ -1724,18 +1754,21 @@ const styles = StyleSheet.create({
   },
   groupAccessoryInlineUtilityButton: {
     flex: 1,
+    minWidth: 44,
+    minHeight: 44,
     borderRadius: 50,
     overflow: 'hidden',
   },
   groupAccessoryInlineUtilityButtonInner: {
-    width: 34,
-    height: 34,
+    width: 44,
+    height: 44,
     alignSelf: 'center',
     alignItems: 'center',
     justifyContent: 'center',
   },
   groupAccessoryInlinePrimary: {
     minWidth: 52,
+    minHeight: 44,
     borderRadius: 50,
     overflow: 'hidden',
   },
@@ -1747,12 +1780,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   groupAccessoryInlineQuick: {
+    minWidth: 44,
+    minHeight: 44,
     borderRadius: 50,
     overflow: 'hidden',
   },
   groupAccessoryInlineQuickInner: {
-    width: 34,
-    height: 34,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1761,6 +1796,8 @@ const styles = StyleSheet.create({
 /** Drives Siri/App-Intent/widget deep links once the signed-in nav tree is mounted. */
 const PendingExpenseHandler = () => {
   usePendingExpenseFlush();
+  useMonetizationUsageFlush();
+  useMonetizedOperationFinalizationFlush();
   return null;
 };
 

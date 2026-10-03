@@ -17,12 +17,14 @@
 // which breaks any test that renders this without mocking all of them.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import type { MessageStatus } from '@/models';
 
 interface MessageStatusIndicatorProps {
   status: MessageStatus;
+  /** Opaque foreground for solid accent bubbles; omit for dark media overlays. */
+  foregroundColor?: string;
   /** Read receipts seen so far. Group chats aggregate; 1:1 uses `status`. */
   deliveredCount?: number;
   readCount?: number;
@@ -30,6 +32,7 @@ interface MessageStatusIndicatorProps {
 
 export const MessageStatusIndicator = ({
   status,
+  foregroundColor,
   deliveredCount,
   readCount,
 }: MessageStatusIndicatorProps) => {
@@ -41,11 +44,18 @@ export const MessageStatusIndicator = ({
       <Ionicons
         name="time-outline"
         size={14}
-        color="rgba(255,255,255,0.6)"
+        color={foregroundColor ?? 'rgba(255,255,255,0.6)'}
         style={styles.statusIconSingle}
         accessibilityLabel="Sending"
       />
     );
+  }
+
+  if (foregroundColor && (status === 'failed' || status === 'undecryptable')) {
+    return <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 4, flexShrink: 1 }} accessibilityLabel={status === 'failed' ? 'Not sent' : 'Delivered, but the other device could not open it'}>
+      <Ionicons name={status === 'failed' ? 'alert-circle-outline' : 'lock-closed-outline'} size={14} color={foregroundColor} />
+      <Text style={{ color: foregroundColor, fontSize: 11, marginLeft: 3, flexShrink: 1 }}>{status === 'failed' ? 'Not sent' : 'Cannot open'}</Text>
+    </View>;
   }
 
   if (status === 'failed') {
@@ -86,21 +96,22 @@ export const MessageStatusIndicator = ({
       <Ionicons
         name="checkmark"
         size={14}
-        color="rgba(255,255,255,0.7)"
+        color={foregroundColor ?? 'rgba(255,255,255,0.7)'}
         style={styles.statusIconSingle}
         accessibilityLabel="Sent"
       />
     );
   }
 
-  const tickColor = hasAnyRead ? '#35C6FF' : 'rgba(255,255,255,0.7)';
+  const tickColor = foregroundColor ?? (hasAnyRead ? '#35C6FF' : 'rgba(255,255,255,0.7)');
   return (
     <View
-      style={styles.statusDoubleTick}
+      style={[styles.statusDoubleTick, foregroundColor && hasAnyRead ? { width: undefined } : null]}
       accessibilityLabel={hasAnyRead ? 'Read' : 'Delivered'}
     >
       <Ionicons name="checkmark" size={13} color={tickColor} style={styles.statusTickBack} />
       <Ionicons name="checkmark" size={13} color={tickColor} style={styles.statusTickFront} />
+      {foregroundColor && hasAnyRead ? <Text style={{ color: foregroundColor, fontSize: 11, marginLeft: 3 }}>Read</Text> : null}
     </View>
   );
 };

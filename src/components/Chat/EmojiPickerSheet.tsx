@@ -154,7 +154,7 @@ const CATEGORY_ORDER: Category[] = [
 ];
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const COLUMNS = 8;
+const COLUMNS = SCREEN_WIDTH < 360 ? 6 : 7;
 const EMOJI_SIZE = Math.floor((SCREEN_WIDTH - 32) / COLUMNS);
 
 interface EmojiPickerSheetProps {
@@ -189,10 +189,16 @@ export const EmojiPickerSheet = memo(({
     <Modal
       visible={visible}
       transparent
+      statusBarTranslucent
       animationType="fade"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.overlay} onPress={onClose}>
+      <Pressable
+        style={styles.overlay}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close reaction picker"
+      >
         <ScrimBackdrop intensity={15} tint={isDark ? 'dark' : 'light'} />
       </Pressable>
       <Animated.View style={styles.sheetAnchor} entering={SlideInDown.duration(260)}>
@@ -254,6 +260,7 @@ export const EmojiPickerSheet = memo(({
                     activeOpacity={0.6}
                     accessibilityRole="button"
                     accessibilityLabel={selected ? `Remove ${emoji} reaction` : `React with ${emoji}`}
+                    accessibilityState={{ selected }}
                   >
                     <Text style={styles.emoji}>{emoji}</Text>
                   </TouchableOpacity>
@@ -272,7 +279,6 @@ EmojiPickerSheet.displayName = 'EmojiPickerSheet';
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.1)',
   },
   sheetAnchor: {
     position: 'absolute',
@@ -319,8 +325,8 @@ const styles = StyleSheet.create({
   },
   tabButton: {
     flex: 1,
-    height: 36,
-    borderRadius: 18,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
     marginHorizontal: 2,

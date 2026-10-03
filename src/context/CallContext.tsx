@@ -214,7 +214,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
         const outcome = await getCallSessionOutcome(callId);
 
         const dismissDeadCall = (reason: string) => {
-          debugLog(`CallContext: VoIP push refers to a dead call (${reason}) — dismissing`, callId);
+          debugLog(`CallContext: VoIP push refers to a dead call (${reason}). Dismissing`, callId);
           void nativeCallService.endCall(callId);
           nativeCallService.clearCall(callId);
           if (incomingCallRef.current?.callId === callId) {
@@ -250,7 +250,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
           session.status === 'connected'
           && session.participants.some((participant) => participant.userId === user.userId)
         ) {
-          debugLog('CallContext: VoIP push for an already-answered call — clearing synthesized state', callId);
+          debugLog('CallContext: VoIP push for an already-answered call. Clearing synthesized state', callId);
           if (incomingCallRef.current?.callId === callId) {
             incomingCallRef.current = null;
             displayedIncomingCallIdRef.current = null;
@@ -366,8 +366,8 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
         await scheduleLocalNotification(
           currentIncomingCall.initiatorName,
           currentIncomingCall.type === 'video'
-            ? '📹 You declined a video call — pull down to reply'
-            : '📞 You declined a voice call — pull down to reply',
+            ? '📹 You declined a video call. Pull down to reply'
+            : '📞 You declined a voice call. Pull down to reply',
           {
             type: 'missed_call',
             chatId: currentIncomingCall.chatId,
@@ -556,7 +556,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
 
-      debugLog('CallContext: callee ring timeout — dismissing as missed', timeoutCallId);
+      debugLog('CallContext: callee ring timeout. Dismissing as missed', timeoutCallId);
       void nativeCallService.endCall(timeoutCallId);
       nativeCallService.clearCall(timeoutCallId);
       incomingCallRef.current = null;
@@ -680,7 +680,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     }
 
     if (activeCallRequest) {
-      debugLog('CallContext: ignoring Recents redial — a call is already active');
+      debugLog('CallContext: ignoring Recents redial. A call is already active');
       appendCallDebug('recents.ignoredActiveCall', { handle });
       clearRecentsRedial();
       return;

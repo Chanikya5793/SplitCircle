@@ -24,16 +24,43 @@ import { AppState, Platform, Settings } from 'react-native';
 import { useGroups } from '@/context/GroupContext';
 import { computeSplit } from '@/utils/split';
 import { computeParticipantsFromSplitMetadata, toParticipantShares } from '@/utils/expenseSplit';
+import { serializeSplitParticipantConfig } from '@/utils/expenseSplitMetadata';
 import { resolveDisplayName } from '@/utils/identity';
 import type { Participant } from '@/components/BillSplit/types';
 import type { ExpenseSplitMetadata, Group, SplitType } from '@/models';
+import { auth } from '@/firebase';
+import { authorizeMonetizedOperation } from '@/services/monetizationService';
+import { queueMonetizedOperationFinalization } from '@/services/monetizedOperationFinalizationQueue';
+import { appAlert } from '@/utils/appAlert';
+import {
+  isMeteredAdvancedSplitVariant,
+  normalizeMonetizationOperationId,
+} from '@/utils/monetizationUsage';
 
 const EXPENSES_KEY = 'SplitCirclePendingExpenses';
 const SETTLEMENTS_KEY = 'SplitCirclePendingSettlements';
 
+const confirmQueuedCreditSpend = (
+  title: string,
+  creditCost: number,
+  creditBalance: number,
+): Promise<boolean> => new Promise((resolve) => {
+  appAlert(
+    'Finish queued advanced split?',
+    `“${title || 'Expense'}” needs ${creditCost} ${creditCost === 1 ? 'Mana Credit' : 'Mana Credits'}. Your balance is ${creditBalance}.`,
+    [
+      { text: 'Keep queued', style: 'cancel', onPress: () => resolve(false) },
+      { text: `Use ${creditCost} ${creditCost === 1 ? 'credit' : 'credits'}`, onPress: () => resolve(true) },
+    ],
+    { cancelable: false },
+  );
+});
+
 /** One queued headless expense (contract with SplitCircleIntents.swift). */
 export interface QueuedExpense {
   requestId: string;
+  /** Firebase UID captured by the native intent at authoring time. */
+  ownerUserId?: string;
   groupId: string;
   title: string;
   amount: number;
@@ -49,10 +76,13 @@ export interface QueuedExpense {
 /** One queued headless settlement. */
 export interface QueuedSettlement {
   requestId: string;
+  /** Firebase UID captured by the native intent at authoring time. */
+  ownerUserId?: string;
   groupId: string;
   fromUserId: string;
   toUserId: string;
   amount: number;
+  expectedCurrency: string;
   createdAt: number;
 }
 
@@ -98,15 +128,12 @@ function materializeExpense(rec: QueuedExpense, group: Group) {
   // Equal is the common fast path — bypass the engine.
   if (method === 'equal') {
     const shares = computeSplit(rec.amount, 'equal', memberIds);
-    const shareOf = (uid: string) => shares.find((s) => s.userId === uid)?.share ?? 0;
     const splitMetadata: ExpenseSplitMetadata = {
       version: 1,
       method: 'equal',
       participantConfig: group.members.map((m) => ({
         userId: m.userId,
         included: memberIds.includes(m.userId),
-        exactAmount: shareOf(m.userId),
-        computedAmount: shareOf(m.userId),
       })),
     };
     return { shares, splitType: 'equal' as SplitType, splitMetadata };
@@ -137,32 +164,22 @@ function materializeExpense(rec: QueuedExpense, group: Group) {
   const splitMetadata: ExpenseSplitMetadata = {
     version: 1,
     method: method as ExpenseSplitMetadata['method'],
-    participantConfig: participants.map((p) => ({
-      userId: p.id,
-      included: p.included,
-      exactAmount: p.exactAmount,
-      percentage: p.percentage,
-      shares: p.shares,
-      adjustment: p.adjustment,
-      incomeWeight: p.incomeWeight,
-      daysStayed: p.daysStayed,
-      partsConsumed: p.partsConsumed,
-    })),
+    participantConfig: serializeSplitParticipantConfig(
+      method as ExpenseSplitMetadata['method'],
+      participants,
+      method === 'gamified' ? 'roulette' : undefined,
+    ),
     ...(method === 'consumption' ? { totalParts } : {}),
     ...(method === 'timeBased' ? { timeSplitVariant: 'dynamic' as const } : {}),
-    ...(method === 'gamified' && rec.rouletteLoserId ? { rouletteLoserId: rec.rouletteLoserId } : {}),
+    ...(method === 'gamified' ? {
+      gamifiedMode: 'roulette' as const,
+      ...(rec.rouletteLoserId ? { rouletteLoserId: rec.rouletteLoserId } : {}),
+    } : {}),
   };
 
   const computed = computeParticipantsFromSplitMetadata(rec.amount, participants, splitMetadata);
   const shares = toParticipantShares(computed);
   if (!shares.length) return null;
-
-  // Backfill each config row's computedAmount so the stored metadata matches the shares.
-  const computedMap = new Map(computed.map((c) => [c.id, c.computedAmount]));
-  splitMetadata.participantConfig = splitMetadata.participantConfig.map((pc) => ({
-    ...pc,
-    computedAmount: computedMap.get(pc.userId) ?? 0,
-  }));
 
   return { shares, splitType: methodToSplitType(method), splitMetadata };
 }
@@ -176,6 +193,8 @@ export function usePendingExpenseFlush(): void {
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
   const running = useRef(false);
+  const nextAccessPromptAt = useRef(new Map<string, number>());
+  const legacyOwnershipWarningShown = useRef(false);
 
   const flush = useCallback(async () => {
     if (running.current) return;
@@ -184,6 +203,9 @@ export function usePendingExpenseFlush(): void {
     if (!pendingExpenses.length && !pendingSettlements.length) return;
     running.current = true;
     try {
+      const currentOwnerUid = auth.currentUser?.uid;
+      if (!currentOwnerUid) return;
+      let discardedLegacyRecord = false;
       // ── Expenses ──
       // Track which requestIds actually got handled (added, or genuinely
       // nothing-to-add) rather than building the "keep" array from this
@@ -196,8 +218,21 @@ export function usePendingExpenseFlush(): void {
       // means it survives instead.
       const processedExpenseIds = new Set<string>();
       for (const rec of pendingExpenses) {
+        if (typeof rec.ownerUserId !== 'string' || !rec.ownerUserId) {
+          // Records from older builds cannot be attributed safely after an
+          // account switch. Drop them rather than posting a financial action
+          // under whichever account happens to be signed in now.
+          processedExpenseIds.add(rec.requestId);
+          discardedLegacyRecord = true;
+          continue;
+        }
+        if (rec.ownerUserId !== currentOwnerUid) continue;
         const group = groupsRef.current.find((g) => g.groupId === rec.groupId);
         if (!group) continue; // group not loaded yet — retry next pass
+        const ownerUid = currentOwnerUid;
+        const normalizedOperationId = normalizeMonetizationOperationId(rec.requestId);
+        let accessAuthorization: Awaited<ReturnType<typeof authorizeMonetizedOperation>> | null = null;
+        let expenseCommitted = false;
         try {
           if (!group.members.some((m) => m.userId === rec.paidByUserId)) {
             // The Siri/Shortcuts-supplied payer left the group between the
@@ -207,13 +242,58 @@ export function usePendingExpenseFlush(): void {
             // drop the record instead and log it so it's at least
             // discoverable, rather than posting a confidently wrong expense.
             console.warn(
-              `pendingExpenseService: dropping queued expense ${rec.requestId} — payer ${rec.paidByUserId} is no longer a member of group ${rec.groupId}`,
+              `pendingExpenseService: dropping queued expense ${rec.requestId}. Payer ${rec.paidByUserId} is no longer a member of group ${rec.groupId}`,
             );
             processedExpenseIds.add(rec.requestId);
             continue;
           }
           const built = materializeExpense(rec, group);
           if (built) {
+            if (isMeteredAdvancedSplitVariant(built.splitMetadata.method)) {
+              if (!ownerUid || !normalizedOperationId) {
+                throw new Error('The queued advanced split has no valid account operation id.');
+              }
+              let decision = await authorizeMonetizedOperation({
+                operationId: normalizedOperationId,
+                featureId: 'advanced_split.completion',
+                variant: built.splitMetadata.method,
+                executionRoute: 'local_deterministic',
+                useCredits: false,
+              });
+              if (!decision.allowed) {
+                const cost = decision.creditCost ?? 0;
+                const canUseCredits = cost > 0 && decision.creditBalance >= cost;
+                const promptAllowed = (nextAccessPromptAt.current.get(rec.requestId) ?? 0) <= Date.now();
+                if (canUseCredits && promptAllowed) {
+                  nextAccessPromptAt.current.set(rec.requestId, Date.now() + 60_000);
+                  const approved = await confirmQueuedCreditSpend(
+                    rec.title,
+                    cost,
+                    decision.creditBalance,
+                  );
+                  if (approved) {
+                    decision = await authorizeMonetizedOperation({
+                      operationId: normalizedOperationId,
+                      featureId: 'advanced_split.completion',
+                      variant: built.splitMetadata.method,
+                      executionRoute: 'local_deterministic',
+                      useCredits: true,
+                    });
+                  }
+                } else if (!canUseCredits && promptAllowed) {
+                  nextAccessPromptAt.current.set(rec.requestId, Date.now() + 5 * 60_000);
+                  appAlert(
+                    'Queued expense needs access',
+                    `“${rec.title || 'Expense'}” is still queued. Open Plans & Credits in Settings to add access or wait for included uses to reset.`,
+                  );
+                }
+              }
+              if (!decision.allowed || !decision.authorizationId) {
+                continue;
+              }
+              accessAuthorization = decision;
+            }
+
             await addExpense(
               rec.groupId,
               {
@@ -231,11 +311,32 @@ export function usePendingExpenseFlush(): void {
               undefined,
               undefined,
               rec.requestId,
+              accessAuthorization?.authorizationId && normalizedOperationId
+                ? {
+                    operationId: normalizedOperationId,
+                    authorizationId: accessAuthorization.authorizationId,
+                  }
+                : undefined,
             );
+            expenseCommitted = true;
+            if (ownerUid && normalizedOperationId && accessAuthorization?.authorizationId) {
+              await queueMonetizedOperationFinalization(ownerUid, {
+                operationId: normalizedOperationId,
+                authorizationId: accessAuthorization.authorizationId,
+                outcome: 'completed',
+              });
+            }
           }
           // Either materialized + added, or genuinely nothing to add — both done.
           processedExpenseIds.add(rec.requestId);
         } catch {
+          if (ownerUid && normalizedOperationId && accessAuthorization?.authorizationId) {
+            void queueMonetizedOperationFinalization(ownerUid, {
+              operationId: normalizedOperationId,
+              authorizationId: accessAuthorization.authorizationId,
+              outcome: expenseCommitted ? 'completed' : 'failed',
+            }).catch(() => undefined);
+          }
           // transient failure — leave queued, retry later
         }
       }
@@ -250,13 +351,24 @@ export function usePendingExpenseFlush(): void {
       // ── Settlements ── (same fresh-read-before-write fix as above)
       const processedSettlementIds = new Set<string>();
       for (const rec of pendingSettlements) {
+        if (typeof rec.ownerUserId !== 'string' || !rec.ownerUserId) {
+          processedSettlementIds.add(rec.requestId);
+          discardedLegacyRecord = true;
+          continue;
+        }
+        if (rec.ownerUserId !== currentOwnerUid) continue;
         const group = groupsRef.current.find((g) => g.groupId === rec.groupId);
         if (!group) continue;
+        // Older native intent records did not capture the currency at authoring
+        // time. Guessing from the current group could reinterpret a queued
+        // amount after a cross-device conversion, so leave those records queued.
+        if (typeof rec.expectedCurrency !== 'string' || !/^[A-Za-z]{3}$/.test(rec.expectedCurrency)) continue;
         try {
           await settleUp(
             rec.groupId,
             { fromUserId: rec.fromUserId, toUserId: rec.toUserId, amount: rec.amount },
             rec.requestId,
+            rec.expectedCurrency,
           );
           processedSettlementIds.add(rec.requestId);
         } catch {
@@ -268,6 +380,13 @@ export function usePendingExpenseFlush(): void {
         writeQueue(
           SETTLEMENTS_KEY,
           freshSettlements.filter((rec) => !processedSettlementIds.has(rec.requestId)),
+        );
+      }
+      if (discardedLegacyRecord && !legacyOwnershipWarningShown.current) {
+        legacyOwnershipWarningShown.current = true;
+        appAlert(
+          'Older queued item removed',
+          'A Siri item from an older ManaSplit build could not be matched safely to this account. Please add it again.',
         );
       }
     } finally {

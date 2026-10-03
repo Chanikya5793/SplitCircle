@@ -2,10 +2,11 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { ScrimBackdrop } from '@/components/ui/ScrimBackdrop';
-import type { ExpenseSplitMetadata } from '@/models';
+import type { ExpenseItemSplitConfig, ExpenseSplitMetadata } from '@/models';
 import { recordSplit } from '@/services/splitHistoryService';
 import { spacing } from '@/theme';
 import { formatCurrency } from '@/utils/currency';
+import { buildExpenseSplitMetadata } from '@/utils/expenseSplitMetadata';
 import { ConfettiBurst } from './ConfettiBurst';
 import { heavyHaptic, lightHaptic, mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -38,7 +39,6 @@ import {
     computeShares,
     computeStandardTimeBased,
     computeTimeBased,
-    computeWeightedRoulette,
     fromCents,
     listDatesBetween,
     toCents,
@@ -139,7 +139,26 @@ export const BillSplitScreen = ({
     initialSplitMetadata?.receiptItems ?? [],
   );
   const [taxAmount, setTaxAmount] = useState(initialSplitMetadata?.taxAmount ?? 0);
+  const [taxSplitConfig, setTaxSplitConfig] = useState<ExpenseItemSplitConfig | undefined>(
+    initialSplitMetadata?.taxSplitConfig,
+  );
   const [tipAmount, setTipAmount] = useState(initialSplitMetadata?.tipAmount ?? 0);
+  const [tipSplitConfig, setTipSplitConfig] = useState<ExpenseItemSplitConfig | undefined>(
+    initialSplitMetadata?.tipSplitConfig,
+  );
+
+  // The compact receipt editor does not expose the scanner's per-person
+  // tax/tip override controls. Preserve untouched overrides on re-save, but if
+  // the amount changes, clear that now-stale override and fall back to the
+  // documented subtotal-proportional distribution.
+  const handleTaxChange = useCallback((value: number) => {
+    setTaxAmount(value);
+    setTaxSplitConfig(undefined);
+  }, []);
+  const handleTipChange = useCallback((value: number) => {
+    setTipAmount(value);
+    setTipSplitConfig(undefined);
+  }, []);
 
   // ── Consumption State ─────────────────────────────────────────────────────
   const [totalParts, setTotalParts] = useState(initialSplitMetadata?.totalParts ?? 8);
@@ -315,47 +334,22 @@ export const BillSplitScreen = ({
 
   // ── Gamified Spin ─────────────────────────────────────────────────────────
   const handleSpin = useCallback(() => {
+    // Double Wheel and Karma own their result flows inside AdvancedModeContent.
+    // This callback must never run the legacy single-loser weighted algorithm.
+    if (gamifiedMode !== 'roulette') return;
+
     heavyHaptic();
     setLoserId(null);
     setSpinTargetIndex(null);
     setRevealDismissed(false);
     setIsSpinning(true);
 
-    // Karma mode doesn't use spin – it's handled internally
-    if (gamifiedMode === 'scrooge') return;
-
-    // Compute the winner immediately
-    let result: { participants: Participant[]; loserId: string };
-    if (gamifiedMode === 'roulette') {
-      result = computeRoulette(totalAmount, participants);
-    } else {
-      result = computeWeightedRoulette(totalAmount, participants);
-    }
-
-    // Only roulette mode uses the animated wheel
-    if (gamifiedMode === 'roulette') {
-      const included = participants.filter((p) => p.included);
-      const winnerIdx = included.findIndex((p) => p.id === result.loserId);
-      spinResultRef.current = result;
-      setSpinTargetIndex(winnerIdx >= 0 ? winnerIdx : 0);
-    } else {
-      // Weighted – no wheel, quick delay
-      weightedTimerRef.current = setTimeout(() => {
-        setParticipants(result.participants);
-        setLoserId(result.loserId);
-        setIsSpinning(false);
-        successHaptic();
-      }, 1500);
-    }
+    const result = computeRoulette(totalAmount, participants);
+    const included = participants.filter((p) => p.included);
+    const winnerIdx = included.findIndex((p) => p.id === result.loserId);
+    spinResultRef.current = result;
+    setSpinTargetIndex(winnerIdx >= 0 ? winnerIdx : 0);
   }, [gamifiedMode, totalAmount, participants]);
-
-  // Timer ref for weighted roulette – cleared on unmount to prevent state updates on dead component
-  const weightedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    return () => {
-      if (weightedTimerRef.current) clearTimeout(weightedTimerRef.current);
-    };
-  }, []);
 
   // Ref to hold computed result while wheel spins
   const spinResultRef = useRef<{ participants: Participant[]; loserId: string } | null>(null);
@@ -604,7 +598,14 @@ export const BillSplitScreen = ({
       case 'adjustment':
         return computeAdjustment(totalAmount, participants);
       case 'itemized':
-        return computeItemized(receiptItems, taxAmount, tipAmount, participants);
+        return computeItemized(
+          receiptItems,
+          taxAmount,
+          tipAmount,
+          participants,
+          taxSplitConfig,
+          tipSplitConfig,
+        );
       case 'income':
         return computeIncome(totalAmount, participants);
       case 'consumption':
@@ -621,7 +622,7 @@ export const BillSplitScreen = ({
       default:
         return participants;
     }
-  }, [currentMethod, totalAmount, participants, receiptItems, taxAmount, tipAmount, totalParts, itemCategories, timePeriodDays, timeSplitVariant]);
+  }, [currentMethod, totalAmount, participants, receiptItems, taxAmount, taxSplitConfig, tipAmount, tipSplitConfig, totalParts, itemCategories, timePeriodDays, timeSplitVariant]);
 
   // Sync computed amounts back (for display in advanced modes)
   const displayParticipants = useMemo(() => {
@@ -686,50 +687,25 @@ export const BillSplitScreen = ({
       return;
     }
 
-    const splitMetadata: ExpenseSplitMetadata = {
-      version: 1,
+    const splitMetadata = buildExpenseSplitMetadata({
       method: currentMethod,
-      participantConfig: displayParticipants.map((participant) => ({
-        userId: participant.id,
-        included: participant.included,
-        exactAmount: participant.exactAmount,
-        percentage: participant.percentage,
-        shares: participant.shares,
-        adjustment: participant.adjustment,
-        incomeWeight: participant.incomeWeight,
-        historicalPaid: participant.historicalPaid,
-        daysStayed: participant.daysStayed,
-        checkInDate: participant.checkInDate,
-        checkOutDate: participant.checkOutDate,
-        selectedStayDates: participant.selectedStayDates,
-        partsConsumed: participant.partsConsumed,
-        rouletteWeight: participant.rouletteWeight,
-        computedAmount: participant.computedAmount,
-      })),
-      ...(currentMethod === 'itemized' ? {
-        receiptItems,
-        taxAmount,
-        tipAmount,
-      } : {}),
-      ...(currentMethod === 'consumption' ? {
-        totalParts,
-      } : {}),
-      ...(currentMethod === 'timeBased' ? {
-        timeSplitVariant,
-        timePeriodDays,
-        timePeriodStartDate,
-        timePeriodEndDate,
-      } : {}),
-      ...(currentMethod === 'gamified' ? {
-        gamifiedMode,
-        rouletteLoserId: gamifiedMode === 'roulette' ? loserId ?? undefined : undefined,
-        weightedAssignments: gamifiedMode === 'weightedRoulette' ? weightedAssignments : undefined,
-        karmaIntensity: gamifiedMode === 'scrooge' ? karmaIntensity : undefined,
-      } : {}),
-      ...(currentMethod === 'itemType' ? {
-        itemCategories,
-      } : {}),
-    };
+      participants: displayParticipants,
+      receiptItems,
+      taxAmount,
+      taxSplitConfig,
+      tipAmount,
+      tipSplitConfig,
+      totalParts,
+      timeSplitVariant,
+      timePeriodDays,
+      timePeriodStartDate,
+      timePeriodEndDate,
+      gamifiedMode,
+      rouletteLoserId: loserId ?? undefined,
+      weightedAssignments,
+      karmaIntensity,
+      itemCategories,
+    });
 
     successHaptic();
 
@@ -778,16 +754,22 @@ export const BillSplitScreen = ({
     paidBy,
     receiptItems,
     taxAmount,
+    taxSplitConfig,
     timePeriodDays,
     timePeriodEndDate,
     timePeriodStartDate,
     timeSplitVariant,
     tipAmount,
+    tipSplitConfig,
     totalParts,
     weightedAssignments,
   ]);
 
   const payerName = participants.find((p) => p.id === paidBy)?.name ?? 'Unknown';
+  const rouletteRevealActive = Boolean(currentMethod === 'gamified' && gamifiedMode === 'roulette' && loserId && !isSpinning && !revealDismissed);
+  const weightedRevealActive = currentMethod === 'gamified' && gamifiedMode === 'weightedRoulette' && weightedSplitComplete && !weightedRevealDismissed;
+  const karmaRevealActive = currentMethod === 'gamified' && gamifiedMode === 'scrooge' && karmaResultActive;
+  const focusOverlayActive = showPayerMenu || showParticipantMenu || rouletteRevealActive || weightedRevealActive || karmaRevealActive;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -797,7 +779,11 @@ export const BillSplitScreen = ({
           {/* Header — title + payer share one block so no separate payer row
               burns vertical space below. Tapping the subtitle opens the payer
               picker as an overlay. */}
-          <View style={styles.headerWrap}>
+          <View
+            style={styles.headerWrap}
+            accessibilityElementsHidden={focusOverlayActive}
+            importantForAccessibility={focusOverlayActive ? 'no-hide-descendants' : 'auto'}
+          >
             <GlassCard role="floating" style={styles.headerGlass} contentStyle={styles.header}>
               <TouchableOpacity onPress={onCancel} activeOpacity={0.7} style={styles.headerSide}>
                 <Text variant="labelLarge" style={{ color: theme.colors.primary }}>Cancel</Text>
@@ -847,14 +833,13 @@ export const BillSplitScreen = ({
                 onPress={() => { setShowPayerMenu(false); setShowParticipantMenu(false); }}
               >
                 <ScrimBackdrop intensity={60} tint={theme.dark ? 'dark' : 'light'} />
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.12)' }]} />
               </Pressable>
             </Animated.View>
           )}
 
           {/* Payer picker — overlay under the header, glass surface */}
           {showPayerMenu && (
-            <Animated.View entering={SlideInDown.duration(150)} exiting={SlideOutUp.duration(120)} style={styles.payerOverlay}>
+            <Animated.View entering={SlideInDown.duration(150)} exiting={SlideOutUp.duration(120)} style={styles.payerOverlay} accessibilityViewIsModal>
               <GlassCard role="floating" style={styles.payerDropdownGlass}>
                 {participants.map((p) => (
                   <Pressable
@@ -865,6 +850,9 @@ export const BillSplitScreen = ({
                       p.id === paidBy && { backgroundColor: `${theme.colors.primary}15` },
                       pressed && { opacity: 0.6 },
                     ]}
+                    accessibilityRole="radio"
+                    accessibilityLabel={p.name}
+                    accessibilityState={{ checked: p.id === paidBy }}
                   >
                     <View style={styles.payerDropdownItemLeft}>
                       <Icon source={p.id === paidBy ? 'check-circle' : 'account'} size={20} color={p.id === paidBy ? theme.colors.primary : theme.colors.onSurfaceVariant} />
@@ -879,7 +867,7 @@ export const BillSplitScreen = ({
           {/* Participant roster — global multi-select overlay under the header.
               Stays open while you toggle several; the header chevron closes it. */}
           {showParticipantMenu && (
-            <Animated.View entering={SlideInDown.duration(150)} exiting={SlideOutUp.duration(120)} style={styles.payerOverlay}>
+            <Animated.View entering={SlideInDown.duration(150)} exiting={SlideOutUp.duration(120)} style={styles.payerOverlay} accessibilityViewIsModal>
               <GlassCard role="floating" style={styles.payerDropdownGlass}>
                 <Pressable
                   onPress={handleSelectAll}
@@ -888,6 +876,9 @@ export const BillSplitScreen = ({
                     { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.dark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)' },
                     pressed && { opacity: 0.6 },
                   ]}
+                  accessibilityRole="checkbox"
+                  accessibilityLabel={allSelected ? 'Clear everyone' : 'Select everyone'}
+                  accessibilityState={{ checked: allSelected }}
                 >
                   <View style={styles.payerDropdownItemLeft}>
                     <Icon source={allSelected ? 'checkbox-multiple-marked' : 'checkbox-multiple-blank-outline'} size={20} color={theme.colors.primary} />
@@ -901,6 +892,9 @@ export const BillSplitScreen = ({
                     key={p.id}
                     onPress={() => { selectionHaptic(); handleAdvancedToggleParticipant(p.id); }}
                     style={({ pressed }) => [styles.payerDropdownItem, pressed && { opacity: 0.6 }]}
+                    accessibilityRole="checkbox"
+                    accessibilityLabel={p.name}
+                    accessibilityState={{ checked: p.included }}
                   >
                     <View style={styles.payerDropdownItemLeft}>
                       <Icon source={p.included ? 'checkbox-marked' : 'checkbox-blank-outline'} size={20} color={p.included ? theme.colors.primary : theme.colors.onSurfaceVariant} />
@@ -923,6 +917,8 @@ export const BillSplitScreen = ({
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
             automaticallyAdjustKeyboardInsets
+            accessibilityElementsHidden={focusOverlayActive}
+            importantForAccessibility={focusOverlayActive ? 'no-hide-descendants' : 'auto'}
           >
             {/* Method rail — all eleven methods, one line, always visible */}
             <MethodRail
@@ -958,9 +954,9 @@ export const BillSplitScreen = ({
                     receiptItems={receiptItems}
                     onReceiptItemsChange={setReceiptItems}
                     taxAmount={taxAmount}
-                    onTaxChange={setTaxAmount}
+                    onTaxChange={handleTaxChange}
                     tipAmount={tipAmount}
-                    onTipChange={setTipAmount}
+                    onTipChange={handleTipChange}
                     onIncomeWeightChange={handleIncomeWeightChange}
                     onToggleParticipant={handleAdvancedToggleParticipant}
                     totalParts={totalParts}
@@ -1001,11 +997,12 @@ export const BillSplitScreen = ({
 
           {/* Full-screen winner reveal — the payoff owns the WHOLE screen,
               footer included. Nothing celebratory ever hides behind chrome. */}
-          {currentMethod === 'gamified' && gamifiedMode === 'roulette' && loserId && !isSpinning && !revealDismissed && (
+          {rouletteRevealActive && (
             <Animated.View
               entering={FadeIn.duration(220)}
               exiting={FadeOut.duration(150)}
               style={styles.winnerOverlay}
+              accessibilityViewIsModal
             >
               <ScrimBackdrop intensity={80} tint={theme.dark ? 'dark' : 'light'} pointerEvents="none" />
               <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} pointerEvents="none" />
@@ -1014,6 +1011,7 @@ export const BillSplitScreen = ({
                 style={styles.winnerClose}
                 onPress={() => { lightHaptic(); setRevealDismissed(true); }}
                 accessibilityLabel="Close winner reveal"
+                accessibilityRole="button"
               >
                 <Icon source="close" size={22} color={theme.colors.muted} />
               </TouchableOpacity>
@@ -1021,7 +1019,7 @@ export const BillSplitScreen = ({
               <View style={styles.winnerCenter}>
                 <Text style={[styles.winnerKicker, { color: theme.colors.muted }]}>THE WHEEL HAS SPOKEN</Text>
                 <Text style={[styles.winnerName, { color: theme.colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit>
-                  {participants.find((p) => p.id === loserId)?.name ?? '—'}
+                  {participants.find((p) => p.id === loserId)?.name ?? 'Not selected'}
                 </Text>
                 <Text style={[styles.winnerAmount, { color: theme.colors.primary }]}>
                   pays {formatCurrency(effectiveTotalAmount, currency)}
@@ -1047,8 +1045,8 @@ export const BillSplitScreen = ({
                   onPress={handleDone}
                   activeOpacity={0.8}
                 >
-                  <Icon source="check" size={17} color="#FFF" />
-                  <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '800' }}>Lock it in</Text>
+                  <Icon source="check" size={17} color={theme.colors.onSuccess} />
+                  <Text style={{ color: theme.colors.onSuccess, fontSize: 15, fontWeight: '800' }}>Lock it in</Text>
                 </TouchableOpacity>
               </View>
             </Animated.View>
@@ -1056,11 +1054,12 @@ export const BillSplitScreen = ({
 
           {/* Double Wheel uses the same payoff rule as Roulette: completion is
               a destination, not a card stranded below a scrolling editor. */}
-          {currentMethod === 'gamified' && gamifiedMode === 'weightedRoulette' && weightedSplitComplete && !weightedRevealDismissed && (
+          {weightedRevealActive && (
             <Animated.View
               entering={FadeIn.duration(220)}
               exiting={FadeOut.duration(150)}
               style={styles.winnerOverlay}
+              accessibilityViewIsModal
             >
               <ScrimBackdrop intensity={80} tint={theme.dark ? 'dark' : 'light'} pointerEvents="none" />
               <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} pointerEvents="none" />
@@ -1069,6 +1068,7 @@ export const BillSplitScreen = ({
                 style={styles.winnerClose}
                 onPress={() => { lightHaptic(); setWeightedRevealDismissed(true); }}
                 accessibilityLabel="Close split result"
+                accessibilityRole="button"
               >
                 <Icon source="close" size={22} color={theme.colors.muted} />
               </TouchableOpacity>
@@ -1108,8 +1108,8 @@ export const BillSplitScreen = ({
                   onPress={handleDone}
                   activeOpacity={0.8}
                 >
-                  <Icon source="check" size={17} color="#FFF" />
-                  <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '800' }}>Lock it in</Text>
+                  <Icon source="check" size={17} color={theme.colors.onSuccess} />
+                  <Text style={{ color: theme.colors.onSuccess, fontSize: 15, fontWeight: '800' }}>Lock it in</Text>
                 </TouchableOpacity>
               </View>
             </Animated.View>
@@ -1118,11 +1118,12 @@ export const BillSplitScreen = ({
           {/* Karma has the same result contract as the two wheels. Its applied
               split is reviewed in a dedicated result layer, never an inline
               card that competes with the editor or footer. */}
-          {currentMethod === 'gamified' && gamifiedMode === 'scrooge' && karmaResultActive && (
+          {karmaRevealActive && (
             <Animated.View
               entering={FadeIn.duration(220)}
               exiting={FadeOut.duration(150)}
               style={styles.winnerOverlay}
+              accessibilityViewIsModal
             >
               <ScrimBackdrop intensity={80} tint={theme.dark ? 'dark' : 'light'} pointerEvents="none" />
               <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} pointerEvents="none" />
@@ -1131,6 +1132,7 @@ export const BillSplitScreen = ({
                 style={styles.winnerClose}
                 onPress={() => { lightHaptic(); setKarmaResultActive(false); }}
                 accessibilityLabel="Close karma result"
+                accessibilityRole="button"
               >
                 <Icon source="close" size={22} color={theme.colors.muted} />
               </TouchableOpacity>
@@ -1169,8 +1171,8 @@ export const BillSplitScreen = ({
                   onPress={handleDone}
                   activeOpacity={0.8}
                 >
-                  <Icon source="check" size={17} color="#FFF" />
-                  <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '800' }}>Lock it in</Text>
+                  <Icon source="check" size={17} color={theme.colors.onSuccess} />
+                  <Text style={{ color: theme.colors.onSuccess, fontSize: 15, fontWeight: '800' }}>Lock it in</Text>
                 </TouchableOpacity>
               </View>
             </Animated.View>
@@ -1181,7 +1183,11 @@ export const BillSplitScreen = ({
               result's "Lock it in", so a docked Spin/Done there is dead weight.
               Roulette keeps it (its footer Spin drives the wheel). */}
           {!(currentMethod === 'gamified' && (gamifiedMode === 'weightedRoulette' || gamifiedMode === 'scrooge')) && (
-            <View style={styles.footerWrapper}>
+            <View
+              style={styles.footerWrapper}
+              accessibilityElementsHidden={focusOverlayActive}
+              importantForAccessibility={focusOverlayActive ? 'no-hide-descendants' : 'auto'}
+            >
               <SplitFooter
                 totalAmount={effectiveTotalAmount}
                 currency={currency}
@@ -1299,9 +1305,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 18,
     right: 18,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },

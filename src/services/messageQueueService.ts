@@ -95,6 +95,24 @@ interface QueueMessagePayload {
   expenseRef?: ChatMessage['expenseRef'];
 }
 
+const queueViaAuthorizedServer = async (
+  recipientId: string,
+  messageId: string,
+  chatId: string,
+  payload: Record<string, unknown>,
+  replaceExisting = false,
+): Promise<void> => {
+  const [{ getFunctions, httpsCallable }, { app }] = await Promise.all([
+    import('firebase/functions'),
+    import('@/firebase'),
+  ]);
+  const callable = httpsCallable<
+    { recipientId: string; messageId: string; chatId: string; payload: Record<string, unknown>; replaceExisting?: boolean },
+    { queued: true }
+  >(getFunctions(app), 'queueChatMessage');
+  await callable({ recipientId, messageId, chatId, payload, ...(replaceExisting ? { replaceExisting: true } : {}) });
+};
+
 const isReceiptData = (value: unknown): value is ReceiptData => {
   if (!value || typeof value !== 'object') {
     return false;
@@ -277,8 +295,6 @@ export const queueMessage = async (
   groupName?: string,
 ): Promise<void> => {
   try {
-    const messageQueueRef = ref(rtdb, `messageQueue/${recipientId}/${message.id}`);
-
     const messageData: Record<string, unknown> = {
       senderId: message.senderId,
       chatId: message.chatId,
@@ -423,7 +439,12 @@ export const queueMessage = async (
       isGroupChat ? groupName : undefined,
     );
 
-    await set(messageQueueRef, messageData);
+    // Recipient fan-out is callable-only. The server verifies both users are
+    // current chat participants, enforces user blocks, caps payload size and
+    // applies a durable rate limit before the transient RTDB write. Keeping
+    // encryption here means the server receives the same opaque envelope it
+    // would have received in RTDB, never an extra plaintext copy.
+    await queueViaAuthorizedServer(recipientId, message.id, message.chatId, messageData);
     console.log('✅ Message queued for:', recipientId, encrypted ? '(encrypted)' : '(plaintext)');
   } catch (error) {
     console.error('❌ Error queuing message:', error);
@@ -509,7 +530,7 @@ export const queueMessageToOwnDevices = async (
     // observable signal looks healthy.
     if (Object.keys(encrypted.envelopes).length === 0) {
       console.error(
-        '⚠️ Self-sync produced no envelopes — could not encrypt to ANY sibling '
+        '⚠️ Self-sync produced no envelopes. Could not encrypt to ANY sibling '
         + 'device. Their sessions are likely stale (reinstall/restore); they will '
         + 'not receive this message.',
         { messageId: message.id, chatId: message.chatId },
@@ -555,9 +576,12 @@ export const queueMessageToOwnDevices = async (
     // 'sent', and the user's own other devices silently never received it.
     // Note the raw spreads above (mediaMetadata/replyTo/forwardedFrom/
     // expenseRef) copy stored objects wholesale, so this is not hypothetical.
-    await set(
-      ref(rtdb, `messageQueue/${senderId}/${message.id}`),
+    await queueViaAuthorizedServer(
+      senderId,
+      message.id,
+      message.chatId,
       stripUndefinedDeep(messageData),
+      true,
     );
   } catch (error) {
     // Never fail the send because self-sync failed: the message already
@@ -700,9 +724,13 @@ export const queueGapFillMessage = async (
   // error path deliberately leaves the node in place). Without this, replaying
   // exactly the message most likely to have failed delivery would silently do
   // nothing, forever. Removing first guarantees the create the trigger needs.
-  const relayRef = ref(rtdb, `messageQueue/${ownerUserId}/${message.id}`);
-  await remove(relayRef);
-  await set(relayRef, stripUndefinedDeep(messageData));
+  await queueViaAuthorizedServer(
+    ownerUserId,
+    message.id,
+    message.chatId,
+    stripUndefinedDeep(messageData),
+    true,
+  );
   return true;
 };
 
@@ -712,7 +740,15 @@ export const queueGapFillMessage = async (
  */
 export const registerReceiptParticipant = async (chatId: string, userId: string): Promise<void> => {
   try {
-    await set(ref(rtdb, `receipts/${chatId}/__participants/${userId}`), true);
+    const [{ getFunctions, httpsCallable }, { app }] = await Promise.all([
+      import('firebase/functions'),
+      import('@/firebase'),
+    ]);
+    const authorize = httpsCallable<{ chatId: string }, { authorized: true }>(
+      getFunctions(app),
+      'authorizeChatAccess',
+    );
+    await authorize({ chatId });
   } catch (error) {
     console.error('❌ Error registering receipt participant:', error);
     throw error;

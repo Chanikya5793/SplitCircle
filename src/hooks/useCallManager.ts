@@ -225,7 +225,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         if (nativeCallService.hasActivatedAudioSession()) {
           return;
         }
-        console.warn('useCallManager: CallKit never activated the audio session — activating manually');
+        console.warn('useCallManager: CallKit never activated the audio session. Activating manually');
         AudioSession.startAudioSession()
           .then(() => {
             // CRITICAL: startAudioSession() alone leaves WebRTC's audio unit
@@ -451,7 +451,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       nativeCallService.resetAudioSession();
       callIdRef.current = null;
       setCallId(null);
-      setError(err instanceof Error ? err.message : 'Failed to start call');
+      setError('Couldn’t start the call. Please try again.');
       setStatus('failed');
     }
   }, [buildNativeHandle, chatId, groupId, threads, user, setupCallAudio]);
@@ -626,7 +626,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         videoModeReapplyRef.current = null;
       }
       nativeCallService.resetAudioSession();
-      setError(err instanceof Error ? err.message : 'Failed to join call');
+      setError('Couldn’t join the call. Please try again.');
       setStatus('failed');
     }
   }, [chatId, threads, user, setupCallAudio]);

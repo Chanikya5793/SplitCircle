@@ -100,7 +100,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
     };
 
     if (Platform.OS === 'ios') {
-      appAlert('Delete Call', 'Remove this call from history?', [
+      appAlert('Delete call', 'Remove this call from history?', [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: performDelete },
       ]);

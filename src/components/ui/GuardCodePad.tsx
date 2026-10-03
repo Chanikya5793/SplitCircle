@@ -11,29 +11,17 @@
 // fake success) never leaks into this component.
 
 import { useTheme } from '@/context/ThemeContext';
+import { GlassCard } from './GlassCard';
 import { lockoutRemainingMs } from '@/services/privacyGuardService';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  Animated,
-  Easing,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  StyleSheet,
-  TextInput,
-  View,
-} from 'react-native';
+import { Animated, Easing, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export type CodePadOutcome =
-  | { status: 'ok' }
-  | { status: 'wrong' }
-  | { status: 'locked'; lockedForMs: number }
-  | { status: 'invalid'; message: string };
+  { status: 'ok' } | { status: 'wrong' } | { status: 'locked'; lockedForMs: number } | { status: 'invalid'; message: string };
 
 export interface GuardCodePadProps {
   visible: boolean;
@@ -62,14 +50,8 @@ const KEYS: Array<Array<string>> = [
 const MIN_LEN = 4;
 const MAX_LEN = 8;
 
-// Dense-editor solid palette (DESIGN.md).
-const canvas = (isDark: boolean) => (isDark ? 'rgba(13,15,20,0.96)' : 'rgba(250,250,252,0.97)');
-const keyBg = (isDark: boolean) => (isDark ? 'rgba(28,31,38,0.96)' : 'rgba(255,255,255,0.97)');
-const hairline = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)');
-const inputBorder = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)');
-
 export const GuardCodePad = ({ visible, title, subtitle, mode, onClose, onSubmit }: GuardCodePadProps) => {
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
   const insets = useSafeAreaInsets();
 
   const [code, setCode] = useState('');
@@ -149,7 +131,7 @@ export const GuardCodePad = ({ visible, title, subtitle, mode, onClose, onSubmit
         setFirstCode('');
         setCode('');
         setTextValue('');
-        setNotice("Codes didn't match — start again.");
+        setNotice("Codes didn't match. Start again.");
         return;
       }
 
@@ -214,7 +196,7 @@ export const GuardCodePad = ({ visible, title, subtitle, mode, onClose, onSubmit
   return (
     <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={onClose}>
       <KeyboardAvoidingView
-        style={[styles.overlay, { backgroundColor: canvas(isDark) }]}
+        style={[styles.overlay, { backgroundColor: theme.colors.appBackground }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <Pressable
@@ -227,151 +209,169 @@ export const GuardCodePad = ({ visible, title, subtitle, mode, onClose, onSubmit
           <Ionicons name="close" size={26} color={theme.colors.onSurfaceVariant} />
         </Pressable>
 
-        <Animated.View style={[styles.body, { transform: [{ translateX: shakeX }] }]}>
-          <Text variant="titleLarge" style={[styles.title, { color: theme.colors.onSurface }]}>
-            {stageTitle}
-          </Text>
-          {(notice || subtitle) && (
-            <Text
-              variant="bodySmall"
-              style={[styles.subtitle, { color: notice ? theme.colors.error : theme.colors.onSurfaceVariant }]}
-            >
-              {locked ? '' : notice ?? subtitle}
+        <Animated.View style={[styles.bodyFrame, { transform: [{ translateX: shakeX }] }]}>
+          <GlassCard role="floating" radius={28} style={styles.bodyCard} contentStyle={styles.body}>
+            <Text variant="titleLarge" style={[styles.title, { color: theme.colors.onSurface }]}>
+              {stageTitle}
             </Text>
-          )}
-          {locked && (
-            <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.error }]}>
-              Too many attempts — try again in {Math.ceil(lockedMs / 1000)}s.
-            </Text>
-          )}
-
-          {textMode ? (
-            <View style={styles.textBlock}>
-              <TextInput
-                value={textValue}
-                onChangeText={setTextValue}
-                secureTextEntry
-                autoFocus
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!locked && !busy}
-                placeholder="Enter code"
-                placeholderTextColor={theme.colors.onSurfaceVariant}
-                onSubmitEditing={() => void submit(textValue)}
-                returnKeyType="done"
-                accessibilityLabel="Code"
+            {(notice || subtitle) && (
+              <Text
+                variant="bodySmall"
                 style={[
-                  styles.textInput,
-                  { borderColor: inputBorder(isDark), color: theme.colors.onSurface, backgroundColor: keyBg(isDark) },
-                ]}
-              />
-              <Pressable
-                onPress={() => void submit(textValue)}
-                disabled={locked || busy || textValue.trim().length < MIN_LEN}
-                accessibilityRole="button"
-                accessibilityLabel="Submit code"
-                style={[
-                  styles.textSubmit,
+                  styles.subtitle,
                   {
-                    backgroundColor: theme.colors.primary,
-                    opacity: locked || busy || textValue.trim().length < MIN_LEN ? 0.4 : 1,
+                    color: notice ? theme.colors.error : theme.colors.onSurfaceVariant,
                   },
                 ]}
               >
-                <Text variant="labelLarge" style={{ color: theme.colors.onPrimary, fontWeight: '700' }}>
-                  {mode === 'set' && stage === 'enter' ? 'Next' : 'Done'}
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  lightHaptic();
-                  setTextMode(false);
-                  setTextValue('');
-                }}
-                accessibilityRole="button"
-                style={styles.switchBtn}
-              >
-                <Text variant="labelMedium" style={{ color: theme.colors.primary }}>
-                  Use number pad
-                </Text>
-              </Pressable>
-            </View>
-          ) : (
-            <>
-              <View style={styles.dotsRow} accessibilityLabel={`${code.length} digits entered`}>
-                {Array.from({ length: dots }).map((_, i) => (
-                  <View
-                    key={i}
-                    style={[
-                      styles.dot,
-                      {
-                        borderColor: inputBorder(isDark),
-                        backgroundColor: i < code.length ? theme.colors.primary : 'transparent',
-                      },
-                    ]}
-                  />
-                ))}
-              </View>
+                {locked ? '' : (notice ?? subtitle)}
+              </Text>
+            )}
+            {locked && (
+              <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.error }]}>
+                Too many attempts. Try again in {Math.ceil(lockedMs / 1000)}s.
+              </Text>
+            )}
 
-              <View style={styles.grid}>
-                {KEYS.map((row, r) => (
-                  <View key={r} style={styles.gridRow}>
-                    {row.map((key) => {
-                      const isDel = key === 'del';
-                      const isAbc = key === 'abc';
-                      return (
-                        <Pressable
-                          key={key}
-                          onPress={() => pressKey(key)}
-                          disabled={locked || busy}
-                          accessibilityRole="button"
-                          accessibilityLabel={isDel ? 'Delete' : isAbc ? 'Use letters' : key}
-                          style={({ pressed }) => [
-                            styles.key,
-                            {
-                              backgroundColor: isDel || isAbc ? 'transparent' : keyBg(isDark),
-                              borderColor: isDel || isAbc ? 'transparent' : hairline(isDark),
-                              opacity: locked ? 0.35 : pressed ? 0.6 : 1,
-                            },
-                          ]}
-                        >
-                          {isDel ? (
-                            <Ionicons name="backspace-outline" size={24} color={theme.colors.onSurface} />
-                          ) : isAbc ? (
-                            <Text variant="labelMedium" style={{ color: theme.colors.primary }}>
-                              ABC
-                            </Text>
-                          ) : (
-                            <Text variant="headlineSmall" style={{ color: theme.colors.onSurface, fontWeight: '500' }}>
-                              {key}
-                            </Text>
-                          )}
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                ))}
+            {textMode ? (
+              <View style={styles.textBlock}>
+                <TextInput
+                  value={textValue}
+                  onChangeText={setTextValue}
+                  secureTextEntry
+                  autoFocus
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!locked && !busy}
+                  placeholder="Enter code"
+                  placeholderTextColor={theme.colors.onSurfaceVariant}
+                  onSubmitEditing={() => void submit(textValue)}
+                  returnKeyType="done"
+                  accessibilityLabel="Code"
+                  style={[
+                    styles.textInput,
+                    {
+                      borderColor: theme.colors.outline,
+                      color: theme.colors.onSurface,
+                      backgroundColor: theme.colors.surfaceVariant,
+                    },
+                  ]}
+                />
+                <Pressable
+                  onPress={() => void submit(textValue)}
+                  disabled={locked || busy || textValue.trim().length < MIN_LEN}
+                  accessibilityRole="button"
+                  accessibilityLabel="Submit code"
+                  style={[
+                    styles.textSubmit,
+                    {
+                      backgroundColor: theme.colors.primary,
+                      opacity: locked || busy || textValue.trim().length < MIN_LEN ? 0.4 : 1,
+                    },
+                  ]}
+                >
+                  <Text variant="labelLarge" style={{ color: theme.colors.onPrimary, fontWeight: '700' }}>
+                    {mode === 'set' && stage === 'enter' ? 'Next' : 'Done'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    lightHaptic();
+                    setTextMode(false);
+                    setTextValue('');
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Use number pad"
+                  style={styles.switchBtn}
+                >
+                  <Text variant="labelMedium" style={{ color: theme.colors.primary }}>
+                    Use number pad
+                  </Text>
+                </Pressable>
               </View>
+            ) : (
+              <>
+                <View style={styles.dotsRow} accessibilityLabel={`${code.length} digits entered`}>
+                  {Array.from({ length: dots }).map((_, i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.dot,
+                        {
+                          borderColor: theme.colors.outline,
+                          backgroundColor: i < code.length ? theme.colors.primary : 'transparent',
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
 
-              <Pressable
-                onPress={() => void submit(code)}
-                disabled={locked || busy || code.length < MIN_LEN}
-                accessibilityRole="button"
-                accessibilityLabel={mode === 'set' && stage === 'enter' ? 'Next' : 'Unlock'}
-                style={[
-                  styles.submit,
-                  {
-                    backgroundColor: theme.colors.primary,
-                    opacity: locked || busy || code.length < MIN_LEN ? 0.4 : 1,
-                  },
-                ]}
-              >
-                <Text variant="labelLarge" style={{ color: theme.colors.onPrimary, fontWeight: '700' }}>
-                  {mode === 'set' && stage === 'enter' ? 'Next' : mode === 'set' ? 'Save' : 'Unlock'}
-                </Text>
-              </Pressable>
-            </>
-          )}
+                <View style={styles.grid}>
+                  {KEYS.map((row, r) => (
+                    <View key={r} style={styles.gridRow}>
+                      {row.map((key) => {
+                        const isDel = key === 'del';
+                        const isAbc = key === 'abc';
+                        return (
+                          <Pressable
+                            key={key}
+                            onPress={() => pressKey(key)}
+                            disabled={locked || busy}
+                            accessibilityRole="button"
+                            accessibilityLabel={isDel ? 'Delete' : isAbc ? 'Use letters' : key}
+                            style={({ pressed }) => [
+                              styles.key,
+                              {
+                                backgroundColor: isDel || isAbc ? 'transparent' : theme.colors.pressed,
+                                borderColor: isDel || isAbc ? 'transparent' : theme.colors.outlineVariant,
+                                opacity: locked ? 0.35 : pressed ? 0.6 : 1,
+                              },
+                            ]}
+                          >
+                            {isDel ? (
+                              <Ionicons name="backspace-outline" size={24} color={theme.colors.onSurface} />
+                            ) : isAbc ? (
+                              <Text variant="labelMedium" style={{ color: theme.colors.primary }}>
+                                ABC
+                              </Text>
+                            ) : (
+                              <Text
+                                variant="headlineSmall"
+                                style={{
+                                  color: theme.colors.onSurface,
+                                  fontWeight: '500',
+                                }}
+                              >
+                                {key}
+                              </Text>
+                            )}
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ))}
+                </View>
+
+                <Pressable
+                  onPress={() => void submit(code)}
+                  disabled={locked || busy || code.length < MIN_LEN}
+                  accessibilityRole="button"
+                  accessibilityLabel={mode === 'set' && stage === 'enter' ? 'Next' : 'Unlock'}
+                  style={[
+                    styles.submit,
+                    {
+                      backgroundColor: theme.colors.primary,
+                      opacity: locked || busy || code.length < MIN_LEN ? 0.4 : 1,
+                    },
+                  ]}
+                >
+                  <Text variant="labelLarge" style={{ color: theme.colors.onPrimary, fontWeight: '700' }}>
+                    {mode === 'set' && stage === 'enter' ? 'Next' : mode === 'set' ? 'Save' : 'Unlock'}
+                  </Text>
+                </Pressable>
+              </>
+            )}
+          </GlassCard>
         </Animated.View>
       </KeyboardAvoidingView>
     </Modal>
@@ -383,18 +383,28 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 20,
   },
   closeBtn: {
     position: 'absolute',
     right: 20,
     zIndex: 2,
-    padding: 6,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bodyFrame: {
+    width: '100%',
+    maxWidth: 380,
+  },
+  bodyCard: {
+    width: '100%',
   },
   body: {
     alignItems: 'center',
-    paddingHorizontal: 32,
-    width: '100%',
-    maxWidth: 360,
+    paddingHorizontal: 28,
+    paddingVertical: 24,
   },
   title: {
     fontWeight: '700',
@@ -461,6 +471,8 @@ const styles = StyleSheet.create({
   },
   switchBtn: {
     marginTop: 16,
-    padding: 6,
+    minHeight: 44,
+    paddingHorizontal: 12,
+    justifyContent: 'center',
   },
 });

@@ -70,6 +70,25 @@ export interface CallServiceConfig {
   participantIds?: string[];
 }
 
+type AuthorizedCallAction = 'ack' | 'status' | 'join' | 'leave' | 'delete';
+
+const mutateAuthorizedCall = async (
+  callId: string,
+  action: AuthorizedCallAction,
+  fields: Record<string, unknown> = {},
+): Promise<{ state: 'updated' | 'deleted' | 'missing'; answeredBy?: string }> => {
+  const [{ getFunctions, httpsCallable }, { app }] = await Promise.all([
+    import('firebase/functions'),
+    import('@/firebase'),
+  ]);
+  const callable = httpsCallable<
+    { callId: string; action: AuthorizedCallAction } & Record<string, unknown>,
+    { state: 'updated' | 'deleted' | 'missing'; answeredBy?: string }
+  >(getFunctions(app), 'mutateAuthorizedCall');
+  const result = await callable({ callId, action, ...fields });
+  return result.data;
+};
+
 /**
  * Convert RTDB object with numeric keys to array
  * RTDB stores arrays as objects with "0", "1", etc. keys
@@ -350,37 +369,18 @@ export async function createCallSession(
   // Generate a unique call ID
   const callId = `call_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 
-  const participant: CallParticipant = {
-    userId: config.userId,
-    displayName: config.displayName,
-    muted: false,
-    cameraEnabled: type === 'video',
-    ...(config.photoURL ? { photoURL: config.photoURL } : {}),
-  };
-
-  const allowedUserIdsList = Array.from(new Set([...(config.participantIds ?? []), config.userId]));
-  const allowedUserIds = allowedUserIdsList.reduce<Record<string, true>>((acc, id) => {
-    acc[id] = true;
-    return acc;
-  }, {});
-
-  // Store participants as object with index keys for RTDB compatibility
-  const callData: RawCallSession = {
-    callId,
-    chatId: config.chatId,
-    initiatorId: config.userId,
-    participants: { 0: participant },  // Use object with numeric keys for RTDB
-    participantIds: { [config.userId]: true },
-    allowedUserIds,
-    type,
-    status: 'ringing',
-    startedAt: Date.now(),
-    ...(config.groupId ? { groupId: config.groupId } : {}),
-  };
-
-  const callRef = ref(rtdb, `calls/${callId}`);
-  await set(callRef, callData);
-  await syncUserActiveCallIndex(callData);
+  // Creation is server-owned so a modified client cannot invent recipients,
+  // ring users outside this chat, or bypass a user block. Subsequent call
+  // state remains ephemeral in RTDB.
+  const [{ getFunctions, httpsCallable }, { app }] = await Promise.all([
+    import('firebase/functions'),
+    import('@/firebase'),
+  ]);
+  const createAuthorizedCall = httpsCallable<
+    { callId: string; chatId: string; type: CallType },
+    { callId: string }
+  >(getFunctions(app), 'createAuthorizedCall');
+  await createAuthorizedCall({ callId, chatId: config.chatId, type });
 
   debugLog('callService.createCallSession created');
   return callId;
@@ -419,11 +419,7 @@ export async function getCallSession(callId: string): Promise<CallSession | null
  */
 export async function ackCallRinging(callId: string): Promise<void> {
   try {
-    const statusSnapshot = await get(ref(rtdb, `calls/${callId}/status`));
-    if (!statusSnapshot.exists() || statusSnapshot.val() !== 'ringing') {
-      return;
-    }
-    await set(ref(rtdb, `calls/${callId}/deliveryState`), 'ringing');
+    await mutateAuthorizedCall(callId, 'ack');
     debugLog('callService.ackCallRinging applied');
   } catch (error) {
     if (isPermissionDeniedError(error)) {
@@ -463,12 +459,7 @@ export async function getCallSessionOutcome(callId: string): Promise<CallSession
  * Update call session status
  */
 export async function updateCallStatus(callId: string, status: CallSession['status']): Promise<void> {
-  const session = await getCallSession(callId);
-  const callRef = ref(rtdb, `calls/${callId}/status`);
-  await set(callRef, status);
-  if (session) {
-    await syncUserActiveCallIndex({ ...session, status });
-  }
+  await mutateAuthorizedCall(callId, 'status', { status });
   debugLog('callService.updateCallStatus applied');
 }
 
@@ -563,61 +554,17 @@ export async function joinCall(
     ...(participant.photoURL ? { photoURL: participant.photoURL } : {}),
   };
 
-  const callRef = ref(rtdb, `calls/${callId}`);
-  const previousSnapshot = await get(callRef);
-  const previousSession = previousSnapshot.exists()
-    ? (previousSnapshot.val() as RawCallSession)
-    : null;
-  const result = await runTransaction(callRef, (currentValue) => {
-    if (!currentValue) {
-      return currentValue;
-    }
-
-    const session = toCallSession(currentValue as RawCallSession);
-    if (session.status === 'ended' || session.status === 'failed') {
-      return currentValue;
-    }
-
-    if (session.participants.some((p) => p.userId === participant.userId)) {
-      return currentValue;
-    }
-
-    const participants = [...session.participants, sanitizedParticipant];
-    return {
-      ...(currentValue as Record<string, unknown>),
-      participants: toParticipantsObject(participants),
-      participantIds: {
-        ...(session.participantIds ?? {}),
-        [participant.userId]: true,
-      },
-      allowedUserIds: {
-        ...(session.allowedUserIds ?? {}),
-        [participant.userId]: true,
-      },
-      status: 'connected',
-      // Only ever set on the branch that actually adds this participant —
-      // a no-op branch above must never overwrite an existing answeredBy.
-      answeredBy: deviceId,
-    };
+  const result = await mutateAuthorizedCall(callId, 'join', {
+    deviceId,
+    displayName: sanitizedParticipant.displayName,
+    photoURL: sanitizedParticipant.photoURL,
+    muted: sanitizedParticipant.muted,
+    cameraEnabled: sanitizedParticipant.cameraEnabled,
   });
-
-  if (!result.snapshot.exists()) {
-    throw new Error('Call not found');
+  if (result.state === 'missing') throw new Error('Call not found');
+  if (result.answeredBy && result.answeredBy !== deviceId) {
+    throw new AnsweredElsewhereError(result.answeredBy);
   }
-
-  const finalSession = result.snapshot.val() as RawCallSession;
-  if (
-    finalSession.status === 'connected' &&
-    finalSession.answeredBy &&
-    finalSession.answeredBy !== deviceId
-  ) {
-    throw new AnsweredElsewhereError(finalSession.answeredBy);
-  }
-
-  await syncUserActiveCallIndex(
-    finalSession,
-    previousSession ? getAllowedUserIds(previousSession) : [],
-  );
   debugLog('callService.joinCall applied');
 }
 
@@ -628,65 +575,9 @@ export async function joinCall(
  */
 export async function leaveCall(callId: string, userId: string): Promise<void> {
   try {
-    const callRef = ref(rtdb, `calls/${callId}`);
-    const snapshot = await get(callRef);
-    if (!snapshot.exists()) {
-      return;
-    }
-
-    const previousSession = snapshot.val() as RawCallSession;
-    const result = await runTransaction(callRef, (currentValue) => {
-      if (!currentValue) {
-        return currentValue;
-      }
-
-      const session = toCallSession(currentValue as RawCallSession);
-      const isCurrentParticipant = session.participants.some((participant) => participant.userId === userId)
-        || session.participantIds?.[userId] === true;
-
-      if (!isCurrentParticipant) {
-        return currentValue;
-      }
-
-      const remainingParticipants = session.participants.filter((participant) => participant.userId !== userId);
-      const participantIds = { ...(session.participantIds ?? {}) };
-      delete participantIds[userId];
-
-      const allowedUserIds = { ...(session.allowedUserIds ?? {}) };
-      delete allowedUserIds[userId];
-
-      // End signaling if the room can no longer host an active conversation.
-      if (remainingParticipants.length <= 1) {
-        return {
-          ...(currentValue as Record<string, unknown>),
-          participants: toParticipantsObject(remainingParticipants),
-          participantIds,
-          allowedUserIds,
-          status: 'ended',
-          endedAt: Date.now(),
-        };
-      }
-
-      return {
-        ...(currentValue as Record<string, unknown>),
-        participants: toParticipantsObject(remainingParticipants),
-        participantIds,
-        allowedUserIds,
-        status: 'connected',
-      };
-    });
-
-    if (!result.snapshot.exists()) {
-      return;
-    }
-
-    const nextSession = result.snapshot.val() as RawCallSession;
-    if (nextSession.status === 'ended') {
-      await removeUserActiveCallIndex(callId, getAllowedUserIds(previousSession));
-      await remove(callRef);
-    } else {
-      await syncUserActiveCallIndex(nextSession, getAllowedUserIds(previousSession));
-    }
+    await mutateAuthorizedCall(callId, 'leave', { userId });
+    const next = await getCallSession(callId);
+    if (next?.status === 'ended') await mutateAuthorizedCall(callId, 'delete');
 
     debugLog('callService.leaveCall applied');
   } catch (error) {
@@ -708,12 +599,7 @@ export async function leaveCall(callId: string, userId: string): Promise<void> {
  */
 export async function cleanupCall(callId: string): Promise<void> {
   try {
-    const callRef = ref(rtdb, `calls/${callId}`);
-    const snapshot = await get(callRef);
-    if (snapshot.exists()) {
-      await removeUserActiveCallIndex(callId, getAllowedUserIds(snapshot.val() as RawCallSession));
-    }
-    await remove(callRef);
+    await mutateAuthorizedCall(callId, 'delete');
     debugLog('callService.cleanupCall applied');
   } catch (error) {
     console.warn('callService.cleanupCall failed', error);
@@ -726,19 +612,13 @@ export async function cleanupCall(callId: string): Promise<void> {
  */
 export async function declineCall(callId: string): Promise<void> {
   try {
-    const session = await getCallSession(callId);
-
     // First update status to 'ended' so caller knows it was declined
     await updateCallStatus(callId, 'ended');
-    if (session) {
-      await removeUserActiveCallIndex(callId, getAllowedUserIds(session));
-    }
 
     // Delete after a short delay to ensure caller receives the update
     setTimeout(async () => {
       try {
-        const callRef = ref(rtdb, `calls/${callId}`);
-        await remove(callRef);
+        await mutateAuthorizedCall(callId, 'delete');
         debugLog('callService.declineCall cleanup applied');
       } catch (error) {
         console.warn('callService.declineCall cleanup failed', error);

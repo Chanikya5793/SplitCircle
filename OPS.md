@@ -4,7 +4,8 @@
 
 ```bash
 npm run ship:ios         # eas build -p ios --local → eas submit (headless Transporter)
-npm run ship:ios:full    # + firebase deploy --only functions,firestore:rules first
+npm run ship:ios:full    # + Firebase Auth, functions, Firestore rules/indexes,
+                         #   RTDB and Storage rules after the IPA builds
 npm run build:ios:local  # .ipa only, no upload
 ```
 
@@ -124,8 +125,50 @@ firebase functions:log --only onCallCreated   # expect: dispatch complete accept
 
 ## Google OAuth (rotation / new environment)
 
-Google Cloud project `splitcircle-c9e46` → APIs & Credentials → three client IDs:
-Web (Expo redirect `https://auth.expo.io/@<user>/SplitCircle`), iOS + Android (both
-`com.splitcircle.app`; Android needs debug-keystore SHA-1). Paste into `.env`, restart
-Metro. Firebase Auth must have Google + Email/Password providers enabled. If a secret
-ever lands in git history: revoke first, then `git filter-repo` before pushing.
+Google Cloud project `splitcircle-c9e46` → Google Auth Platform → Clients has Web,
+iOS and Android client IDs. Put the public IDs in `.env` and restart Metro. The
+iOS client must use bundle ID `com.splitcircle.app`. Its reversed client ID must
+be registered as a URL scheme in the shipped `Info.plist`; the app uses
+`<reversed-client-id>:/oauthredirect` and exchanges the authorization code with
+PKCE before handing the credential to Firebase. Android needs the SHA-1 of each
+signing key used to distribute the app. Firebase Auth must have Google and
+Email/Password enabled.
+
+Google Auth Platform → Branding controls the name shown in Google's account
+authorization and related Google notices. Keep its app name **ManaSplit** and
+check whether a changed public brand needs Google's verification. The
+`firebase.json` auth section keeps the OAuth display name and the existing
+public support address under source control; deploy it with
+`firebase deploy --only auth --project splitcircle-c9e46`. A successful CLI
+deploy is not proof that Google has published a changed public brand. The Firebase
+project and Web app display names are also **ManaSplit**; their immutable IDs
+remain `splitcircle-c9e46` and the existing app ID. After changing branding,
+verify the consent screen and a new-account Google notice with a real account.
+As checked on 2026-10-03, Audience is External and Testing with no listed test
+users. Google's basic `openid`/`email`/`profile` sign-in exception permits
+non-test accounts in that state, so Testing alone does not explain a login
+bounce. Publishing changes the audience to production and can require brand
+verification; assess that separately from sign-in debugging.
+If a secret ever lands in git history: revoke first, then `git filter-repo`
+before pushing.
+
+### TODO: move public app links to manasplit.com
+
+The Google OAuth Branding page currently uses `https://manasplit.pages.dev/`
+for the homepage, privacy policy, and terms, with `manasplit.pages.dev` as an
+authorized domain. Keep those working links until the custom website is live.
+
+- [ ] After `https://manasplit.com/`, `/privacy/`, and `/terms/` are live, verify
+  each page over HTTPS and set up the intended redirect from the Pages address.
+- [ ] In Google Auth Platform → Branding, add and verify `manasplit.com`, then
+  change the homepage, privacy policy, and terms URLs to the custom domain.
+  Complete any Google brand verification prompted by that change; confirm the
+  public consent screen still shows ManaSplit and its logo.
+- [ ] Check Firebase Authentication authorized domains and the Web OAuth client
+  origins/redirect URIs; add the custom domain only where a website sign-in flow
+  actually uses it. Keep the iOS client bundle ID and callback scheme intact.
+- [ ] Update public website references, including `website/sitemap.xml` and
+  `website/robots.txt`, plus any App Store Connect website, support, or privacy
+  links that still point to the Pages address.
+- [ ] Recheck sign-in and a new-account Google notice after the cutover. Keep
+  existing DNS mail records working during any DNS change.

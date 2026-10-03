@@ -25,6 +25,12 @@ expo-env.d.ts
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+/firebase-debug*.log
+/firestore-debug*.log
+/database-debug*.log
+/functions/firebase-debug*.log
+/functions/firestore-debug*.log
+/functions/database-debug*.log
 
 # macOS
 .DS_Store
@@ -64,6 +70,8 @@ GoogleService-Info.plist
 !/docs/OFFLINE_FIRST_RESEARCH.md
 !/docs/2026-07-29_OFFLINE_MEDIA_SHARING_RESEARCH_AND_PLAN.md
 !/docs/2026-07-29_NEARBY*.md
+!/docs/MONETIZATION_AND_SUPPORT_BLUEPRINT.md
+!/docs/MONETIZATION_AND_SUPPORT_BLUEPRINT.html
 
 
 google-service-account.json

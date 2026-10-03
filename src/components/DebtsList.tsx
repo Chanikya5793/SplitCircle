@@ -1,5 +1,6 @@
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
+import { ScrimBackdrop } from '@/components/ui/ScrimBackdrop';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { ROUTES } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
@@ -12,7 +13,7 @@ import { needsDisplayName, resolveDisplayName, resolveInitials } from '@/utils/i
 import { useMemo, useRef, useState } from 'react';
 import { Animated as RNAnimated, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import { Avatar, IconButton, Text } from 'react-native-paper';
+import { Avatar, Icon, Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 
 interface SwipeableDebtRowProps {
@@ -68,6 +69,8 @@ const SwipeableDebtRow = ({
             <RNAnimated.View style={[styles.leftAction, { transform: [{ translateX }, { scale }] }]}>
                 <RectButton
                     style={styles.leftActionPressable}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Settle payment from ${fromName} to ${toName}`}
                     onPress={() => {
                         lightHaptic();
                         swipeableRef.current?.close();
@@ -75,8 +78,8 @@ const SwipeableDebtRow = ({
                     }}
                 >
                     <View style={[styles.settleButtonPill, { backgroundColor: theme.colors.primary }]}>
-                        <IconButton icon="handshake" iconColor="#fff" size={22} style={{ margin: 0 }} />
-                        <Text style={styles.actionText}>Settle</Text>
+                        <Icon source="handshake" color={theme.colors.onPrimary} size={22} />
+                        <Text style={[styles.actionText, { color: theme.colors.onPrimary }]}>Settle</Text>
                     </View>
                 </RectButton>
             </RNAnimated.View>
@@ -94,11 +97,15 @@ const SwipeableDebtRow = ({
             overshootLeft={false}
             containerStyle={styles.swipeContainer}
         >
-            <TouchableOpacity
-                style={styles.row}
-                onPress={onOpenBreakdown}
-                activeOpacity={0.7}
-            >
+            <View style={styles.row}>
+              <TouchableOpacity
+                  style={styles.debtSummary}
+                  onPress={onOpenBreakdown}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${fromName} owes ${toName} ${fmtMoney(debt.amount, currency)}`}
+                  accessibilityHint="Opens the debt breakdown"
+              >
                 <View style={styles.member}>
                     <Avatar.Text
                         size={28}
@@ -123,7 +130,7 @@ const SwipeableDebtRow = ({
                     <Text style={[styles.amount, { color: theme.colors.error }]}>
                         {fmtMoney(debt.amount, currency)}
                     </Text>
-                    <IconButton icon="arrow-right" size={16} iconColor={theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
+                    <Icon source="arrow-right" size={16} color={theme.colors.onSurfaceVariant} />
                 </View>
 
                 <View style={styles.member}>
@@ -146,14 +153,16 @@ const SwipeableDebtRow = ({
                     </Text>
                 </View>
 
-                <IconButton
-                    icon="handshake"
-                    size={20}
-                    iconColor={theme.colors.primary}
-                    style={{ margin: 0, marginLeft: 8 }}
+              </TouchableOpacity>
+                <TouchableOpacity
+                    style={styles.settleButton}
                     onPress={onSettle}
-                />
-            </TouchableOpacity>
+                    accessibilityRole="button"
+                    accessibilityLabel={`Settle payment from ${fromName} to ${toName}`}
+                >
+                  <Icon source="handshake" size={20} color={theme.colors.primary} />
+                </TouchableOpacity>
+            </View>
         </Swipeable>
     );
 };
@@ -270,15 +279,17 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                     onPress={() => setIsCollapsed(!isCollapsed)}
                     style={styles.headerRow}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={isCollapsed ? 'Expand debt summary' : 'Collapse debt summary'}
+                    accessibilityState={{ expanded: !isCollapsed }}
                 >
                     <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
                         Who owes whom
                     </Text>
-                    <IconButton
-                        icon={isCollapsed ? 'chevron-down' : 'chevron-up'}
+                    <Icon
+                        source={isCollapsed ? 'chevron-down' : 'chevron-up'}
                         size={20}
-                        iconColor={theme.colors.onSurfaceVariant}
-                        style={{ margin: 0 }}
+                        color={theme.colors.onSurfaceVariant}
                     />
                 </TouchableOpacity>
 
@@ -326,30 +337,32 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                 animationType="fade"
                 onRequestClose={() => setSelectedDebt(null)}
             >
-                <Pressable style={styles.modalBackdrop} onPress={() => setSelectedDebt(null)} accessibilityLabel="Close breakdown" />
-                <View style={styles.modalContainer} pointerEvents="box-none">
+                <Pressable
+                    style={styles.modalBackdrop}
+                    onPress={() => setSelectedDebt(null)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close breakdown"
+                >
+                    <ScrimBackdrop pointerEvents="none" />
+                </Pressable>
+                <View style={styles.modalContainer} pointerEvents="box-none" accessibilityViewIsModal>
                     {selectedDebt && (
                         <GlassView role="floating"
-                            style={[
-                                styles.modalContent,
-                                {
-                                    // Default GlassView is intentionally low-opacity for cards
-                                    // floating over the LiquidBackground; for a focus modal that
-                                    // needs to be readable, override with the theme surface color
-                                    // at 96% so the blob colors don't bleed through into the
-                                    // transaction text.
-                                    backgroundColor: theme.dark
-                                        ? 'rgba(28, 30, 36, 0.96)'
-                                        : 'rgba(252, 252, 254, 0.96)',
-                                },
-                            ]}
+                            style={styles.modalContent}
                             intensity={70}
                         >
                             <View style={styles.modalHeader}>
                                 <Text variant="titleMedium" style={{ color: theme.colors.onSurface, flex: 1 }}>
                                     Breakdown
                                 </Text>
-                                <IconButton icon="close" size={20} onPress={() => setSelectedDebt(null)} />
+                                <TouchableOpacity
+                                    style={styles.closeButton}
+                                    onPress={() => setSelectedDebt(null)}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Close debt breakdown"
+                                >
+                                  <Icon source="close" size={20} color={theme.colors.onSurfaceVariant} />
+                                </TouchableOpacity>
                             </View>
 
                             <Text style={{ color: theme.colors.onSurfaceVariant, marginBottom: 16 }}>
@@ -417,6 +430,25 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
     },
+    debtSummary: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    settleButton: {
+        width: 44,
+        height: 44,
+        marginLeft: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    closeButton: {
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     member: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -441,7 +473,6 @@ const styles = StyleSheet.create({
     },
     modalBackdrop: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.45)',
     },
     modalContainer: {
         flex: 1,
@@ -497,7 +528,6 @@ const styles = StyleSheet.create({
         elevation: 3,
     },
     actionText: {
-        color: '#fff',
         fontSize: 13,
         fontWeight: 'bold',
         marginRight: 8,

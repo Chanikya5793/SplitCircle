@@ -1,24 +1,9 @@
-// Unified content surface for the whole app. Two treatments, user-selectable
-// (ThemeContext.surfaceStyle) and persisted with mode/accent:
-//
-//   'glass' (default) — the liquid-glass DNA, EXACTLY as it ships today:
-//       iOS 26+  → native liquid glass via expo-glass-effect
-//       older iOS → expo-blur BlurView with animated theme tint
-//       Android  → near-opaque tinted card (BlurView can't render there)
-//   'flat'            — borderless. No blur, no fill, no border, no elevation;
-//       content sits on the canvas and is grouped by section labels and
-//       dividers instead of card edges.
-//
-// `role` matters ONLY in flat mode — glass ignores it, so the shipping UI is
-// bit-for-bit unchanged:
-//
-//   'section'  (default) — a content card. Goes fully borderless when flat.
-//   'floating'           — chrome that must stay readable off the canvas:
-//       bottom sheets, toasts, menus, dropdowns, circular buttons, pills.
-//       A borderless toast is an invisible toast, so these keep an opaque
-//       fill + hairline even in flat mode.
-//
-// Tints, borders, and radii come from theme tokens — never hardcode them here.
+// Unified material primitive. See DESIGN.md for the Refined Glass contract.
+// Glass preference: native material, blur, or tinted Android fallback.
+// Flat preference: borderless sections, opaque floating chrome, and the named
+// glass accents. Reduce Transparency makes bounded surfaces opaque in either
+// preference; it retains borderless sections only when the user chose Flat.
+// Surface roles, tint and radius resolution stay centralized here.
 
 import { useTheme } from '@/context/ThemeContext';
 import { NEUTRALS } from '@/theme/palette';
@@ -86,8 +71,8 @@ export interface GlassCardProps {
   /** Escape hatch: skip the native liquid-glass material even when available. */
   forceBlur?: boolean;
   /**
-   * Flat-mode only (glass ignores it). 'section' goes borderless; 'floating'
-   * keeps an opaque fill so sheets/menus/toasts/buttons stay readable.
+   * 'section' groups content; 'floating' protects overlay chrome; 'glass' is
+   * a named accent retained under Flat. Reduce Transparency overrides material.
    */
   role?: SurfaceRole;
 }
@@ -133,16 +118,9 @@ export const GlassCard = React.memo(
     // Defaulted, not asserted: several component tests mock useTheme() with a
     // partial theme object, and an undefined surfaceStyle must mean 'glass'
     // rather than throwing or silently flattening.
-    // REDUCE TRANSPARENCY (2026-08-07). The whole point of this primitive is
-    // translucency, so when the OS asks for less of it there is nothing to
-    // soften — the surface must become opaque. Flat mode already has exactly
-    // that: solid `flatSurface` fills, tuned and contrast-tested (doc 37 §2).
-    // So Reduce Transparency simply forces the flat treatment, rather than
-    // inventing a third material nobody has checked for contrast.
-    //
-    // role="glass" is NOT exempt. It opts out of the user's flat/glass
-    // preference, which is a taste setting; this is an accessibility setting,
-    // and a blurred backdrop is precisely what the user asked to stop seeing.
+    // Reduce Transparency chooses opaque fills for bounded surfaces. Only the
+    // user's Flat preference removes section boundaries. Named glass accents
+    // also become opaque when the accessibility setting is enabled.
     const reduceTransparency = theme?.reduceTransparency === true;
     const userChoseFlat = theme?.surfaceStyle === 'flat';
     // Opaque fills come from EITHER the user's flat preference or the OS

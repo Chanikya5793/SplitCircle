@@ -1,0 +1,33 @@
+Split bills, keep track of shared expenses, and talk with your group in one app.
+
+ManaSplit is for roommates, trips, families, and everyday plans. Add an expense, see who owes what, and keep the conversation beside the bill.
+
+SHARED EXPENSES
+Split equally, by exact amounts, percentages, or shares. Use Advanced Split for more detailed arrangements. Keep receipts, track balances, record repayments, and organize recurring bills.
+
+GROUP CHAT AND CALLS
+Send messages, photos, voice notes, files, and expense cards. Start an audio or video call from your conversation.
+
+YOUR HISTORY STAYS ON YOUR DEVICES
+Message and call history are stored on your devices. Cloud services deliver messages and keep shared accounts, groups, and expense records in sync.
+
+USEFUL WHEN YOU'RE OFFLINE
+Read saved information and prepare supported changes without an internet connection. Send and sync them when you reconnect. Compatible devices also support trusted nearby delivery.
+
+HELP WITH YOUR SPENDING
+Ask about balances, spending, and repayments. Supported Apple Intelligence features run on eligible devices. Availability depends on your device and settings.
+
+FREE FEATURES AND OPTIONAL PURCHASES
+Everyday expense tracking, messaging, calls, safety controls, and access to your records are free. Advanced Split includes a free allowance.
+
+Optional monthly or yearly memberships provide higher Advanced Split limits. You can also buy Mana Credits for eligible uses after your allowance runs out. Prices and limits are shown before you buy. Purchased credits do not expire. Previewing, canceling, or failing an operation does not use your allowance or credits.
+
+Subscriptions renew automatically unless canceled in your Apple Account settings. Restore eligible purchases in the app. Deleting your ManaSplit account does not cancel an Apple subscription.
+
+PRIVACY AND SAFETY
+ManaSplit has no ads and does not sell personal data. You can block people, report messages, manage privacy settings, and delete your account in the app.
+
+ManaSplit records shared expenses and repayments. It does not transfer money and is not a bank or financial adviser.
+
+Privacy policy: https://manasplit.pages.dev/privacy/
+Terms of use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/

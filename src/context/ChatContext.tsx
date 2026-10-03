@@ -1607,7 +1607,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         message.status = 'failed';
         await saveMessageLocally(message);
         onStageChange?.('failed', {
-          message: error instanceof Error ? error.message : 'Failed to send message',
+          message: 'Couldn’t send this message. Try again.',
         });
         throw error;
       } finally {

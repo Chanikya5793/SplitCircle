@@ -26,6 +26,7 @@ export const SCREEN_TITLES = {
   callDetailsFallback: 'Call Details',
   liveCall: 'Live call',
   notifications: 'Notifications',
+  plansAndCredits: 'Plans & Credits',
   aiIndex: 'On-Device AI',
   aiEvals: 'AI Evals',
   aiMemory: 'AI Memory',
@@ -160,6 +161,8 @@ export const getRouteBackLabel = (route: RouteLike | undefined): string | undefi
       return SCREEN_TITLES.liveCall;
     case ROUTES.APP.NOTIFICATION_SETTINGS:
       return SCREEN_TITLES.notifications;
+    case ROUTES.APP.PLANS_AND_CREDITS:
+      return SCREEN_TITLES.plansAndCredits;
     case ROUTES.APP.AI_INDEX:
       return SCREEN_TITLES.aiIndex;
     case ROUTES.APP.SECURITY_CENTER:

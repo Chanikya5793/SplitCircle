@@ -5,7 +5,8 @@
 // app theme, so colors here are fixed, not themed.
 
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useState } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 
 interface ControlButtonProps {
   icon: keyof typeof Ionicons.glyphMap;
@@ -37,7 +38,7 @@ const ControlButton = ({ icon, label, accessibilityLabel, onPress, onLongPress, 
         activeOpacity={0.7}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
-        accessibilityState={{ selected: !active }}
+        accessibilityState={{ selected: !active, disabled: !onPress }}
         style={[styles.button, { backgroundColor: background }, !onPress && styles.buttonDisabled]}
       >
         <Ionicons
@@ -78,58 +79,105 @@ export const CallControls = ({
   onAudioRoute,
   onFlipCamera,
   onHangUp,
-}: CallControlsProps) => (
-  <View style={styles.row}>
-    <ControlButton
-      icon={micEnabled ? 'mic' : 'mic-off'}
-      label={micEnabled ? 'mute' : 'unmute'}
-      accessibilityLabel={micEnabled ? 'Mute microphone' : 'Unmute microphone'}
-      onPress={onToggleMic}
-      active={micEnabled}
-    />
-    {onToggleSpeaker || onAudioRoute ? (
-      <ControlButton
-        icon={speakerOn ? 'volume-high' : 'volume-medium'}
-        label={speakerOn ? 'speaker' : 'audio'}
-        accessibilityLabel={speakerOn ? 'Speaker on. Long-press to choose output' : 'Speaker off. Long-press to choose output'}
-        onPress={onToggleSpeaker ?? onAudioRoute}
-        onLongPress={onAudioRoute}
-        active={!speakerOn}
-      />
-    ) : null}
-    {onToggleCamera ? (
-      <ControlButton
-        icon={cameraEnabled ? 'videocam' : 'videocam-off'}
-        label="camera"
-        accessibilityLabel={cameraEnabled ? 'Turn camera off' : 'Turn camera on'}
-        onPress={onToggleCamera}
-        active={cameraEnabled}
-      />
-    ) : null}
-    {onFlipCamera ? (
-      <ControlButton
-        icon="camera-reverse"
-        label="flip"
-        accessibilityLabel="Flip camera"
-        onPress={onFlipCamera}
-      />
-    ) : null}
-    <ControlButton
-      icon="call"
-      label="end"
-      accessibilityLabel="End call"
-      onPress={onHangUp}
-      danger
-    />
-  </View>
-);
+}: CallControlsProps) => {
+  const { width: windowWidth, fontScale } = useWindowDimensions();
+  const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
+  const availableWidth = Math.max(BUTTON_SIZE, (measuredWidth ?? windowWidth) - 32);
+  const controls: (ControlButtonProps & { key: string })[] = [
+    {
+      key: 'mic',
+      icon: micEnabled ? 'mic' : 'mic-off',
+      label: micEnabled ? 'mute' : 'unmute',
+      accessibilityLabel: micEnabled ? 'Mute microphone' : 'Unmute microphone',
+      onPress: onToggleMic,
+      active: micEnabled,
+    },
+  ];
+
+  if (onToggleSpeaker || onAudioRoute) {
+    controls.push({
+      key: 'audio',
+      icon: speakerOn ? 'volume-high' : 'volume-medium',
+      label: speakerOn ? 'speaker' : 'audio',
+      accessibilityLabel: speakerOn ? 'Speaker on. Long-press to choose output' : 'Speaker off. Long-press to choose output',
+      onPress: onToggleSpeaker ?? onAudioRoute,
+      onLongPress: onAudioRoute,
+      active: !speakerOn,
+    });
+  }
+  if (onToggleCamera) {
+    controls.push({
+      key: 'camera',
+      icon: cameraEnabled ? 'videocam' : 'videocam-off',
+      label: 'camera',
+      accessibilityLabel: cameraEnabled ? 'Turn camera off' : 'Turn camera on',
+      onPress: onToggleCamera,
+      active: cameraEnabled,
+    });
+  }
+  // Keep the video-call slot when the camera is off so End does not move
+  // beneath the user's finger when the parent removes the flip callback.
+  if (onFlipCamera || onToggleCamera) {
+    controls.push({
+      key: 'flip',
+      icon: 'camera-reverse',
+      label: 'flip',
+      accessibilityLabel: onFlipCamera ? 'Flip camera' : 'Flip camera unavailable',
+      onPress: onFlipCamera,
+    });
+  }
+  controls.push({
+    key: 'end',
+    icon: 'call',
+    label: 'end',
+    accessibilityLabel: 'End call',
+    onPress: onHangUp,
+    danger: true,
+  });
+
+  // Grow each label's allowance with Dynamic Type. Balance compact layouts
+  // into 3 + 2 or 2 + 2 rather than leaving a single control on the last row.
+  const minimumColumnWidth = Math.max(72, Math.min(128, 52 * fontScale));
+  const capacity = Math.max(1, Math.floor((availableWidth + 12) / (minimumColumnWidth + 12)));
+  const rowCount = Math.ceil(controls.length / capacity);
+  const columns = Math.ceil(controls.length / rowCount);
+  const columnWidth = Math.min(
+    Math.max(84, minimumColumnWidth),
+    (availableWidth - (columns - 1) * 12) / columns,
+  );
+  const rows = Array.from({ length: rowCount }, (_, index) =>
+    controls.slice(index * columns, (index + 1) * columns),
+  ).filter((row) => row.length > 0);
+
+  return (
+    <View
+      style={styles.controls}
+      onLayout={(event) => setMeasuredWidth(event.nativeEvent.layout.width)}
+    >
+      {rows.map((row, index) => (
+        <View key={index} style={styles.row}>
+          {row.map(({ key, ...control }) => (
+            <View key={key} style={{ width: columnWidth }}>
+              <ControlButton {...control} />
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+};
 
 const styles = StyleSheet.create({
+  controls: {
+    alignSelf: 'stretch',
+    paddingHorizontal: 16,
+    rowGap: 20,
+  },
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'center',
-    gap: 20,
+    gap: 12,
   },
   buttonColumn: {
     alignItems: 'center',
@@ -146,6 +194,9 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   buttonLabel: {
+    alignSelf: 'stretch',
+    textAlign: 'center',
+    flexShrink: 1,
     color: 'rgba(255,255,255,0.85)',
     fontSize: 13,
     fontWeight: '500',

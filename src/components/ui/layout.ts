@@ -34,6 +34,16 @@ export const SCREEN_GUTTER = 16;
  */
 export const fullBleed = { marginHorizontal: -SCREEN_GUTTER } as const;
 
+/** Readable content inset inside any device obstruction on each side. */
+export const readableHorizontalInsets = (
+  safeLeft: number,
+  safeRight: number,
+  gutter = SCREEN_GUTTER,
+) => ({
+  paddingLeft: safeLeft + gutter,
+  paddingRight: safeRight + gutter,
+});
+
 /**
  * Clearance a screen's own large title needs below the safe area when the
  * native stack header is TRANSPARENT (`headerTransparent: true`) and empty

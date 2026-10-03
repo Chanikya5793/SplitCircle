@@ -1,3 +1,4 @@
+import { DetailScreenScaffold } from '@/components/ui/DetailScreenScaffold';
 // Backup passphrase enrollment (doc 31 §3.5). Three deliberate gates, all
 // required by the spec rather than chosen here:
 //   1. A real ENFORCED minimum strength — not a suggestion. Decryption happens
@@ -10,7 +11,7 @@
 //   3. An explicit "I've written it down" acknowledgement (WhatsApp's model,
 //      which §3.5 says this design follows).
 
-import { GlassCard } from '@/components/ui';
+import { GlassCard, SCREEN_GUTTER } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useTheme } from '@/context/ThemeContext';
 import {
@@ -21,25 +22,17 @@ import {
   isPassphraseEnrolled,
   type PassphraseAssessment,
 } from '@/services/backupPassphraseService';
-import {
-  BackupBlockedError,
-  getLastBackupInfo,
-  runBackupNow,
-  type LastBackupInfo,
-} from '@/services/backupRunner';
+import { BackupBlockedError, getLastBackupInfo, runBackupNow, type LastBackupInfo } from '@/services/backupRunner';
 import { useAuth } from '@/context/AuthContext';
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { Button, Checkbox, Text, TextInput } from 'react-native-paper';
 
 /** The exact sentence §3.5 requires. Do not soften or paraphrase this. */
-const IRRECOVERABLE_WARNING =
-  'If you forget this passphrase, this backup cannot be recovered by anyone, including us.';
+const IRRECOVERABLE_WARNING = 'If you forget this passphrase, this backup cannot be recovered by anyone, including us.';
 
 const verdictLabel: Record<PassphraseAssessment['verdict'], string> = {
   'too-short': 'Too short',
@@ -51,8 +44,6 @@ const verdictLabel: Record<PassphraseAssessment['verdict'], string> = {
 export const BackupPassphraseScreen = () => {
   const navigation = useNavigation();
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
-  const headerHeight = useHeaderHeight();
   const { user } = useAuth();
 
   const [enrolled, setEnrolled] = useState<boolean | null>(null);
@@ -83,11 +74,7 @@ export const BackupPassphraseScreen = () => {
   const canSubmit = assessment.meetsMinimum && matches && acknowledged && !saving;
 
   const strengthColor =
-    assessment.verdict === 'strong'
-      ? theme.colors.primary
-      : assessment.verdict === 'fair'
-        ? theme.colors.onSurface
-        : theme.colors.danger;
+    assessment.verdict === 'strong' ? theme.colors.primary : assessment.verdict === 'fair' ? theme.colors.onSurface : theme.colors.danger;
 
   const handleEnroll = async () => {
     setSaving(true);
@@ -109,10 +96,8 @@ export const BackupPassphraseScreen = () => {
       );
     } catch (error) {
       errorHaptic();
-      appAlert(
-        'Could not set passphrase',
-        error instanceof Error ? error.message : 'Please try again.',
-      );
+      console.warn('[BackupPassphrase] Enrollment failed:', error);
+      appAlert('Could not set passphrase', 'Your backup settings were not changed. Check the passphrase and try again.');
     } finally {
       setSaving(false);
     }
@@ -137,11 +122,14 @@ export const BackupPassphraseScreen = () => {
       appAlert('Backup complete', `${info.messageCount} messages across ${info.chatCount} chats.`);
     } catch (error) {
       errorHaptic();
+      if (!(error instanceof BackupBlockedError)) {
+        console.warn('[BackupPassphrase] Backup failed:', error);
+      }
       // BackupBlockedError carries a specific reason so this can say WHY
       // rather than showing a generic failure.
       appAlert(
         error instanceof BackupBlockedError ? 'Can’t back up yet' : 'Backup failed',
-        error instanceof Error ? error.message : 'Please try again.',
+        error instanceof BackupBlockedError ? error.message : 'Check your iCloud connection and try again.',
       );
     } finally {
       setBackingUp(false);
@@ -185,21 +173,19 @@ export const BackupPassphraseScreen = () => {
 
   return (
     <LiquidBackground>
-      <ScrollView contentContainerStyle={[styles.container, { paddingTop: headerHeight + 16, paddingBottom: insets.bottom + 32 }]} keyboardShouldPersistTaps="handled">
+      <DetailScreenScaffold horizontalInset={SCREEN_GUTTER} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         {enrolled ? (
           <GlassCard style={styles.card} contentStyle={styles.cardContent}>
             <Text variant="titleMedium" style={{ color: theme.colors.onSurface }}>
               Backup passphrase is set
             </Text>
             <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-              {enrolledAt
-                ? `Set on ${new Date(enrolledAt).toLocaleDateString()}. `
-                : ''}
+              {enrolledAt ? `Set on ${new Date(enrolledAt).toLocaleDateString()}. ` : ''}
               Your iCloud backup is encrypted with it. {IRRECOVERABLE_WARNING}
             </Text>
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
               {lastBackup
-                ? `Last backup: ${new Date(lastBackup.completedAt).toLocaleString()} — ${lastBackup.messageCount} messages across ${lastBackup.chatCount} chats.`
+                ? `Last backup: ${new Date(lastBackup.completedAt).toLocaleString()} · ${lastBackup.messageCount} messages across ${lastBackup.chatCount} chats.`
                 : 'No backup has run on this device yet.'}
             </Text>
             {progressLabel ? (
@@ -207,12 +193,7 @@ export const BackupPassphraseScreen = () => {
                 {progressLabel}
               </Text>
             ) : null}
-            <Button
-              mode="contained"
-              loading={backingUp}
-              disabled={backingUp}
-              onPress={handleBackupNow}
-            >
+            <Button mode="contained" loading={backingUp} disabled={backingUp} onPress={handleBackupNow}>
               Back up now
             </Button>
             <Button mode="text" textColor={theme.colors.danger} onPress={handleForget}>
@@ -226,8 +207,8 @@ export const BackupPassphraseScreen = () => {
                 Choose a backup passphrase
               </Text>
               <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                Your chat history is encrypted with this passphrase before it leaves your device,
-                so nobody else can read your iCloud backup.
+                Your chat history is encrypted with this passphrase before it leaves your device, so nobody else can read your iCloud
+                backup.
               </Text>
 
               <TextInput
@@ -239,12 +220,7 @@ export const BackupPassphraseScreen = () => {
                 autoCapitalize="none"
                 autoCorrect={false}
                 textContentType="newPassword"
-                right={
-                  <TextInput.Icon
-                    icon={reveal ? 'eye-off' : 'eye'}
-                    onPress={() => setReveal((value) => !value)}
-                  />
-                }
+                right={<TextInput.Icon icon={reveal ? 'eye-off' : 'eye'} onPress={() => setReveal((value) => !value)} />}
               />
 
               {passphrase.length > 0 ? (
@@ -261,11 +237,7 @@ export const BackupPassphraseScreen = () => {
               {passphrase.length > 0 && assessment.issues.length > 0 ? (
                 <View>
                   {assessment.issues.map((issue) => (
-                    <Text
-                      key={issue}
-                      variant="bodySmall"
-                      style={{ color: theme.colors.onSurfaceVariant }}
-                    >
+                    <Text key={issue} variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                       • {issue}
                     </Text>
                   ))}
@@ -294,14 +266,11 @@ export const BackupPassphraseScreen = () => {
                 {IRRECOVERABLE_WARNING}
               </Text>
               <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                We never receive your passphrase, so we cannot reset it or recover your backup for
-                you. Write it down and keep it somewhere safe before continuing.
+                We never receive your passphrase, so we cannot reset it or recover your backup for you. Write it down and keep it somewhere
+                safe before continuing.
               </Text>
               <View style={styles.checkboxRow}>
-                <Checkbox
-                  status={acknowledged ? 'checked' : 'unchecked'}
-                  onPress={() => setAcknowledged((value) => !value)}
-                />
+                <Checkbox status={acknowledged ? 'checked' : 'unchecked'} onPress={() => setAcknowledged((value) => !value)} />
                 <Text
                   variant="bodyMedium"
                   style={[styles.checkboxLabel, { color: theme.colors.onSurface }]}
@@ -312,25 +281,18 @@ export const BackupPassphraseScreen = () => {
               </View>
             </GlassCard>
 
-            <Button
-              mode="contained"
-              disabled={!canSubmit}
-              loading={saving}
-              onPress={handleEnroll}
-              style={styles.submit}
-            >
+            <Button mode="contained" disabled={!canSubmit} loading={saving} onPress={handleEnroll} style={styles.submit}>
               Set passphrase
             </Button>
           </>
         )}
-      </ScrollView>
+      </DetailScreenScaffold>
     </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    padding: 16,
     // Tightened 16 -> 10 (2026-08-07, compact density pass).
     gap: 10,
   },

@@ -10,6 +10,8 @@ import { getAuth } from "firebase-admin/auth";
 import * as logger from "firebase-functions/logger";
 import { v4 as uuidv4 } from "uuid";
 import { resolveDisplayName } from "./identity";
+import { type MonetizationEnvironment } from "./monetizationCatalog";
+import { hashOpaque, monetizationAccountDocumentId } from "./monetizationCore";
 
 const USERS_COLLECTION = "users";
 const GROUPS_COLLECTION = "groups";
@@ -18,6 +20,18 @@ const EXPENSES_COLLECTION = "expenses";
 const RECURRING_BILLS_COLLECTION = "recurringBills";
 const NOTIFICATION_DEVICES_COLLECTION = "notificationDevices";
 const SECURITY_MONITORS_COLLECTION = "securityMonitors";
+const MONETIZATION_ACCOUNT_STATES_COLLECTION = "monetizationAccountStates";
+const MONETIZATION_INTERNAL_GRANTS_COLLECTION = "monetizationInternalTestGrants";
+const MONETIZATION_SHADOW_ACCOUNTS_COLLECTION = "monetizationShadowAccounts";
+const MONETIZATION_USAGE_ACCOUNTS_COLLECTION = "monetizationUsageAccounts";
+const MONETIZATION_APPLE_TRANSACTIONS_COLLECTION = "monetizationAppleTransactions";
+const MONETIZATION_APPLE_ORIGINAL_TRANSACTIONS_COLLECTION = "monetizationAppleOriginalTransactions";
+const MONETIZATION_APPLE_ACCOUNT_TOKENS_COLLECTION = "monetizationAppleAccountTokens";
+const MONETIZATION_APPLE_NOTIFICATIONS_COLLECTION = "monetizationAppleNotifications";
+const MONETIZATION_SANDBOX_COMMERCE_GRANTS_COLLECTION = "monetizationSandboxCommerceGrants";
+const MONETIZATION_SUPPORT_GRANTS_COLLECTION = "monetizationSupportGrants";
+const MONETIZATION_SUPPORT_RATE_LIMITS_COLLECTION = "monetizationSupportRateLimits";
+const MONETIZATION_ADMIN_AUDIT_COLLECTION = "monetizationAdminAudit";
 const FRIENDS_PATH = "friends";
 const MESSAGE_QUEUE_PATH = "messageQueue";
 
@@ -151,8 +165,10 @@ export async function findDeletionBlockers(uid: string): Promise<DeletionBlocker
     return blockers;
 }
 
-const commitDeletesInChunks = async (refs: DocumentReference[]): Promise<void> => {
-    const db = getFirestore();
+const commitDeletesInChunks = async (
+    refs: DocumentReference[],
+    db: Firestore = getFirestore(),
+): Promise<void> => {
     for (let index = 0; index < refs.length; index += MAX_BATCH_OPS) {
         const batch = db.batch();
         for (const ref of refs.slice(index, index + MAX_BATCH_OPS)) {
@@ -322,6 +338,108 @@ const deleteSecurityMonitoringData = async (db: Firestore, uid: string): Promise
     await rootRef.delete();
 };
 
+const appleAccountTokenDocumentId = (
+    environment: MonetizationEnvironment,
+    appAccountToken: string,
+): string => `${environment}_${hashOpaque(["apple-account-token-v1", appAccountToken]).slice(0, 48)}`;
+
+const tombstoneCommerceDocuments = async (
+    db: Firestore,
+    collectionName: string,
+    accountId: string,
+): Promise<void> => {
+    const snapshot = await db.collection(collectionName)
+        .where("accountDocumentId", "==", accountId)
+        .get();
+    for (let index = 0; index < snapshot.docs.length; index += MAX_BATCH_OPS) {
+        const batch = db.batch();
+        for (const document of snapshot.docs.slice(index, index + MAX_BATCH_OPS)) {
+            batch.set(document.ref, {
+                accountDocumentId: null,
+                ownerDeleted: true,
+                ownerDeletedAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+        }
+        await batch.commit();
+    }
+};
+
+export const getMonetizationDeletionDocumentIds = (uid: string): Record<
+    MonetizationEnvironment,
+    string
+> => ({
+    sandbox: monetizationAccountDocumentId("sandbox", uid),
+    production: monetizationAccountDocumentId("production", uid),
+});
+
+/**
+ * Removes both environment namespaces before Auth deletion. Shadow accounts
+ * own usage-window/event subcollections, so recursiveDelete is required even
+ * when the root document is missing after a partial earlier cleanup.
+ */
+export const deleteMonetizationData = async (db: Firestore, uid: string): Promise<void> => {
+    const documentIds = getMonetizationDeletionDocumentIds(uid);
+    for (const [environment, accountId] of Object.entries(documentIds) as Array<[
+        MonetizationEnvironment,
+        string,
+    ]>) {
+        const accountRef = db.collection(MONETIZATION_ACCOUNT_STATES_COLLECTION).doc(accountId);
+        const accountSnapshot = await accountRef.get();
+        const appAccountToken = accountSnapshot.data()?.appAccountToken;
+        // Delete the grant first. A partially completed deletion therefore
+        // fails closed: an old ID token cannot continue receiving test access.
+        await db.collection(MONETIZATION_INTERNAL_GRANTS_COLLECTION).doc(accountId).delete();
+        await db.collection(MONETIZATION_SANDBOX_COMMERCE_GRANTS_COLLECTION).doc(accountId).delete();
+        if (typeof appAccountToken === "string") {
+            await db.collection(MONETIZATION_APPLE_ACCOUNT_TOKENS_COLLECTION)
+                .doc(appleAccountTokenDocumentId(environment, appAccountToken))
+                .delete();
+        }
+        await db.recursiveDelete(
+            db.collection(MONETIZATION_SHADOW_ACCOUNTS_COLLECTION).doc(accountId),
+        );
+        await db.recursiveDelete(
+            db.collection(MONETIZATION_USAGE_ACCOUNTS_COLLECTION).doc(accountId),
+        );
+
+        // Keep only replay-prevention and refund-routing tombstones. The UID,
+        // app-account-token binding, credit history, quotas, and entitlements
+        // are removed with the account records above.
+        await tombstoneCommerceDocuments(
+            db,
+            MONETIZATION_APPLE_TRANSACTIONS_COLLECTION,
+            accountId,
+        );
+        await tombstoneCommerceDocuments(
+            db,
+            MONETIZATION_APPLE_ORIGINAL_TRANSACTIONS_COLLECTION,
+            accountId,
+        );
+        await tombstoneCommerceDocuments(
+            db,
+            MONETIZATION_APPLE_NOTIFICATIONS_COLLECTION,
+            accountId,
+        );
+        await accountRef.delete();
+    }
+
+    await db.collection(MONETIZATION_SUPPORT_GRANTS_COLLECTION)
+        .doc(hashOpaque(["support-grant-v1", uid]))
+        .delete();
+    const [subjectAudit, actorAudit, supportRates] = await Promise.all([
+        db.collection(MONETIZATION_ADMIN_AUDIT_COLLECTION).where("subjectUid", "==", uid).get(),
+        db.collection(MONETIZATION_ADMIN_AUDIT_COLLECTION).where("actorUid", "==", uid).get(),
+        db.collection(MONETIZATION_SUPPORT_RATE_LIMITS_COLLECTION).where("actorUid", "==", uid).get(),
+    ]);
+    const personalRefs = new Map<string, DocumentReference>();
+    for (const document of [...subjectAudit.docs, ...actorAudit.docs, ...supportRates.docs]) {
+        personalRefs.set(document.ref.path, document.ref);
+    }
+    if (personalRefs.size > 0) {
+        await commitDeletesInChunks([...personalRefs.values()], db);
+    }
+};
+
 /**
  * Cascades a user's full account deletion: every group they belong to is
  * either cascade-deleted (solo-owned) or has their membership archived
@@ -356,6 +474,7 @@ export async function deleteAccountCascade(uid: string): Promise<void> {
     // by the client after Auth deletion. Remove encrypted identities, findings,
     // scan jobs and timeline records before deleting the user itself.
     await deleteSecurityMonitoringData(db, uid);
+    await deleteMonetizationData(db, uid);
 
     // Only the deleted user's OWN friends/{uid} node is cleared. Friendships
     // are actually written bidirectionally by functions/src/friends.ts

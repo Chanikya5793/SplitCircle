@@ -24,11 +24,7 @@ import type { TurnTrace } from '@/utils/aiFeedback';
 import type { AiToolEvidence } from '@/utils/aiTools';
 import { parseRememberCommand } from '@/utils/aiMemory';
 import type { AiThread } from '@/utils/aiThreads';
-import {
-  answerExpenseLocally,
-  askExpenseAiOnDevice,
-  getOnDeviceAiAvailability,
-} from '@/services/onDeviceAiService';
+import { answerExpenseLocally, askExpenseAiOnDevice, getOnDeviceAiAvailability } from '@/services/onDeviceAiService';
 import { categorizeText } from '@/utils/categoryMatch';
 import { resolveDisplayName } from '@/utils/identity';
 import {
@@ -54,10 +50,28 @@ export type NewExpense = Omit<Expense, 'expenseId' | 'createdAt' | 'updatedAt'>;
 
 export type ProposedAction =
   | { type: 'add_expense'; expense: NewExpense; summary: string }
-  | { type: 'settle_up'; settlement: { fromUserId: string; toUserId: string; amount: number }; summary: string }
-  | { type: 'delete_expense'; expenseId: string; expectedRevision?: number; expectedUpdatedAt?: number; summary: string; destructive: true }
+  | {
+      type: 'settle_up';
+      settlement: { fromUserId: string; toUserId: string; amount: number };
+      summary: string;
+    }
+  | {
+      type: 'delete_expense';
+      expenseId: string;
+      expectedRevision?: number;
+      expectedUpdatedAt?: number;
+      summary: string;
+      destructive: true;
+    }
   | { type: 'edit_expense'; expense: Expense; summary: string }
-  | { type: 'delete_settlement'; settlementId: string; expectedRevision?: number; expectedUpdatedAt?: number; summary: string; destructive: true }
+  | {
+      type: 'delete_settlement';
+      settlementId: string;
+      expectedRevision?: number;
+      expectedUpdatedAt?: number;
+      summary: string;
+      destructive: true;
+    }
   | { type: 'navigate'; target: NavTarget; summary: string }
   /** Doc 24 P4 — set/replace a category's monthly budget; amount 0 removes it. */
   | { type: 'set_budget'; category: string; amount: number; summary: string };
@@ -80,9 +94,7 @@ export interface SettleDraft {
 
 /** Conversation memory carried by the UI between turns (and persisted per group). */
 export interface ConversationState {
-  pending?:
-    | { intent: 'add_expense'; draft: ExpenseDraft }
-    | { intent: 'settle_up'; draft: SettleDraft };
+  pending?: { intent: 'add_expense'; draft: ExpenseDraft } | { intent: 'settle_up'; draft: SettleDraft };
   /** The last action shown as a confirm card, so the user can tweak it. */
   lastProposed?: ProposedAction;
 }
@@ -133,7 +145,12 @@ export interface AgenticAssistContext {
 const money = (n: number, currency: string): string => `${n.toFixed(2)} ${currency}`;
 
 const nameOf = (group: Group, userId: string, selfId: string): string =>
-  userId === selfId ? 'you' : resolveDisplayName(group.members.find((m) => m.userId === userId), 'someone');
+  userId === selfId
+    ? 'you'
+    : resolveDisplayName(
+        group.members.find((m) => m.userId === userId),
+        'someone',
+      );
 
 /** First monetary number in the text, or null. */
 const firstAmount = (text: string): number | null => {
@@ -152,14 +169,18 @@ const memberFirstNames = (group: Group, currentUserId: string): string[] =>
     .slice(0, 4);
 
 const isAction = (i: AssistantIntent): boolean =>
-  i === 'add_expense' || i === 'settle_up' || i === 'delete_expense' ||
-  i === 'edit_expense' || i === 'delete_settlement' || i === 'navigate' ||
+  i === 'add_expense' ||
+  i === 'settle_up' ||
+  i === 'delete_expense' ||
+  i === 'edit_expense' ||
+  i === 'delete_settlement' ||
+  i === 'navigate' ||
   i === 'set_budget';
 
 const expenseSummary = (e: NewExpense, group: Group, currentUserId: string): string => {
   const payer = nameOf(group, e.paidBy, currentUserId);
   const n = e.participants.length;
-  return `${e.title} — ${money(e.amount, group.currency)} · ${e.category} · paid by ${payer} · split ${n} way${n === 1 ? '' : 's'}`;
+  return `${e.title} · ${money(e.amount, group.currency)} · ${e.category} · paid by ${payer} · split ${n} way${n === 1 ? '' : 's'}`;
 };
 
 /**
@@ -175,7 +196,10 @@ export async function processAssistantTurn(
   agentic?: AgenticAssistContext,
 ): Promise<AssistantTurn> {
   const text = (message ?? '').trim();
-  const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
+  const members = group.members.map((m) => ({
+    userId: m.userId,
+    displayName: m.displayName,
+  }));
   if (!text) return { reply: 'What would you like to do?', state };
 
   // Global cancel/abort — clears any in-progress flow.
@@ -191,7 +215,11 @@ export async function processAssistantTurn(
     const mod = detectExpenseModification(text, members, currentUserId);
     if (mod) {
       const action = applyExpenseModification(state.lastProposed, mod, group, currentUserId);
-      return { reply: 'Updated — add this expense?', action, state: { lastProposed: action } };
+      return {
+        reply: 'Updated. Add this expense?',
+        action,
+        state: { lastProposed: action },
+      };
     }
   }
 
@@ -231,13 +259,11 @@ export async function processAssistantTurn(
 
 // ── Add expense (slot-filling) ───────────────────────────────────────────────
 
-function continueAddExpense(
-  text: string,
-  group: Group,
-  currentUserId: string,
-  draft: ExpenseDraft,
-): AssistantTurn {
-  const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
+function continueAddExpense(text: string, group: Group, currentUserId: string, draft: ExpenseDraft): AssistantTurn {
+  const members = group.members.map((m) => ({
+    userId: m.userId,
+    displayName: m.displayName,
+  }));
   const d: ExpenseDraft = { ...draft };
 
   if (d.amount == null) {
@@ -253,13 +279,21 @@ function continueAddExpense(
   if (!d.category && d.title) d.category = categorizeText(d.title);
   if (!d.paidByUserId) d.paidByUserId = currentUserId;
 
-  const pending = (): ConversationState => ({ pending: { intent: 'add_expense', draft: d } });
+  const pending = (): ConversationState => ({
+    pending: { intent: 'add_expense', draft: d },
+  });
 
   if (d.amount == null) {
-    return { reply: 'How much was it? e.g. "$40 for dinner".', state: pending() };
+    return {
+      reply: 'How much was it? e.g. "$40 for dinner".',
+      state: pending(),
+    };
   }
   if (!d.title) {
-    return { reply: `What was the ${money(d.amount, group.currency)} for? e.g. "dinner" or "groceries".`, state: pending() };
+    return {
+      reply: `What was the ${money(d.amount, group.currency)} for? e.g. "dinner" or "groceries".`,
+      state: pending(),
+    };
   }
   if (!d.participantUserIds || d.participantUserIds.length === 0) {
     return {
@@ -281,8 +315,16 @@ function continueAddExpense(
     settled: false,
     notes: '',
   };
-  const action: ProposedAction = { type: 'add_expense', expense, summary: expenseSummary(expense, group, currentUserId) };
-  return { reply: 'Add this expense?', action, state: { lastProposed: action } };
+  const action: ProposedAction = {
+    type: 'add_expense',
+    expense,
+    summary: expenseSummary(expense, group, currentUserId),
+  };
+  return {
+    reply: 'Add this expense?',
+    action,
+    state: { lastProposed: action },
+  };
 }
 
 function applyExpenseModification(
@@ -291,7 +333,10 @@ function applyExpenseModification(
   group: Group,
   currentUserId: string,
 ): ProposedAction {
-  const expense: NewExpense = { ...proposed.expense, participants: [...proposed.expense.participants] };
+  const expense: NewExpense = {
+    ...proposed.expense,
+    participants: [...proposed.expense.participants],
+  };
   if (mod.title) expense.title = mod.title;
   if (mod.category) expense.category = mod.category;
   if (mod.paidByUserId) expense.paidBy = mod.paidByUserId;
@@ -303,18 +348,20 @@ function applyExpenseModification(
     expense.participants = equalSplit(participantIds, amount);
     expense.splitType = 'equal';
   }
-  return { type: 'add_expense', expense, summary: expenseSummary(expense, group, currentUserId) };
+  return {
+    type: 'add_expense',
+    expense,
+    summary: expenseSummary(expense, group, currentUserId),
+  };
 }
 
 // ── Settle up (slot-filling) ─────────────────────────────────────────────────
 
-function continueSettleUp(
-  text: string,
-  group: Group,
-  currentUserId: string,
-  draft: SettleDraft,
-): AssistantTurn {
-  const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
+function continueSettleUp(text: string, group: Group, currentUserId: string, draft: SettleDraft): AssistantTurn {
+  const members = group.members.map((m) => ({
+    userId: m.userId,
+    displayName: m.displayName,
+  }));
   const d: SettleDraft = { ...draft };
 
   const parsed = parseSettlement(text, members, currentUserId);
@@ -341,7 +388,10 @@ function continueSettleUp(
     const net = pairwiseNet(group.expenses, group.settlements, fromUserId, d.toUserId);
     amount = Math.abs(net);
     if (amount < 0.01) {
-      return { reply: `You and ${nameOf(group, d.toUserId, currentUserId)} are already settled up.`, state: {} };
+      return {
+        reply: `You and ${nameOf(group, d.toUserId, currentUserId)} are already settled up.`,
+        state: {},
+      };
     }
   }
   const rounded = Math.round(amount * 100) / 100;
@@ -352,7 +402,11 @@ function continueSettleUp(
     settlement: { fromUserId, toUserId: d.toUserId, amount: rounded },
     summary: `${from === 'you' ? 'You' : from} pay ${to} ${money(rounded, group.currency)}`,
   };
-  return { reply: 'Record this settlement?', action, state: { lastProposed: action } };
+  return {
+    reply: 'Record this settlement?',
+    action,
+    state: { lastProposed: action },
+  };
 }
 
 // ── Delete / edit / navigate (single-shot; ask to clarify if ambiguous) ───────
@@ -360,7 +414,10 @@ function continueSettleUp(
 function handleDeleteExpense(text: string, group: Group): AssistantTurn {
   const match = matchExpenseByText(text, group.expenses);
   if (!match) {
-    return { reply: 'Which expense should I delete? Try naming it, e.g. "delete the dinner expense".', state: {} };
+    return {
+      reply: 'Which expense should I delete? Try naming it, e.g. "delete the dinner expense".',
+      state: {},
+    };
   }
   const action: ProposedAction = {
     type: 'delete_expense',
@@ -368,9 +425,13 @@ function handleDeleteExpense(text: string, group: Group): AssistantTurn {
     expectedRevision: match.revision ?? (match.updatedAt == null ? 1 : undefined),
     expectedUpdatedAt: match.updatedAt,
     destructive: true,
-    summary: `${match.title || 'Untitled'} — ${money(match.amount, group.currency)}`,
+    summary: `${match.title || 'Untitled'} · ${money(match.amount, group.currency)}`,
   };
-  return { reply: 'Delete this expense? This cannot be undone.', action, state: { lastProposed: action } };
+  return {
+    reply: 'Delete this expense? This cannot be undone.',
+    action,
+    state: { lastProposed: action },
+  };
 }
 
 function handleEditExpense(text: string, group: Group): AssistantTurn {
@@ -400,17 +461,34 @@ function handleEditExpense(text: string, group: Group): AssistantTurn {
     parts.push(`amount → ${money(edit.changes.amount, group.currency)} (re-split equally)`);
   }
   if (parts.length === 0) {
-    return { reply: `"${existing.title}" already matches that — nothing to change.`, state: {} };
+    return {
+      reply: `"${existing.title}" already matches that. Nothing to change.`,
+      state: {},
+    };
   }
-  const action: ProposedAction = { type: 'edit_expense', expense: updated, summary: `${existing.title}: ${parts.join(', ')}` };
-  return { reply: 'Apply this change?', action, state: { lastProposed: action } };
+  const action: ProposedAction = {
+    type: 'edit_expense',
+    expense: updated,
+    summary: `${existing.title}: ${parts.join(', ')}`,
+  };
+  return {
+    reply: 'Apply this change?',
+    action,
+    state: { lastProposed: action },
+  };
 }
 
 function handleDeleteSettlement(text: string, group: Group, currentUserId: string): AssistantTurn {
-  const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
+  const members = group.members.map((m) => ({
+    userId: m.userId,
+    displayName: m.displayName,
+  }));
   const match = matchSettlement(text, group.settlements, members);
   if (!match) {
-    return { reply: 'I couldn’t find a settlement to delete. Try "delete the last settlement" or "undo the settlement with Alex".', state: {} };
+    return {
+      reply: 'I couldn’t find a settlement to delete. Try "delete the last settlement" or "undo the settlement with Alex".',
+      state: {},
+    };
   }
   const from = nameOf(group, match.fromUserId, currentUserId);
   const to = nameOf(group, match.toUserId, currentUserId);
@@ -422,7 +500,11 @@ function handleDeleteSettlement(text: string, group: Group, currentUserId: strin
     destructive: true,
     summary: `${from === 'you' ? 'You' : from} → ${to}: ${money(match.amount, group.currency)}`,
   };
-  return { reply: 'Delete this settlement? This cannot be undone.', action, state: { lastProposed: action } };
+  return {
+    reply: 'Delete this settlement? This cannot be undone.',
+    action,
+    state: { lastProposed: action },
+  };
 }
 
 /** Doc 25 Q2 — explicit memory write. Applies IMMEDIATELY (no confirm card —
@@ -431,18 +513,22 @@ function handleDeleteSettlement(text: string, group: Group, currentUserId: strin
 async function handleRemember(text: string): Promise<AssistantTurn> {
   const cmd = parseRememberCommand(text, parseAmount(text) != null);
   if (!cmd) {
-    return { reply: 'What should I remember? e.g. "remember that Maya is my sister".', state: {} };
+    return {
+      reply: 'What should I remember? e.g. "remember that Maya is my sister".',
+      state: {},
+    };
   }
   try {
     await addMemoryItem('global', cmd.kind, cmd.text);
     return {
-      reply:
-        `Remembered — "${cmd.text}". ` +
-        'I manage what I know in Settings → On-Device AI → AI memory.',
+      reply: `Remembered. "${cmd.text}". ` + 'I manage what I know in Settings → On-Device AI → AI memory.',
       state: {},
     };
   } catch {
-    return { reply: "I couldn't save that just now — try again in a moment.", state: {} };
+    return {
+      reply: "I couldn't save that just now. Try again in a moment.",
+      state: {},
+    };
   }
 }
 
@@ -466,7 +552,10 @@ function handleSetBudget(text: string, group: Group): AssistantTurn {
   if (cmd.remove) {
     const existing = group.budgets?.[cmd.category];
     if (existing == null) {
-      return { reply: `There's no ${cmd.category} budget to remove.`, state: {} };
+      return {
+        reply: `There's no ${cmd.category} budget to remove.`,
+        state: {},
+      };
     }
     const action: ProposedAction = {
       type: 'set_budget',
@@ -474,7 +563,11 @@ function handleSetBudget(text: string, group: Group): AssistantTurn {
       amount: 0,
       summary: `Remove the ${cmd.category} budget (was ${money(existing, group.currency)}/month)`,
     };
-    return { reply: 'Remove this budget?', action, state: { lastProposed: action } };
+    return {
+      reply: 'Remove this budget?',
+      action,
+      state: { lastProposed: action },
+    };
   }
   if (cmd.amount == null || cmd.amount <= 0) {
     return {
@@ -487,32 +580,46 @@ function handleSetBudget(text: string, group: Group): AssistantTurn {
     type: 'set_budget',
     category: cmd.category,
     amount: cmd.amount,
-    summary:
-      `${cmd.category}: ${money(cmd.amount, group.currency)}/month` +
-      (prev != null ? ` (was ${money(prev, group.currency)})` : ''),
+    summary: `${cmd.category}: ${money(cmd.amount, group.currency)}/month` + (prev != null ? ` (was ${money(prev, group.currency)})` : ''),
   };
-  return { reply: prev != null ? 'Update this budget?' : 'Set this budget?', action, state: { lastProposed: action } };
+  return {
+    reply: prev != null ? 'Update this budget?' : 'Set this budget?',
+    action,
+    state: { lastProposed: action },
+  };
 }
 
 function handleNavigate(text: string): AssistantTurn {
   const target = detectNavTarget(text);
   if (!target) {
-    return { reply: 'Where to? Try "open settle up", "show stats", or "open recurring bills".', state: {} };
+    return {
+      reply: 'Where to? Try "open settle up", "show stats", or "open recurring bills".',
+      state: {},
+    };
   }
-  const action: ProposedAction = { type: 'navigate', target, summary: NAV_LABELS[target] };
-  return { reply: `Open ${NAV_LABELS[target]}?`, action, state: { lastProposed: action } };
+  const action: ProposedAction = {
+    type: 'navigate',
+    target,
+    summary: NAV_LABELS[target],
+  };
+  return {
+    reply: `Open ${NAV_LABELS[target]}?`,
+    action,
+    state: { lastProposed: action },
+  };
 }
 
 // ── Questions (deterministic → smart RAG → on-device model → reliable nudge) ──
 
-async function answerQuestion(
-  text: string,
-  group: Group,
-  currentUserId: string,
-  agentic?: AgenticAssistContext,
-): Promise<AssistantTurn> {
+async function answerQuestion(text: string, group: Group, currentUserId: string, agentic?: AgenticAssistContext): Promise<AssistantTurn> {
   const local: ExpenseAiAnswer | null = answerExpenseLocally(text, group, currentUserId);
-  if (local) return { reply: local.answer, sources: local.sources, engineSource: 'deterministic', state: {} };
+  if (local)
+    return {
+      reply: local.answer,
+      sources: local.sources,
+      engineSource: 'deterministic',
+      state: {},
+    };
 
   // Doc 24 P1: the agentic pipeline replaces the one-shot model chain when the
   // surface provides thread + facts. Null → the legacy chain below is the net.
@@ -532,7 +639,13 @@ async function answerQuestion(
     });
     if (turn) {
       if (turn.role === 'clarify') {
-        return { reply: turn.text, choices: turn.options, clarify: true, state: {}, trace: turn.trace };
+        return {
+          reply: turn.text,
+          choices: turn.options,
+          clarify: true,
+          state: {},
+          trace: turn.trace,
+        };
       }
       return {
         reply: turn.text,
@@ -550,12 +663,18 @@ async function answerQuestion(
   // the old-binary / pipeline-off fallback.
   if (getOnDeviceAiAvailability() === 'available') {
     const ans = await askExpenseAiOnDevice(text, group, currentUserId);
-    if (ans?.answer) return { reply: ans.answer, sources: ans.sources, engineSource: 'ondevice', state: {} };
+    if (ans?.answer)
+      return {
+        reply: ans.answer,
+        sources: ans.sources,
+        engineSource: 'ondevice',
+        state: {},
+      };
   }
 
   return {
     reply:
-      "I’m not sure I caught that. I can answer questions about this group’s spending and balances, add expenses, and record settle-ups.\n\nTry “how much did I spend on food?”, “settle up with Alex”, or “add $20 lunch”.",
+      'I’m not sure I caught that. I can answer questions about this group’s spending and balances, add expenses, and record settle-ups.\n\nTry “how much did I spend on food?”, “settle up with Alex”, or “add $20 lunch”.',
     state: {},
   };
 }

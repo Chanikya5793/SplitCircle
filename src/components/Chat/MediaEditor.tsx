@@ -67,6 +67,14 @@ const ASPECT_PRESETS: { id: string; label: string; value: number | null }[] = [
 ];
 
 const PEN_COLORS = ['#FF3B30', '#FFCC00', '#34C759', '#0A84FF', '#FFFFFF', '#000000'];
+const PEN_COLOR_LABELS: Record<string, string> = {
+  '#FF3B30': 'Red',
+  '#FFCC00': 'Yellow',
+  '#34C759': 'Green',
+  '#0A84FF': 'Blue',
+  '#FFFFFF': 'White',
+  '#000000': 'Black',
+};
 
 /** Minimum finger travel (display px) before a stroke records another point. */
 const MIN_POINT_DISTANCE = 1.5;
@@ -117,7 +125,8 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
       })
       .catch((error) => {
         if (!cancelled) {
-          setLoadError(error instanceof Error ? error.message : 'Could not open this image.');
+          console.warn('[MediaEditor] Image load failed:', error);
+          setLoadError('This photo could not be opened. The original is unchanged.');
         }
       });
 
@@ -341,14 +350,37 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
       onDone(result);
     } catch (error) {
       console.error('Media edit export failed:', error);
-      appAlert(
-        'Could not save your edits',
-        error instanceof Error ? error.message : 'Please try again.',
-      );
+      appAlert('Could not save your edits', 'The original photo is unchanged. Try again.');
     } finally {
       setExporting(false);
     }
   }, [image, state, onDone, onCancel]);
+
+  const headerDismissGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(!exporting)
+        .activeOffsetY(14)
+        .failOffsetX([-24, 24])
+        .onEnd((event) => {
+          if (event.translationY > 110 || event.velocityY > 850) onCancel();
+        })
+        .runOnJS(true),
+    [exporting, onCancel],
+  );
+
+  const edgeBackGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(!exporting)
+        .activeOffsetX(12)
+        .failOffsetY([-18, 18])
+        .onEnd((event) => {
+          if (event.translationX > 90 || event.velocityX > 800) onCancel();
+        })
+        .runOnJS(true),
+    [exporting, onCancel],
+  );
 
   const strokePaths = useMemo(() => {
     const all = [...state.strokes];
@@ -359,12 +391,13 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="fade"
       presentationStyle="fullScreen"
       onRequestClose={onCancel}
       statusBarTranslucent
     >
       <GestureHandlerRootView style={styles.root}>
+        <GestureDetector gesture={headerDismissGesture}>
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <GlassCard role="floating" radius="lg" style={styles.headerPill} contentStyle={styles.headerPillContent}>
             <Pressable onPress={onCancel} hitSlop={12} style={styles.headerButton}>
@@ -397,6 +430,11 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
             </Pressable>
           </GlassCard>
         </View>
+        </GestureDetector>
+
+        <GestureDetector gesture={edgeBackGesture}>
+          <View style={[styles.edgeBackZone, { top: insets.top }]} />
+        </GestureDetector>
 
         <View style={[styles.stage, { height: stageHeight }]}>
           {loadError ? (
@@ -460,7 +498,9 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
                     }}
                     onPressOut={() => setComparing(false)}
                     style={[styles.compareButton, { top: offsetY + 12, right: offsetX + 12 }]}
+                    accessibilityRole="button"
                     accessibilityLabel="Hold to compare with the original"
+                    accessibilityState={{ selected: comparing }}
                   >
                     <Ionicons
                       name={comparing ? 'eye-off-outline' : 'eye-outline'}
@@ -494,6 +534,7 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
                 straighten={state.straightenDeg}
                 onStraighten={setStraighten}
                 primary={theme.colors.primary}
+                onPrimary={theme.colors.onPrimary}
               />
             ) : null}
 
@@ -506,7 +547,12 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
             ) : null}
 
             {tool === 'filter' ? (
-              <FilterControls selected={filterId} onSelect={applyFilter} primary={theme.colors.primary} />
+              <FilterControls
+                selected={filterId}
+                onSelect={applyFilter}
+                primary={theme.colors.primary}
+                onPrimary={theme.colors.onPrimary}
+              />
             ) : null}
 
             {tool === 'draw' ? (
@@ -578,6 +624,7 @@ const CropControls = ({
   straighten,
   onStraighten,
   primary,
+  onPrimary,
 }: {
   aspectId: string;
   onAspect: (id: string, value: number | null) => void;
@@ -586,10 +633,16 @@ const CropControls = ({
   straighten: number;
   onStraighten: (value: number) => void;
   primary: string;
+  onPrimary: string;
 }) => (
   <View style={styles.panel}>
     <View style={styles.rowBetween}>
-      <Pressable onPress={onRotate} style={styles.iconAction} accessibilityLabel="Rotate 90 degrees">
+      <Pressable
+        onPress={onRotate}
+        style={styles.iconAction}
+        accessibilityRole="button"
+        accessibilityLabel="Rotate 90 degrees"
+      >
         <Ionicons name="refresh-outline" size={20} color="#fff" />
         <Text style={styles.iconActionText}>Rotate</Text>
       </Pressable>
@@ -607,7 +660,12 @@ const CropControls = ({
           thumbTintColor={primary}
         />
       </View>
-      <Pressable onPress={onFlip} style={styles.iconAction} accessibilityLabel="Flip horizontally">
+      <Pressable
+        onPress={onFlip}
+        style={styles.iconAction}
+        accessibilityRole="button"
+        accessibilityLabel="Flip horizontally"
+      >
         <Ionicons name="swap-horizontal-outline" size={20} color="#fff" />
         <Text style={styles.iconActionText}>Flip</Text>
       </Pressable>
@@ -618,8 +676,18 @@ const CropControls = ({
           key={preset.id}
           onPress={() => onAspect(preset.id, preset.value)}
           style={[styles.chip, aspectId === preset.id && { backgroundColor: primary }]}
+          accessibilityRole="radio"
+          accessibilityLabel={`${preset.label} crop`}
+          accessibilityState={{ selected: aspectId === preset.id }}
         >
-          <Text style={styles.chipText}>{preset.label}</Text>
+          <Text
+            style={[
+              styles.chipText,
+              aspectId === preset.id && { color: onPrimary },
+            ]}
+          >
+            {preset.label}
+          </Text>
         </Pressable>
       ))}
     </ScrollView>
@@ -668,10 +736,12 @@ const FilterControls = ({
   selected,
   onSelect,
   primary,
+  onPrimary,
 }: {
   selected: string;
   onSelect: (id: string) => void;
   primary: string;
+  onPrimary: string;
 }) => (
   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
     {FILTER_PRESETS.map((preset) => (
@@ -679,8 +749,18 @@ const FilterControls = ({
         key={preset.id}
         onPress={() => onSelect(preset.id)}
         style={[styles.filterChip, selected === preset.id && { backgroundColor: primary }]}
+        accessibilityRole="radio"
+        accessibilityLabel={`${preset.label} filter`}
+        accessibilityState={{ selected: selected === preset.id }}
       >
-        <Text style={styles.chipText}>{preset.label}</Text>
+        <Text
+          style={[
+            styles.chipText,
+            selected === preset.id && { color: onPrimary },
+          ]}
+        >
+          {preset.label}
+        </Text>
       </Pressable>
     ))}
   </ScrollView>
@@ -710,7 +790,9 @@ const DrawControls = ({
           <Pressable
             key={color}
             onPress={() => onPenColor(color)}
-            accessibilityLabel={`Pen colour ${color}`}
+            accessibilityRole="radio"
+            accessibilityLabel={`${PEN_COLOR_LABELS[color] ?? color} pen color`}
+            accessibilityState={{ selected: penColor === color }}
             style={[
               styles.swatch,
               { backgroundColor: color },
@@ -723,7 +805,9 @@ const DrawControls = ({
         onPress={onUndo}
         disabled={!canUndo}
         style={[styles.iconAction, !canUndo && styles.disabled]}
+        accessibilityRole="button"
         accessibilityLabel="Undo last stroke"
+        accessibilityState={{ disabled: !canUndo }}
       >
         <Ionicons name="arrow-undo-outline" size={20} color="#fff" />
         <Text style={styles.iconActionText}>Undo</Text>
@@ -747,6 +831,13 @@ const DrawControls = ({
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
+  edgeBackZone: {
+    position: 'absolute',
+    left: 0,
+    bottom: 0,
+    width: 28,
+    zIndex: 30,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -762,7 +853,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 10,
   },
-  headerButton: { minWidth: 64, alignItems: 'center' },
+  headerButton: { minWidth: 64, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   headerButtonText: { color: '#fff', fontSize: 16 },
   headerResetText: { color: 'rgba(255,255,255,0.65)', fontSize: 15 },
   headerDone: { fontWeight: '700' },
@@ -775,17 +866,21 @@ const styles = StyleSheet.create({
   panel: { gap: 10, maxHeight: 150 },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   straightenWrap: { flex: 1 },
-  iconAction: { alignItems: 'center', gap: 2, minWidth: 54 },
+  iconAction: { alignItems: 'center', justifyContent: 'center', gap: 2, minWidth: 54, minHeight: 44 },
   iconActionText: { color: '#fff', fontSize: 11 },
   disabled: { opacity: 0.35 },
   chipRow: { gap: 8, paddingVertical: 4, alignItems: 'center' },
   chip: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 14,
     paddingVertical: 7,
     borderRadius: 14,
     backgroundColor: 'rgba(255,255,255,0.14)',
   },
   filterChip: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 14,
@@ -794,21 +889,21 @@ const styles = StyleSheet.create({
   chipText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   sliderRow: { gap: 2 },
   sliderLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: '600' },
-  slider: { width: '100%', height: 32 },
+  slider: { width: '100%', height: 44 },
   colorRow: { flexDirection: 'row', gap: 8, flexShrink: 1 },
   swatch: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.35)',
   },
   swatchSelected: { borderColor: '#fff', borderWidth: 3 },
   compareButton: {
     position: 'absolute',
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.45)',
@@ -816,6 +911,13 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.35)',
   },
   toolbar: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 4 },
-  toolButton: { alignItems: 'center', gap: 3, paddingHorizontal: 12, paddingVertical: 6 },
+  toolButton: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
   toolLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 11 },
 });

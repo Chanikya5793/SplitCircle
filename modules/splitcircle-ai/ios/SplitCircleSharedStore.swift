@@ -77,7 +77,8 @@ public enum SplitCircleSharedStore {
   /// process) to `SplitCirclePendingExpenses`. Stored as a JSON-array STRING because
   /// react-native `Settings` round-trips strings reliably across the New Arch bridge.
   /// The JS side (pendingExpenseService) drains + commits these on next foreground and
-  /// clears the key. Each record carries a stable `requestId`, so even if a drain
+  /// clears the key. Each record carries the authoring Firebase `ownerUserId` and
+  /// a stable `requestId`, so even if a drain
   /// races a write, `GroupContext.addExpense` de-dupes by requestId — no double-add.
   public static func enqueuePendingExpense(_ record: [String: Any]) {
     appendToQueue(record, key: pendingExpensesKey)

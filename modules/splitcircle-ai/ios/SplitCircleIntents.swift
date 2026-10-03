@@ -359,6 +359,7 @@ public struct AddExpenseIntent: AppIntent {
     let cleanTitle = title.isEmpty ? "Expense" : title
     var record: [String: Any] = [
       "requestId": "siri-\(UUID().uuidString)",
+      "ownerUserId": userId,
       "groupId": group.id,
       "title": cleanTitle,
       "amount": amount,
@@ -477,18 +478,23 @@ public struct SettleUpIntent: AppIntent {
     let other = person.userId
     let fromUserId = direction == .iPaid ? userId : other
     let toUserId = direction == .iPaid ? other : userId
+    guard let currency = SplitCircleIndexReader.balance(groupId: group.id, userId: userId)?.currency,
+          !currency.isEmpty else {
+      return .result(dialog: "Open ManaSplit once to refresh this group's currency, then try again.")
+    }
 
     let record: [String: Any] = [
       "requestId": "siri-\(UUID().uuidString)",
+      "ownerUserId": userId,
       "groupId": group.id,
       "fromUserId": fromUserId,
       "toUserId": toUserId,
       "amount": amount,
+      "expectedCurrency": currency,
       "createdAt": Date().timeIntervalSince1970 * 1000,
     ]
     SplitCircleSharedStore.enqueuePendingSettlement(record)
 
-    let currency = SplitCircleIndexReader.balance(groupId: group.id, userId: userId)?.currency
     let money = SplitCircleFormat.money(amount, currency: currency)
     let dialog = direction == .iPaid
       ? "Recorded: you paid \(person.name) \(money) in \(group.name). It'll sync next time you open ManaSplit."

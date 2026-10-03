@@ -1,3 +1,4 @@
+import { DetailScreenScaffold } from '@/components/ui/DetailScreenScaffold';
 // EditNameScreen — the name-edit screen doc 30 identified was missing entirely:
 // RegisterScreen only collects a name once at email/password signup, and
 // ProfilePhotoUploader only ever touches photoURL. This is the first screen
@@ -14,7 +15,7 @@
 // self-heals `user.displayName` app-wide without this screen needing to poke
 // AuthContext directly (which is deliberately out of scope here — see CLAUDE.md).
 
-import { GlassCard } from '@/components/ui';
+import { GlassCard, SCREEN_GUTTER } from '@/components/ui';
 import { AppTextInput } from '@/components/ui/AppTextInput';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
@@ -32,7 +33,7 @@ import { useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
-  ScrollView,
+
   StyleSheet,
   TextInput as RNTextInput,
   View,
@@ -40,7 +41,7 @@ import {
 import { Button, Text } from 'react-native-paper';
 
 const errorMessage = (error: unknown, fallback: string): string => {
-  if (error instanceof Error && error.message.trim()) return error.message;
+  console.warn('[EditName] Save failed:', error);
   return fallback;
 };
 
@@ -135,7 +136,8 @@ export const EditNameScreen = () => {
   return (
     <LiquidBackground>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView
+        <DetailScreenScaffold bottomSpacing={theme.spacing.lg}
+          horizontalInset={SCREEN_GUTTER}
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -178,7 +180,7 @@ export const EditNameScreen = () => {
               Save
             </Button>
           </GlassCard>
-        </ScrollView>
+        </DetailScreenScaffold>
       </KeyboardAvoidingView>
     </LiquidBackground>
   );
@@ -191,7 +193,6 @@ const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 24,
   },
   card: {
     borderRadius: 20,

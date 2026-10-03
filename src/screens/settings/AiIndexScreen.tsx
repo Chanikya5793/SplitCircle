@@ -18,6 +18,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { getOnDeviceAiAvailability, ON_DEVICE_UNAVAILABLE_COPY } from '@/services/onDeviceAiService';
+import { clearFixtures } from '@/services/aiFeedbackService';
 import { getIndexStoreEntries, getIndexStoreFootprint } from '@/services/aiIndexStore';
 import { buildIndexStatus, type IndexStatus } from '@/utils/aiIndexStatus';
 import {
@@ -32,6 +33,7 @@ import { AI_CONVERSATIONAL_ACTIVE_COPY, AI_INDEX_PRIVACY_COPY } from '@/utils/ai
 import { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Icon, Text } from 'react-native-paper';
+import { appAlert } from '@/utils/appAlert';
 
 /** Human-readable byte size for the storage footprint line. */
 const formatBytes = (bytes: number): string =>
@@ -46,6 +48,7 @@ export const AiIndexScreen = () => {
   const availability = getOnDeviceAiAvailability();
   const [status, setStatus] = useState<IndexStatus | null>(null);
   const [footprint, setFootprint] = useState(0);
+  const [showDetails, setShowDetails] = useState(false);
 
   // Index every group on-device (persisting to SQLite), then summarize from the
   // persistent store so freshness reflects what actually survives a restart.
@@ -76,11 +79,27 @@ export const AiIndexScreen = () => {
     successHaptic();
   };
 
+  const clearSavedExamples = () => {
+    appAlert('Clear saved feedback examples?', 'This removes the conversation examples saved when you rated an AI reply on this device. Your conversations and AI memory stay available.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Clear examples', style: 'destructive', onPress: () => {
+        void (async () => {
+          try {
+            await clearFixtures();
+            appAlert('Saved examples cleared', 'Your saved feedback examples have been removed from this device.');
+          } catch {
+            appAlert('Couldn’t clear examples', 'Your saved examples are unchanged. Please try again.');
+          }
+        })();
+      } },
+    ]);
+  };
+
   const aiActive = availability === 'available';
 
   return (
     <LiquidBackground>
-      <GuardedScreen target="expenses" label="On-device index hidden" duressBehavior="blank" duressLabel="Index is empty.">
+      <GuardedScreen target="expenses" label="On-device data hidden" duressBehavior="blank" duressLabel="No on-device data.">
       <ScrollView contentContainerStyle={styles.container}>
         <GlassView style={styles.card}>
           <View style={styles.row}>
@@ -106,42 +125,29 @@ export const AiIndexScreen = () => {
 
         <GlassView style={styles.card}>
           <View style={[styles.row, { justifyContent: 'space-between' }]}>
-            <Text variant="titleSmall" style={{ fontWeight: '700', color: theme.colors.onSurface }}>On-device index</Text>
+            <Text variant="titleSmall" style={{ fontWeight: '700', color: theme.colors.onSurface }}>On-device data</Text>
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
               {status ? `${status.totalExpenses} expenses · ${status.totalGroups} groups` : '…'}
             </Text>
           </View>
 
-          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
-            Saved on device · v{INDEX_VERSION} · {formatBytes(footprint)}
-          </Text>
+
 
           <View style={{ marginTop: 10, gap: 8 }}>
             {(status?.groups ?? []).map((g) => (
               <View key={g.groupId} style={styles.groupRow}>
-                <Icon source={g.cached ? 'check-circle' : 'progress-clock'} size={16} color={g.cached ? '#10b981' : theme.colors.onSurfaceVariant} />
+                <Icon source={g.cached ? 'check-circle' : 'progress-clock'} size={16} color={g.cached ? theme.colors.primary : theme.colors.onSurfaceVariant} />
                 <Text variant="bodyMedium" style={{ flex: 1, color: theme.colors.onSurface }} numberOfLines={1}>{g.name}</Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                  {g.expenseCount} exp · {g.settlementCount} settle
+                  {g.expenseCount} expenses · {g.settlementCount} settlements
                 </Text>
               </View>
             ))}
             {status && status.groups.length === 0 ? (
-              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>No groups to index yet.</Text>
+              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>Your groups will appear here when you add them.</Text>
             ) : null}
           </View>
 
-          <Button mode="outlined" icon="refresh" onPress={rebuild} style={{ marginTop: 16, borderColor: theme.colors.outline }}>
-            Rebuild index
-          </Button>
-          <Button
-            mode="outlined"
-            icon="clipboard-check-outline"
-            onPress={() => navigation.navigate(ROUTES.APP.AI_EVALS as never)}
-            style={{ marginTop: 8, borderColor: theme.colors.outline }}
-          >
-            AI evals
-          </Button>
           <Button
             mode="outlined"
             icon="brain"
@@ -150,6 +156,28 @@ export const AiIndexScreen = () => {
           >
             AI memory
           </Button>
+          <Button mode="text" onPress={clearSavedExamples} style={{ marginTop: 8 }}>
+            Clear saved feedback examples
+          </Button>
+          <Button mode="text" onPress={() => setShowDetails((value) => !value)} accessibilityState={{ expanded: showDetails }}>
+            {showDetails ? 'Hide technical details' : 'Technical details'}
+          </Button>
+          {showDetails ? (
+            <View style={{ gap: 8, marginTop: 8 }}>
+              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                Saved on device · v{INDEX_VERSION} · {formatBytes(footprint)}
+              </Text>
+              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                Rebuild the local index if spending answers seem out of date. Your expenses are kept.
+              </Text>
+              <Button mode="outlined" icon="refresh" onPress={rebuild}>Rebuild index</Button>
+              {__DEV__ ? (
+                <Button mode="outlined" icon="clipboard-check-outline" onPress={() => navigation.navigate(ROUTES.APP.AI_EVALS as never)}>
+                  AI evals
+                </Button>
+              ) : null}
+            </View>
+          ) : null}
         </GlassView>
       </ScrollView>
       </GuardedScreen>
@@ -161,8 +189,8 @@ const styles = StyleSheet.create({
   // Tightened 12 -> 8 (2026-08-07, compact density pass).
   container: { padding: 16, gap: 8 },
   card: { borderRadius: 18, padding: 12 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  groupRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 },
+  row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  groupRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingVertical: 2 },
 });
 
 export default AiIndexScreen;

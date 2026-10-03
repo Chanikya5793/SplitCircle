@@ -15,6 +15,7 @@ import { Animated, Easing, Modal, Pressable, ScrollView, StyleSheet, View } from
 import { Icon, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassCard } from './GlassCard';
+import { ScrimBackdrop } from './ScrimBackdrop';
 
 export interface GlassPickerSheetOption {
   key: string;
@@ -76,7 +77,14 @@ export const GlassPickerSheet = ({
   return (
     <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={handleClose}>
       <View style={styles.overlay}>
-        <Pressable style={styles.backdrop} onPress={handleClose} accessibilityLabel={`Close ${title}`} />
+        <Pressable
+          style={styles.backdrop}
+          onPress={handleClose}
+          accessibilityRole="button"
+          accessibilityLabel={`Close ${title}`}
+        >
+          <ScrimBackdrop pointerEvents="none" />
+        </Pressable>
         <Animated.View
           onLayout={(e) => setSheetH(e.nativeEvent.layout.height)}
           style={{ transform: [{ translateY }] }}
@@ -104,6 +112,7 @@ export const GlassPickerSheet = ({
                   }}
                   accessibilityRole="button"
                   accessibilityLabel={opt.label}
+                  accessibilityState={{ selected: Boolean(opt.selected) }}
                   style={({ pressed }) => [
                     styles.row,
                     idx < options.length - 1 && { borderBottomColor: hairline, borderBottomWidth: StyleSheet.hairlineWidth },
@@ -143,7 +152,6 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.45)',
   },
   sheet: {
     borderTopLeftRadius: 28,

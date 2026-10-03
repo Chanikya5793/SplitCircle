@@ -30,17 +30,17 @@ export class ChatErrorBoundary extends React.Component<ChatErrorBoundaryProps, C
     if (this.state.hasError) {
       return (
         <View style={styles.container}>
-          <Text variant="titleMedium" style={styles.title}>Something went wrong</Text>
+          <Text variant="titleMedium" style={styles.title}>Couldn’t open this chat</Text>
           <Text variant="bodyMedium" style={styles.subtitle}>
-            This chat encountered an error. You can try again or go back.
+            Your messages are unchanged. Try again or return to your chats.
           </Text>
           <View style={styles.actions}>
             <Button mode="contained" onPress={this.handleRetry} style={styles.button}>
-              Try Again
+              Try again
             </Button>
             {this.props.onGoBack && (
               <Button mode="outlined" onPress={this.props.onGoBack} style={styles.button}>
-                Go Back
+                Go back
               </Button>
             )}
           </View>

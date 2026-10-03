@@ -7,7 +7,7 @@ import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { getExpenseSplitLabel } from '@/utils/expenseSplit';
 import { StyleSheet, View } from 'react-native';
-import { IconButton, Text, TouchableRipple } from 'react-native-paper';
+import { Icon, Text, TouchableRipple } from 'react-native-paper';
 import Animated, { SlideInDown } from 'react-native-reanimated';
 
 interface ExpenseCardProps {
@@ -51,7 +51,7 @@ export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0, 
                 <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
                   {fmtMoney(expense.amount, currency)}
                 </Text>
-                {isSettlement && <IconButton icon="check-circle" size={20} iconColor={theme.colors.primary} />}
+                {isSettlement && <Icon source="check-circle" size={20} color={theme.colors.primary} />}
               </View>
             </View>
           </View>

@@ -84,7 +84,7 @@ export function buildMemoryBlock(
   if (toggles.pattern && patternLine) lines.push(`- ${patternLine}`);
   if (lines.length === 0) return '';
 
-  const header = 'MEMORY (user-approved context — follow preferences, use name fixes):';
+  const header = 'MEMORY (user-approved context. Follow preferences, use name fixes):';
   let block = header;
   for (const line of lines) {
     const next = `${block}\n${line}`;

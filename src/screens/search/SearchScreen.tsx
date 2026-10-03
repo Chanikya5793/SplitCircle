@@ -27,6 +27,7 @@ import { GlassCard, ListRow } from '@/components/ui';
 import { ROUTES } from '@/constants/routes';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useAppSearch } from '@/hooks/useAppSearch';
 import { runAgenticTurn } from '@/services/aiPipelineService';
@@ -44,7 +45,7 @@ import {
 import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -223,6 +224,7 @@ export const SearchScreen = () => {
   const { search, firstSearchableGroupId, getSuggestions } = useAppSearch();
   const { groups } = useGroups();
   const { user } = useAuth();
+  const guard = usePrivacyGuard();
 
   // Native mode: the system UISearchTab field in the tab bar is the input; this
   // screen only mirrors it. Fallback mode: this screen owns a JS field.
@@ -356,9 +358,9 @@ export const SearchScreen = () => {
     const best = results.find((r) => r.type === 'expense' || r.type === 'settlement' || r.type === 'group' || r.type === 'action');
     return getGroupIdFromItem(best) ?? firstSearchableGroupId;
   }, [firstSearchableGroupId, getGroupIdFromItem, results]);
-  const visibleGroups = useMemo(() => (groups ?? []).filter((g) => !g.hidden), [groups]);
+  const visibleGroups = useMemo(() => (groups ?? []).filter((g) => !g.hidden && !guard.isShielded('expenses', g.groupId)), [groups, guard.isShielded]);
   const showAiCard =
-    debounced.length > 0 && looksLikeQuestion(debounced) && (Boolean(aiGroupId) || visibleGroups.length > 0);
+    !guard.active && debounced.length > 0 && looksLikeQuestion(debounced) && (Boolean(aiGroupId) || visibleGroups.length > 0);
 
   // ── Doc 25 Q3: the inline answer card ───────────────────────────────────────
   // Fires on SUBMIT only (return key) — never as-you-type. Group scope when the
@@ -377,10 +379,22 @@ export const SearchScreen = () => {
   const [answer, setAnswer] = useState<SearchAnswer | null>(null);
   const answerSeq = useRef(0);
 
+  // A query, answer, or recent search can name a group that has just become
+  // protected. Clear the live field before this screen paints its next frame;
+  // the saved history stays intact for the real unlock, but is hidden below.
+  useLayoutEffect(() => {
+    if (!guard.active) return;
+    answerSeq.current += 1;
+    setAnswer(null);
+    setQuery('');
+    setDebounced('');
+    if (nativeMode) setNativeSearchTabText('');
+  }, [guard.active, nativeMode]);
+
   const runSearchAnswer = useCallback(
     (raw: string) => {
       const text = raw.trim();
-      if (!text || !looksLikeQuestion(text) || !user) return;
+      if (!text || !looksLikeQuestion(text) || !user || guard.active) return;
       const seq = ++answerSeq.current;
       const named = visibleGroups.find((g) => text.toLowerCase().includes(g.name.toLowerCase()));
       const scope = named ? named.groupId : 'personal';
@@ -428,7 +442,7 @@ export const SearchScreen = () => {
           if (answerSeq.current === seq) setAnswer({ query: text, done: true, failed: true });
         });
     },
-    [user, visibleGroups],
+    [user, visibleGroups, guard.active],
   );
 
   const persistRecents = (next: string[]) => {
@@ -439,6 +453,7 @@ export const SearchScreen = () => {
   // Functional update: also called from the long-lived native-event subscription,
   // where a closure over `recents` would be stale.
   const rememberRecent = useCallback((q: string) => {
+    if (guard.active) return;
     const trimmed = q.trim();
     if (trimmed.length < 2) return;
     setRecents((prev) => {
@@ -446,7 +461,7 @@ export const SearchScreen = () => {
       void AsyncStorage.setItem(RECENTS_KEY, JSON.stringify(next));
       return next;
     });
-  }, []);
+  }, [guard.active]);
 
   // Mirror the native tab-bar search field (UISearchTab) into this screen.
   useEffect(() => {
@@ -547,6 +562,7 @@ export const SearchScreen = () => {
   };
 
   const askAi = () => {
+    if (guard.active) return;
     lightHaptic();
     rememberRecent(debounced);
     Keyboard.dismiss();
@@ -556,7 +572,6 @@ export const SearchScreen = () => {
 
   const fieldBg = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)';
   const hairline = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
-  const panelBg = isDark ? 'rgba(44,48,58,0.96)' : 'rgba(248,248,250,0.97)';
   const suggestions = useMemo(() => {
     const dynamic = getSuggestions('all');
     return dynamic.length > 0 ? dynamic : FALLBACK_SUGGESTIONS;
@@ -569,7 +584,7 @@ export const SearchScreen = () => {
     const q = debounced.toLowerCase();
     if (q.length < 1) return [];
     const pool = Array.from(
-      new Set([...recents, ...getSuggestions('all'), ...results.slice(0, 8).map((r) => r.title)]),
+      new Set([...(guard.active ? [] : recents), ...getSuggestions('all'), ...results.slice(0, 8).map((r) => r.title)]),
     );
     return pool
       .filter((c) => {
@@ -577,7 +592,7 @@ export const SearchScreen = () => {
         return lc.startsWith(q) && lc !== q;
       })
       .slice(0, 3);
-  }, [debounced, recents, getSuggestions, results]);
+  }, [debounced, recents, getSuggestions, results, guard.active]);
 
   return (
     <LiquidBackground>
@@ -624,7 +639,7 @@ export const SearchScreen = () => {
               glyph and does nothing reads as a broken field. */}
           <Pressable
             onPress={focusField}
-            accessibilityRole="search"
+            accessible={false}
             style={[styles.field, styles.fieldTop, { backgroundColor: fieldBg }]}
           >
             <View style={styles.fieldInner}>
@@ -652,7 +667,12 @@ export const SearchScreen = () => {
                 }}
               />
               {query.length > 0 && (
-                <TouchableOpacity onPress={() => setQuery('')} accessibilityLabel="Clear search text">
+                <TouchableOpacity
+                  onPress={() => setQuery('')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear search text"
+                  style={styles.clearSearchButton}
+                >
                   <Ionicons name="close-circle" size={18} color={theme.colors.onSurfaceVariant} />
                 </TouchableOpacity>
               )}
@@ -701,7 +721,7 @@ export const SearchScreen = () => {
                   Search
                 </Text>
 
-                {recents.length > 0 && (
+                {!guard.active && recents.length > 0 && (
                   <View style={styles.block}>
                     <View style={styles.sectionHeader}>
                       <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
@@ -811,7 +831,7 @@ export const SearchScreen = () => {
                   <View style={styles.empty}>
                     <Ionicons name="search-outline" size={40} color={theme.colors.onSurfaceVariant} />
                     <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                      No Results
+                      No results
                     </Text>
                     <Text style={[styles.emptySubtitle, { color: theme.colors.onSurfaceVariant }]}>
                       Nothing matches “{debounced}”. Check the spelling or try a new search.
@@ -856,7 +876,7 @@ export const SearchScreen = () => {
             ]}
             pointerEvents="box-none"
           >
-            <View style={[styles.predictPanel, { backgroundColor: panelBg, borderColor: hairline }]}>
+            <GlassCard role="floating" style={styles.predictPanel} intensity={70}>
               {predictions.map((p, i) => (
                 <TouchableOpacity
                   key={p}
@@ -868,7 +888,7 @@ export const SearchScreen = () => {
                   accessibilityLabel={p}
                   style={[
                     styles.predictRow,
-                    i < predictions.length - 1 ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: hairline } : null,
+                    i < predictions.length - 1 ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.divider } : null,
                   ]}
                 >
                   <Ionicons name="search" size={14} color={theme.colors.onSurfaceVariant} />
@@ -878,7 +898,7 @@ export const SearchScreen = () => {
                   </Text>
                 </TouchableOpacity>
               ))}
-            </View>
+            </GlassCard>
           </View>
         )}
 
@@ -920,30 +940,30 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, fontSize: 16, paddingVertical: 0 },
   closeButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
   block: { marginTop: 18 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  clearPill: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14 },
+  clearSearchButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  clearPill: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 22 },
   recentsList: { overflow: 'hidden' },
   recentRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 12 },
   recentArrow: { transform: [{ rotate: '-45deg' }] },
   recentDelete: { width: 64, alignItems: 'center', justifyContent: 'center' },
   suggestionStack: { alignItems: 'flex-start', gap: 10 },
-  suggestionPill: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 },
+  suggestionPill: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 22 },
   predictWrap: { paddingHorizontal: 16, paddingBottom: 6, alignItems: 'flex-start' },
   predictPanel: {
     borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
     minWidth: 200,
     maxWidth: '78%',
     overflow: 'hidden',
   },
-  predictRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 },
+  predictRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 },
   resultsArea: { gap: 4, paddingTop: 8 },
   section: { marginBottom: 14 },
   sectionTitle: { fontWeight: '600', marginBottom: 2 },

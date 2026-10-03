@@ -1,0 +1,79 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isGroupMember(groupId) {
+      return isSignedIn()
+        && firestore.exists(/databases/(default)/documents/groups/$(groupId))
+        && request.auth.uid in firestore.get(
+          /databases/(default)/documents/groups/$(groupId)
+        ).data.memberIds;
+    }
+
+    function isChatParticipant(chatId) {
+      return isSignedIn()
+        && firestore.exists(/databases/(default)/documents/chats/$(chatId))
+        && request.auth.uid in firestore.get(
+          /databases/(default)/documents/chats/$(chatId)
+        ).data.participantIds;
+    }
+
+    function isBoundedUpload(maxBytes) {
+      return request.resource != null && request.resource.size <= maxBytes;
+    }
+
+    function isImageUpload(maxBytes) {
+      return isBoundedUpload(maxBytes)
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Profile photos are user-owned. Signed-in users may resolve them because
+    // the same photo is rendered in shared groups, chats, and expense rows.
+    match /users/{userId}/profile.jpg {
+      allow read: if isSignedIn();
+      allow create, update: if isSelf(userId) && isImageUpload(10 * 1024 * 1024);
+      allow delete: if isSelf(userId);
+    }
+
+    // Group artwork is visible and mutable only to current group members.
+    match /groups/{groupId}/photo.jpg {
+      allow read: if isGroupMember(groupId);
+      allow create, update: if isGroupMember(groupId) && isImageUpload(10 * 1024 * 1024);
+      allow delete: if isGroupMember(groupId);
+    }
+
+    // Expense attachments are scoped to their group. Older clients may upload
+    // an unknown MIME type, so size and membership are the hard boundaries.
+    match /groups/{groupId}/expenses/{expenseId}/{fileName} {
+      allow read: if isGroupMember(groupId);
+      allow create, update: if isGroupMember(groupId) && isBoundedUpload(25 * 1024 * 1024);
+      allow delete: if isGroupMember(groupId);
+    }
+
+    match /receipts/{groupId}/{receiptId} {
+      allow read: if isGroupMember(groupId);
+      allow create, update: if isGroupMember(groupId) && isBoundedUpload(25 * 1024 * 1024);
+      allow delete: if isGroupMember(groupId);
+    }
+
+    // Chat media can be large videos, but only current participants can create
+    // or resolve an object. The app itself enforces a 100 MB media cap; the
+    // rule leaves a small protocol margin while preventing unbounded uploads.
+    match /chat_media/{chatId}/{messageId}/{fileName} {
+      allow read: if isChatParticipant(chatId);
+      allow create, update: if isChatParticipant(chatId) && isBoundedUpload(110 * 1024 * 1024);
+      allow delete: if isChatParticipant(chatId);
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

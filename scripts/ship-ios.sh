@@ -39,20 +39,30 @@ mkdir -p "$OUT_DIR"
 
 step() { printf '\n\033[1;36m▶ %s\033[0m\n' "$1"; }
 
-# 0. Optional backend deploy — functions + Firestore rules.
-if [[ "$DEPLOY_BACKEND" == true ]]; then
-  step "Deploying Firebase functions + Firestore rules ($FIREBASE_PROJECT)…"
-  ( cd "$ROOT/functions" && npm run build )
-  firebase deploy --only functions,firestore:rules --project "$FIREBASE_PROJECT" --non-interactive --force
+# Use the selected installation, not a stale Xcode-beta path. An explicit
+# DEVELOPER_DIR still takes precedence for reproducible release archives.
+export DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}"
+step "Selected Apple toolchain: $DEVELOPER_DIR"
+xcodebuild -version
+if ! xcodebuild -checkFirstLaunchStatus; then
+  echo "Complete Xcode first-launch setup before shipping: xcodebuild -runFirstLaunch" >&2
+  exit 1
 fi
 
-# 0b. Preflight (doc 25 Q1): the vitest suites are a HARD gate — a red suite
+# 0. Preflight (doc 25 Q1): the vitest suites are a HARD gate — a red suite
 #     never ships. On-device AI evals live on the phone (Settings → On-Device
 #     AI → AI evals), unreadable from here: prompt when interactive, warn when
 #     headless. SKIP_AI_EVAL_CHECK=1 skips the prompt only, never the tests.
-step "Preflight: unit + services test suites…"
+step "Preflight: strict typecheck + unit + services + DOM test suites…"
+npx tsc --noEmit
 npm run test:unit
 npm run test:services
+npm run test:dom
+npm run validate:brand
+if [[ "$DEPLOY_BACKEND" == true ]]; then
+  step "Preflight: Firebase Functions build + emulator test suite…"
+  ( cd "$ROOT/functions" && npm run build && npm run test:emulators )
+fi
 if [[ "${SKIP_AI_EVAL_CHECK:-}" != "1" ]]; then
   if [[ -t 0 ]]; then
     printf '\033[1;33m▶ On-device AI evals passed on the iPhone? (Settings → On-Device AI → AI evals) [y/N] \033[0m'
@@ -70,6 +80,13 @@ fi
 step "Building iOS locally (profile: $PROFILE)…"
 eas build --platform ios --local --profile "$PROFILE" --non-interactive --output "$IPA"
 echo "   built: $IPA"
+
+# 1b. Optional backend deploy only after the matching IPA exists. If deploy
+# fails, set -e prevents that IPA from being submitted with a partial release.
+if [[ "$DEPLOY_BACKEND" == true ]]; then
+  step "Deploying Firebase Auth, functions, Firestore rules/indexes, RTDB, and Storage rules ($FIREBASE_PROJECT)…"
+  firebase deploy --only auth,functions,firestore,database,storage --project "$FIREBASE_PROJECT" --non-interactive --force
+fi
 
 # 2. Deliver to App Store Connect (the Transporter step, headless).
 if [[ "$SUBMIT" == true ]]; then

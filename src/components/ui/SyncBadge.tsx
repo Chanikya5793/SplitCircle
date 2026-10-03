@@ -16,7 +16,7 @@ export const SyncBadge = ({ label = 'Pending', style }: SyncBadgeProps) => {
   const { theme } = useTheme();
   return (
     <View
-      accessibilityLabel={`${label} — waiting to sync`}
+      accessibilityLabel={`${label}. Waiting to sync`}
       style={[
         styles.badge,
         {

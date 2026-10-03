@@ -1,4 +1,4 @@
-import { GlassCard } from '@/components/ui';
+import { GlassCard, ScrimBackdrop } from '@/components/ui';
 import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
@@ -295,7 +295,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
       appAlert(
-        'Camera Permission Required',
+        'Camera permission required',
         'Please enable camera access in your device settings to take photos.',
         [{ text: 'OK' }]
       );
@@ -308,7 +308,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
       appAlert(
-        'Photo Library Permission Required',
+        'Photo library permission required',
         'Please enable photo library access in your device settings to select media.',
         [{ text: 'OK' }]
       );
@@ -353,7 +353,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     } catch (error) {
       console.error('Camera error:', error);
       setStatus(null);
-      appAlert('Camera Error', 'Failed to capture photo. Please try again.');
+      appAlert('Couldn’t take photo', 'No photo was added. Please try again.');
     }
   }, [onMediaSelected]);
 
@@ -515,7 +515,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     } catch (error) {
       console.error('Gallery media error:', error);
       setStatus(null);
-      appAlert('Selection Error', 'Failed to select media. Please try again.');
+      appAlert('Couldn’t select media', 'No media was added. Please try again.');
     }
   }, [onMediaSelected]);
 
@@ -545,7 +545,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     } catch (error) {
       console.error('Document picker error:', error);
       setStatus(null);
-      appAlert('Selection Error', 'Failed to select document. Please try again.');
+      appAlert('Couldn’t select document', 'No document was added. Please try again.');
     }
   }, [onMediaSelected]);
 
@@ -585,7 +585,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     } catch (error) {
       console.error('Audio picker error:', error);
       setStatus(null);
-      appAlert('Selection Error', 'Failed to select audio. Please try again.');
+      appAlert('Couldn’t select audio', 'No audio was added. Please try again.');
     }
   }, [onMediaSelected]);
 
@@ -655,6 +655,10 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
         style={styles.optionContainer}
         onPress={isDisabled ? undefined : () => handleOptionPress(option)}
         activeOpacity={isDisabled ? 1 : 0.7}
+        disabled={isDisabled}
+        accessibilityRole="button"
+        accessibilityLabel={option.label}
+        accessibilityState={{ disabled: isDisabled }}
       >
         <View style={[
           styles.optionButton,
@@ -680,13 +684,21 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     >
       <View style={styles.modalContainer}>
         {/* Backdrop */}
-        <Pressable style={StyleSheet.absoluteFill} onPress={(selectingAttachment || isProcessing) ? undefined : onClose}>
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={(selectingAttachment || isProcessing) ? undefined : onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close attachment menu"
+          accessibilityState={{ disabled: selectingAttachment || isProcessing }}
+        >
           <Animated.View
             style={[
               styles.backdrop,
               backdropStyle,
             ]}
-          />
+          >
+            <ScrimBackdrop pointerEvents="none" />
+          </Animated.View>
         </Pressable>
 
         {/* Menu */}
@@ -725,6 +737,9 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
                     ]}
                     onPress={selectingAttachment ? undefined : onClose}
                     activeOpacity={selectingAttachment ? 1 : 0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel"
+                    accessibilityState={{ disabled: selectingAttachment }}
                   >
                     <Text style={[styles.cancelText, { color: theme.colors.error }]}>Cancel</Text>
                   </TouchableOpacity>
@@ -745,7 +760,6 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   menuGlass: {
     borderTopLeftRadius: 24,

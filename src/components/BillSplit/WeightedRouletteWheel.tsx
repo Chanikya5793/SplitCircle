@@ -1,6 +1,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import { heavyHaptic, successHaptic } from '@/utils/haptics';
 import { resolveInitials } from '@/utils/identity';
+import { secureRandomFloat, secureRandomInt } from '@/utils/secureRandom';
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -30,16 +31,6 @@ const INNER_INNER_R = 50;
 
 // Center hub
 const HUB_R = 42;
-
-function cryptoRandom(): number {
-  const arr = new Uint32Array(1);
-  if (typeof globalThis.crypto?.getRandomValues === 'function') {
-    globalThis.crypto.getRandomValues(arr);
-  } else {
-    arr[0] = (Math.random() * 0xffffffff) >>> 0;
-  }
-  return arr[0] / 0x100000000;
-}
 
 // Same harmonised palette as the main roulette wheel — people get colour.
 export const OUTER_COLORS = [
@@ -100,7 +91,7 @@ export function generatePercentageOptions(remaining: number): number[] {
   // Fill with random values if we need more
   let attempts = 0;
   while (options.size < TARGET && attempts < 50) {
-    const val = 1 + Math.floor(Math.random() * remaining);
+    const val = 1 + secureRandomInt(remaining);
     options.add(val);
     attempts++;
   }
@@ -172,15 +163,15 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
 
           const segAngle = 360 / outerCount;
           const targetCenter = winnerIndex * segAngle + segAngle / 2;
-          const jitter = (cryptoRandom() - 0.5) * segAngle * 0.6;
+          const jitter = (secureRandomFloat() - 0.5) * segAngle * 0.6;
           const landing = 360 - targetCenter + jitter;
 
           cancelAnimation(outerRotation);
           outerRotation.value = 0;
 
-          const spins = (5 + Math.floor(cryptoRandom() * 5)) * 360;
+          const spins = (5 + secureRandomInt(5)) * 360;
           const target = spins + ((landing % 360) + 360) % 360;
-          const duration = 3000 + cryptoRandom() * 1500;
+          const duration = 3000 + secureRandomFloat() * 1500;
           const winnerId = included[winnerIndex].id;
 
           outerRotation.value = withTiming(
@@ -199,15 +190,15 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
 
           const segAngle = 360 / innerCount;
           const targetCenter = winnerIndex * segAngle + segAngle / 2;
-          const jitter = (cryptoRandom() - 0.5) * segAngle * 0.6;
+          const jitter = (secureRandomFloat() - 0.5) * segAngle * 0.6;
           const landing = 360 - targetCenter + jitter;
 
           cancelAnimation(innerRotation);
           innerRotation.value = 0;
 
-          const spins = (4 + Math.floor(cryptoRandom() * 4)) * 360;
+          const spins = (4 + secureRandomInt(4)) * 360;
           const target = spins + ((landing % 360) + 360) % 360;
-          const duration = 2500 + cryptoRandom() * 1500;
+          const duration = 2500 + secureRandomFloat() * 1500;
           const pct = percentages[winnerIndex];
 
           innerRotation.value = withTiming(
@@ -364,31 +355,37 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
           {/* Stationary hub — the spin button, showing what's up for grabs */}
           {(() => {
             const actionable = Boolean(onHubPress) && !disabled && (remainingPct ?? 100) > 0;
-            return (
-              <Pressable
-                onPress={actionable ? onHubPress : undefined}
-                disabled={!actionable}
-                accessibilityRole="button"
-                accessibilityLabel={actionable ? 'Spin the wheels' : undefined}
-                style={({ pressed }) => [
-                  s.hub,
-                  actionable
-                    ? { backgroundColor: theme.colors.primary, borderColor: 'rgba(255,255,255,0.25)' }
-                    : { backgroundColor: hubBg, borderColor: hubBorder },
-                  pressed && actionable && { transform: [{ scale: 0.94 }] },
-                ]}
-              >
-                <Text style={[s.hubLabel, { color: actionable ? 'rgba(255,255,255,0.85)' : theme.colors.onSurfaceVariant }]}>
+            const hubContent = (
+              <>
+                <Text style={[s.hubLabel, { color: actionable ? theme.colors.onPrimary : theme.colors.onSurfaceVariant }]}>
                   {actionable ? 'SPIN' : 'LEFT'}
                 </Text>
                 <Text
-                  style={[s.hubValue, { color: actionable ? '#FFFFFF' : theme.colors.onSurface }]}
+                  style={[s.hubValue, { color: actionable ? theme.colors.onPrimary : theme.colors.onSurface }]}
                   numberOfLines={1}
                   adjustsFontSizeToFit
                 >
                   {Math.max(0, remainingPct ?? 100)}%
                 </Text>
+              </>
+            );
+            return actionable ? (
+              <Pressable
+                onPress={onHubPress}
+                accessibilityRole="button"
+                accessibilityLabel="Spin the wheels"
+                style={({ pressed }) => [
+                  s.hub,
+                  { backgroundColor: theme.colors.primary, borderColor: 'rgba(255,255,255,0.25)' },
+                  pressed && { transform: [{ scale: 0.94 }] },
+                ]}
+              >
+                {hubContent}
               </Pressable>
+            ) : (
+              <View style={[s.hub, { backgroundColor: hubBg, borderColor: hubBorder }]}>
+                {hubContent}
+              </View>
             );
           })()}
         </View>

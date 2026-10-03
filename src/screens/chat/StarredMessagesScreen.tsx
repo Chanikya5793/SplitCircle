@@ -1,5 +1,6 @@
+import { EmptyState } from '@/components/ui/EmptyState';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GlassBackButton } from '@/components/ui';
+import { FloatingDetailHeader, floatingDetailHeaderHeight, GlassCard } from '@/components/ui';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -42,7 +43,7 @@ export const StarredMessagesScreen = () => {
   const route = useRoute();
   const params = (route.params as StarredScreenParams) ?? {};
   const insets = useSafeAreaInsets();
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
   const { isShielded: guardIsShielded, isLockedDown: guardIsLockedDown } = usePrivacyGuard();
   const starredShielded = guardIsShielded('chats');
   // Lock copy only outside duress — in the decoy world this reads as a
@@ -90,40 +91,19 @@ export const StarredMessagesScreen = () => {
     void load();
   }, [load]);
 
-  const surface = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
-
-  // Header sits below the status bar with extra breathing room so the title
-  // never crowds the back button or the device notch.
-  const HEADER_TOP_PAD = insets.top + 18;
-  const HEADER_HEIGHT = HEADER_TOP_PAD + 44 + 12; // top pad + button row + bottom pad
+  const headerHeight = floatingDetailHeaderHeight(insets.top);
 
   return (
     <LiquidBackground>
-      <View
-        style={[
-          styles.headerRow,
-          { paddingTop: HEADER_TOP_PAD },
-          { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' },
-        ]}
-      >
-        <View style={styles.headerBtn}>
-          <GlassBackButton />
-        </View>
-        <Text
-          numberOfLines={1}
-          style={[styles.titleText, { color: theme.colors.onSurface }]}
-        >
-          Starred messages
-        </Text>
-        <View style={styles.headerBtn} />
-      </View>
+      <FloatingDetailHeader title="Starred messages" />
 
       <FlatList
         data={starredShielded ? [] : items}
         keyExtractor={(item) => `${item.message.chatId}_${item.message.messageId || item.message.id}`}
-        contentContainerStyle={[styles.list, { paddingTop: HEADER_HEIGHT + 12 }]}
+        contentContainerStyle={[styles.list, { paddingTop: headerHeight + 12, paddingBottom: insets.bottom + 24 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={theme.colors.primary} />}
         ListEmptyComponent={
+          starredLocked ? (
           <View style={styles.empty}>
             <Ionicons name={starredLocked ? 'lock-closed-outline' : 'star-outline'} size={56} color={theme.colors.onSurfaceVariant} />
             <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>
@@ -133,10 +113,17 @@ export const StarredMessagesScreen = () => {
               {starredLocked ? 'Shake again or enter your code to reveal.' : 'Long-press a message and tap Star to keep it here.'}
             </Text>
           </View>
+          ) : (
+            <EmptyState
+              icon="star-outline"
+              title="No starred messages"
+              hint="Long-press a message and tap Star to keep it here."
+            />
+          )
         }
         renderItem={({ item }) => (
           <TouchableOpacity
-            style={[styles.card, { backgroundColor: surface }]}
+            style={styles.cardPress}
             activeOpacity={0.8}
             accessibilityRole="button"
             accessibilityLabel={`Open chat ${item.chatTitle}`}
@@ -148,6 +135,7 @@ export const StarredMessagesScreen = () => {
               })
             }
           >
+            <GlassCard style={styles.card} contentStyle={styles.cardContentWrap}>
             <View style={styles.cardHeaderRow}>
               <Text style={[styles.cardChat, { color: theme.colors.primary }]} numberOfLines={1}>
                 {item.chatTitle}
@@ -170,6 +158,7 @@ export const StarredMessagesScreen = () => {
                 {item.message.content || '(no text)'}
               </Text>
             </View>
+            </GlassCard>
           </TouchableOpacity>
         )}
       />
@@ -178,28 +167,18 @@ export const StarredMessagesScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  headerRow: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  titleText: { flex: 1, fontSize: 18, fontWeight: '700', textAlign: 'center' },
   list: { padding: 16, gap: 10 },
   empty: { alignItems: 'center', justifyContent: 'center', paddingTop: 64, paddingHorizontal: 32, gap: 8 },
   emptyTitle: { fontSize: 16, fontWeight: '700' },
   emptySub: { fontSize: 13, textAlign: 'center' },
+  cardPress: {
+    marginBottom: 10,
+  },
   card: {
     borderRadius: 14,
+  },
+  cardContentWrap: {
     padding: 12,
-    marginBottom: 10,
   },
   cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   cardChat: { fontSize: 13, fontWeight: '700', flex: 1, paddingRight: 8 },

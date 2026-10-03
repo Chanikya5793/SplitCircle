@@ -70,9 +70,9 @@ describe('route status', () => {
       false,
     );
     expect(rows.find((row) => row.id === 'ble')?.tone).toBe('warning');
-    expect(rows.find((row) => row.id === 'ble')?.detail).toMatch(/turn the radio on/);
+    expect(rows.find((row) => row.id === 'ble')?.detail).toBe('Turn Bluetooth on');
     expect(rows.find((row) => row.id === 'lan')?.tone).toBe('neutral');
-    expect(rows.find((row) => row.id === 'lan')?.detail).toMatch(/no phones found yet/);
+    expect(rows.find((row) => row.id === 'lan')?.detail).toBe('Ready. No phones found yet.');
   });
 
   it('says "needs permission" rather than "turn the radio on" when consent is missing', () => {
@@ -82,8 +82,8 @@ describe('route status', () => {
     // CBManager.authorization was exposed.
     const rows = describeRoutes({}, diagnostics({ needsPermission: { ble: true } }), true);
     const ble = rows.find((row) => row.id === 'ble');
-    expect(ble?.detail).toMatch(/[Nn]eeds permission/);
-    expect(ble?.detail).not.toMatch(/turn the radio on/);
+    expect(ble?.detail).toBe('Allow nearby device access in Settings');
+    expect(ble?.detail).not.toBe('Turn Bluetooth on');
     expect(ble?.tone).toBe('warning');
   });
 
@@ -95,7 +95,7 @@ describe('route status', () => {
       diagnostics({ available: { ble: false }, needsPermission: { ble: true } }),
       true,
     );
-    expect(rows.find((row) => row.id === 'ble')?.detail).toMatch(/[Nn]eeds permission/);
+    expect(rows.find((row) => row.id === 'ble')?.detail).toBe('Allow nearby device access in Settings');
   });
 
   it('still prefers CONNECTED over a stale permission flag', () => {
@@ -110,7 +110,7 @@ describe('route status', () => {
 
   it('tells Wi-Fi users to join a network, not to turn on a radio', () => {
     const rows = describeRoutes({}, diagnostics({ available: { lan: false } }), false);
-    expect(rows.find((row) => row.id === 'lan')?.detail).toMatch(/join a Wi-Fi network/);
+    expect(rows.find((row) => row.id === 'lan')?.detail).toBe('Join a Wi-Fi network on both phones');
   });
 
   it('calls a transport missing from the build neutral, not an error', () => {

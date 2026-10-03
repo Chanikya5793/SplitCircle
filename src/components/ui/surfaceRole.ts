@@ -11,12 +11,12 @@
  *                menus, dropdowns, autocompletes, circular icon buttons,
  *                sticky header pills, modals. These keep an opaque fill and a
  *                hairline in flat mode.
- *   'glass'    — a deliberate glass ACCENT, ignoring surfaceStyle entirely.
- *                Always renders the real material (native iOS 26 Liquid Glass
- *                via expo-glass-effect where available, BlurView otherwise) —
- *                the same path 'section'/'floating' only get in glass mode.
- *                For the small, named set of hero containers (2026-08-07:
- *                group header/balance, "who owes whom") that should read as
+ *   'glass'    - a deliberate material accent retained under Flat.
+ *                Reduce Transparency still replaces it with an opaque card.
+ *                Uses the native/blur/Android material branch; Flat still
+ *                resolves compact radii and opaque fallback tints.
+ *                For the named accents in DESIGN.md (group header, debts,
+ *                friend hero/balance and SegmentedControl) that should read as
  *                glass even in an otherwise borderless, no-card flat UI. Use
  *                sparingly — this is an accent, not the default treatment.
  *

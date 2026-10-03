@@ -15,6 +15,7 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { ScanningAnimation } from '@/components/ScanningAnimation';
 import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
+import { formatCurrency } from '@/utils/currency';
 import type { ReceiptInsights } from '@/models/expense';
 import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
 import { suggestCategoryOnDevice } from '@/services/onDeviceCategoryService';
@@ -39,6 +40,7 @@ import * as ImagePicker from 'expo-image-picker';
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Keyboard,
+    PanResponder,
     Platform,
     Pressable,
     ScrollView,
@@ -106,12 +108,15 @@ export interface ReceiptScannerResult {
 }
 
 interface ReceiptScannerSheetProps {
+  /** Ledger currency for presentation; scanning does not convert receipt amounts. */
+  currency: string;
   members?: ReceiptScannerSheetMember[];
   onComplete: (result: ReceiptScannerResult) => void;
   onCancel: () => void;
 }
 
 type ScanPhase = 'idle' | 'scanning' | 'processing' | 'parsing' | 'parsing_with_ai' | 'complete' | 'review';
+type ReceiptProcessingRoute = 'manual' | 'on_device_scan' | 'on_device_ai' | 'remote_service';
 
 type EditableReceiptItem = {
   id: string;
@@ -305,8 +310,6 @@ const extractItemsFromRawText = (rawText: string | null | undefined): Array<{ na
 
 // ── Subcomponents ─────────────────────────────────────────────────────────────
 
-const getItemConfidenceColor = (c: number) => c >= 0.8 ? '#4CAF50' : c >= 0.6 ? '#FF9800' : '#F44336';
-
 const checkConfigValid = (config: InlineSplitConfig | undefined, assignedList: string[], price?: number): boolean => {
   if (!config || config.mode === 'equal') return true;
   const mode = config.mode;
@@ -376,7 +379,9 @@ const GlobalSplitToggle = memo(({ title, price, config, members, theme, isExpand
         size={16} 
         iconColor={isExpanded ? theme.colors.primary : (!isValid ? theme.colors.error : theme.colors.onSurfaceVariant)}
         onPress={onToggleExpand}
-        style={{ margin: 0, backgroundColor: isExpanded ? `${theme.colors.primary}15` : 'transparent', width: 28, height: 28 }}
+        accessibilityLabel={isExpanded ? 'Hide item split details' : 'Show item split details'}
+        accessibilityState={{ expanded: isExpanded }}
+        style={{ margin: 0, backgroundColor: isExpanded ? `${theme.colors.primary}15` : 'transparent', width: 44, height: 44 }}
       />
       <Text variant="bodySmall" style={{ color: !isValid ? theme.colors.error : theme.colors.onSurfaceVariant }}>
         {activeMode === 'equal' ? `Split ${title} evenly` : (!isValid ? `Invalid custom ${title} split` : `Custom ${title} split`)}
@@ -385,7 +390,7 @@ const GlobalSplitToggle = memo(({ title, price, config, members, theme, isExpand
   );
 });
 
-const GlobalSplitPanel = memo(({ members, title, price, config, onUpdate, theme }: { members: ReceiptScannerSheetMember[], title: string, price: number, config: InlineSplitConfig | undefined, onUpdate: (c: InlineSplitConfig | undefined) => void, theme: any }) => {
+const GlobalSplitPanel = memo(({ members, title, price, config, onUpdate, theme, currency }: { currency: string, members: ReceiptScannerSheetMember[], title: string, price: number, config: InlineSplitConfig | undefined, onUpdate: (c: InlineSplitConfig | undefined) => void, theme: any }) => {
   const [editHistory, setEditHistory] = useState<string[]>([]);
   const [localInputs, setLocalInputs] = useState<Record<string, string>>({});
   const [focusedInput, setFocusedInput] = useState<string | null>(null);
@@ -452,8 +457,11 @@ const GlobalSplitPanel = memo(({ members, title, price, config, onUpdate, theme 
           <TouchableOpacity
             key={m}
             onPress={() => setMode(m)}
+            accessibilityRole="radio"
+            accessibilityLabel={`${m === 'percentage' ? 'Percentage' : m.charAt(0).toUpperCase() + m.slice(1)} split`}
+            accessibilityState={{ selected: activeMode === m }}
             style={{
-              flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8,
+              flex: 1, minHeight: 44, paddingVertical: 6, alignItems: 'center', justifyContent: 'center', borderRadius: 8,
               backgroundColor: activeMode === m ? theme.colors.primary : 'transparent',
               borderWidth: 1, borderColor: activeMode === m ? theme.colors.primary : theme.colors.outline,
             }}
@@ -476,7 +484,7 @@ const GlobalSplitPanel = memo(({ members, title, price, config, onUpdate, theme 
                  onFocus={() => { setTargetFocused(true); setLocalTargetShares(String(targetShares)); }}
                  onBlur={() => setTargetFocused(false)}
                  onChangeText={updateTargetSharesParam}
-                 style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
+                 style={{ width: 80, minHeight: 44, fontSize: 13, backgroundColor: 'transparent' }}
                  contentStyle={{ paddingHorizontal: 8 }}
                />
              </View>
@@ -493,8 +501,9 @@ const GlobalSplitPanel = memo(({ members, title, price, config, onUpdate, theme 
                 onFocus={() => { setFocusedInput(m.id); setLocalInputs(prev => ({ ...prev, [m.id]: String(config?.data?.[m.id] ?? '') })); }}
                 onBlur={() => setFocusedInput(null)}
                 onChangeText={v => updateSplitData(m.id, v)}
-                style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
-                left={activeMode === 'exact' ? <TextInput.Affix text="$" /> : undefined}
+                accessibilityLabel={`${m.name}, ${title}, ${activeMode === 'exact' ? `amount in ${currency}` : activeMode}`}
+                style={{ width: activeMode === 'exact' ? 120 : 80, minHeight: 44, fontSize: 13, backgroundColor: 'transparent' }}
+                left={activeMode === 'exact' ? <TextInput.Affix text={currency} /> : undefined}
                 right={activeMode === 'percentage' ? <TextInput.Affix text="%" /> : undefined}
                 contentStyle={{ paddingHorizontal: 8 }}
               />
@@ -507,6 +516,7 @@ const GlobalSplitPanel = memo(({ members, title, price, config, onUpdate, theme 
 });
 
 interface ItemCardProps {
+  currency: string;
   item: EditableReceiptItem;
   members: ReceiptScannerSheetMember[];
   theme: any;
@@ -522,7 +532,7 @@ interface ItemCardProps {
 }
 
 const ItemCard = memo(({ 
-  item, members, theme, isDark, isExpanded, onToggleExpand, onUpdateItem, onUpdateSplitConfig, onUpdateAssignedTo, onMarkReviewed, onDuplicateItem, onRemoveItem 
+  item, members, theme, isDark, currency, isExpanded, onToggleExpand, onUpdateItem, onUpdateSplitConfig, onUpdateAssignedTo, onMarkReviewed, onDuplicateItem, onRemoveItem
 }: ItemCardProps) => {
   const [editHistory, setEditHistory] = useState<string[]>([]);
   const [localInputs, setLocalInputs] = useState<Record<string, string>>({});
@@ -578,7 +588,7 @@ const ItemCard = memo(({
       styles.itemRow,
       {
         flexDirection: 'column',
-        borderColor: item.reviewed ? `${theme.colors.outline}20` : '#FF950060',
+        borderColor: item.reviewed ? `${theme.colors.outline}20` : `${theme.colors.warning}60`,
         backgroundColor: item.reviewed
           ? (isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
           : (isDark ? 'rgba(255,149,0,0.08)' : 'rgba(255,149,0,0.05)'),
@@ -589,8 +599,12 @@ const ItemCard = memo(({
       <View style={[
         styles.confidenceDot,
         {
-          backgroundColor: getItemConfidenceColor(item.confidence),
-          shadowColor: item.confidence < LOW_CONFIDENCE_THRESHOLD ? '#FF9500' : 'transparent',
+          backgroundColor: item.confidence >= 0.8
+            ? theme.colors.success
+            : item.confidence >= 0.6
+              ? theme.colors.warning
+              : theme.colors.danger,
+          shadowColor: item.confidence < LOW_CONFIDENCE_THRESHOLD ? theme.colors.warning : 'transparent',
           shadowOpacity: item.confidence < LOW_CONFIDENCE_THRESHOLD ? 0.6 : 0,
           shadowRadius: 4,
           shadowOffset: { width: 0, height: 0 },
@@ -599,6 +613,7 @@ const ItemCard = memo(({
       <TextInput
         mode="flat"
         placeholder="Item name"
+        accessibilityLabel="Receipt item name"
         value={item.name}
         onChangeText={(v) => onUpdateItem(item.id, 'name', v)}
         style={[styles.itemNameInput, { backgroundColor: 'transparent' }]}
@@ -614,6 +629,7 @@ const ItemCard = memo(({
         mode="flat"
         placeholder="0.00"
         value={item.price}
+        accessibilityLabel={`${item.name || "Receipt item"}, price in ${currency}`}
         onChangeText={(v) => onUpdateItem(item.id, 'price', v)}
         keyboardType="decimal-pad"
         style={[styles.itemPriceInput, { backgroundColor: 'transparent' }]}
@@ -621,7 +637,7 @@ const ItemCard = memo(({
         placeholderTextColor={`${theme.colors.onSurfaceVariant}90`}
         underlineColor="transparent"
         activeUnderlineColor={theme.colors.primary}
-        left={<TextInput.Affix text="$" />}
+        left={<TextInput.Affix text={currency} />}
         blurOnSubmit
         dense
       />
@@ -632,6 +648,7 @@ const ItemCard = memo(({
             size={18}
             iconColor={theme.colors.primary}
             onPress={() => onMarkReviewed(item.id)}
+            accessibilityLabel={`Mark ${item.name || 'receipt item'} as reviewed`}
             style={styles.reviewBtn}
           />
         )}
@@ -640,6 +657,7 @@ const ItemCard = memo(({
           size={18}
           iconColor={theme.colors.onSurfaceVariant}
           onPress={() => onDuplicateItem(item.id)}
+          accessibilityLabel={`Duplicate ${item.name || 'receipt item'}`}
           style={styles.removeBtn}
         />
         <IconButton
@@ -647,6 +665,7 @@ const ItemCard = memo(({
           size={18}
           iconColor={`${theme.colors.error}B0`}
           onPress={() => onRemoveItem(item.id)}
+          accessibilityLabel={`Remove ${item.name || 'receipt item'}`}
           style={styles.removeBtn}
         />
       </View>
@@ -659,7 +678,9 @@ const ItemCard = memo(({
         size={20} 
         iconColor={isExpanded ? theme.colors.primary : (!isValid ? theme.colors.error : theme.colors.onSurfaceVariant)}
         onPress={onToggleExpand}
-        style={{ margin: 0, backgroundColor: isExpanded ? `${theme.colors.primary}15` : 'transparent' }}
+        accessibilityLabel={isExpanded ? `Hide assignments for ${item.name || 'receipt item'}` : `Show assignments for ${item.name || 'receipt item'}`}
+        accessibilityState={{ expanded: isExpanded }}
+        style={{ margin: 0, width: 44, height: 44, backgroundColor: isExpanded ? `${theme.colors.primary}15` : 'transparent' }}
       />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
         {members.map(m => {
@@ -669,8 +690,11 @@ const ItemCard = memo(({
               key={m.id} 
               onPress={() => toggleAssignee(m.id)}
               activeOpacity={0.7}
+              accessibilityRole="checkbox"
+              accessibilityLabel={`Assign item to ${m.name}`}
+              accessibilityState={{ checked: isAssigned }}
               style={{
-                width: 28, height: 28, borderRadius: 14,
+                width: 44, height: 44, borderRadius: 22,
                 backgroundColor: isAssigned ? theme.colors.primary : theme.colors.surfaceVariant,
                 alignItems: 'center', justifyContent: 'center',
                 borderWidth: isAssigned ? 0 : 1, borderColor: theme.colors.outline,
@@ -694,8 +718,11 @@ const ItemCard = memo(({
             <TouchableOpacity
               key={m}
               onPress={() => setMode(m)}
+              accessibilityRole="radio"
+              accessibilityLabel={`${m === 'percentage' ? 'Percentage' : m.charAt(0).toUpperCase() + m.slice(1)} split`}
+              accessibilityState={{ selected: activeMode === m }}
               style={{
-                flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8,
+                flex: 1, minHeight: 44, paddingVertical: 6, alignItems: 'center', justifyContent: 'center', borderRadius: 8,
                 backgroundColor: activeMode === m ? theme.colors.primary : 'transparent',
                 borderWidth: 1, borderColor: activeMode === m ? theme.colors.primary : theme.colors.outline,
               }}
@@ -718,7 +745,7 @@ const ItemCard = memo(({
                      onFocus={() => { setTargetFocused(true); setLocalTargetShares(String(targetShares)); }}
                      onBlur={() => setTargetFocused(false)}
                      onChangeText={updateTargetSharesParam}
-                     style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
+                     style={{ width: 80, minHeight: 44, fontSize: 13, backgroundColor: 'transparent' }}
                      contentStyle={{ paddingHorizontal: 8 }}
                    />
                  </View>
@@ -735,8 +762,9 @@ const ItemCard = memo(({
                   onFocus={() => { setFocusedInput(m.id); setLocalInputs(prev => ({ ...prev, [m.id]: String(item.splitConfig?.data?.[m.id] ?? '') })); }}
                   onBlur={() => setFocusedInput(null)}
                   onChangeText={v => updateSplitData(m.id, v)}
-                  style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
-                  left={activeMode === 'exact' ? <TextInput.Affix text="$" /> : undefined}
+                  accessibilityLabel={`${m.name}, ${item.name}, ${activeMode === 'exact' ? `amount in ${currency}` : activeMode}`}
+                  style={{ width: activeMode === 'exact' ? 120 : 80, minHeight: 44, fontSize: 13, backgroundColor: 'transparent' }}
+                  left={activeMode === 'exact' ? <TextInput.Affix text={currency} /> : undefined}
                   right={activeMode === 'percentage' ? <TextInput.Affix text="%" /> : undefined}
                   contentStyle={{ paddingHorizontal: 8 }}
                 />
@@ -753,6 +781,7 @@ const ItemCard = memo(({
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export const ReceiptScannerSheet = ({
+  currency,
   members = [],
   onComplete,
   onCancel,
@@ -783,6 +812,7 @@ export const ReceiptScannerSheet = ({
   const [headerTapCount, setHeaderTapCount] = useState(0);
   const [scannedBaselineItems, setScannedBaselineItems] = useState<LearningScannedItem[]>([]);
   const [strictReviewMode, setStrictReviewModeState] = useState(false);
+  const [processingRoute, setProcessingRoute] = useState<ReceiptProcessingRoute>('manual');
 
   // Computed values
   const itemsSubtotal = useMemo(
@@ -866,6 +896,7 @@ export const ReceiptScannerSheet = ({
   }, []);
 
   const populateFromVisionKit = useCallback(async (result: NonNullable<Awaited<ReturnType<typeof scanReceiptWithVisionKit>>>) => {
+    setProcessingRoute('on_device_scan');
     const normalizedMerchant = normalizeScannedMerchantName(result.merchantName, result.merchantConfidence);
     setImageUri(result.imageUri || null);
     setMerchantName(normalizedMerchant);
@@ -974,6 +1005,7 @@ export const ReceiptScannerSheet = ({
         const parsed = await parseReceiptOnDevice(result.rawText, result.merchantName);
 
         if (parsed.items.length > 0 || parsed.total != null) {
+          setProcessingRoute('on_device_ai');
           setPhase('complete');
           setScanMessage(`Found ${parsed.items.length} items!`);
           setScanItemCount(parsed.items.length);
@@ -1064,9 +1096,10 @@ export const ReceiptScannerSheet = ({
           }, 1200);
         }
       } catch (error: any) {
+        console.warn('[ReceiptScanner] Scan failed:', error);
         setPhase('idle');
         setScanMessage('Ready to scan');
-        appAlert('Scan Error', error.message || 'Failed to scan receipt');
+        appAlert('Couldn’t scan receipt', 'Try again with the full receipt in clear, even lighting.');
       }
     } else {
       // Android / fallback — use camera + backend OCR
@@ -1121,6 +1154,7 @@ export const ReceiptScannerSheet = ({
     const ocrEndpoint = process.env.EXPO_PUBLIC_OCR_PROXY_ENDPOINT;
     if (!ocrEndpoint) {
       // No OCR service available — go straight to manual review with photo attached
+      setProcessingRoute('manual');
       setPhase('review');
       return;
     }
@@ -1129,6 +1163,7 @@ export const ReceiptScannerSheet = ({
       const ocrResult = await extractReceiptData(uri);
 
       if (ocrResult.success && ocrResult.parsedData) {
+        setProcessingRoute('remote_service');
         mediumHaptic();
 
         if (ocrResult.parsedData.items && ocrResult.parsedData.items.length > 0) {
@@ -1172,10 +1207,12 @@ export const ReceiptScannerSheet = ({
         setTimeout(() => setPhase('review'), 1200);
       } else {
         // OCR returned but couldn't parse — go to manual review
+        setProcessingRoute('manual');
         setPhase('review');
       }
     } catch (error) {
       // OCR failed — still let user add items manually with photo attached
+      setProcessingRoute('manual');
       setPhase('review');
     }
   };
@@ -1256,7 +1293,7 @@ export const ReceiptScannerSheet = ({
     if (lowConfidenceCount > 0) {
       if (strictReviewMode) {
         appAlert(
-          'Strict Review Enabled',
+          'Review required',
           `Review all ${lowConfidenceCount} low-confidence item${lowConfidenceCount > 1 ? 's' : ''} before confirming.`,
           [{ text: 'OK' }],
         );
@@ -1264,11 +1301,11 @@ export const ReceiptScannerSheet = ({
       }
 
       appAlert(
-        'Review Needed',
+        'Review needed',
         `${lowConfidenceCount} low-confidence item${lowConfidenceCount > 1 ? 's are' : ' is'} still unreviewed.`,
         [
-          { text: 'Continue Anyway', style: 'destructive', onPress: () => finalizeConfirmation() },
-          { text: 'Review First', style: 'cancel' },
+          { text: 'Continue anyway', style: 'destructive', onPress: () => finalizeConfirmation() },
+          { text: 'Review first', style: 'cancel' },
         ],
       );
       return;
@@ -1326,9 +1363,51 @@ export const ReceiptScannerSheet = ({
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  const processingDisclosure = processingRoute === 'on_device_ai'
+    ? {
+        badge: 'Apple Intelligence',
+        detail: 'Processed on this device with Apple Intelligence. Check the draft and correct any misreads.',
+        success: true,
+      }
+    : processingRoute === 'on_device_scan'
+      ? {
+          badge: 'On-device scan',
+          detail: 'Processed on this device. Check the draft and correct any misreads.',
+          success: true,
+        }
+      : processingRoute === 'remote_service'
+        ? {
+            badge: 'Online extraction',
+            detail: 'Sent to the configured receipt service for extraction. Check the draft and correct any misreads.',
+            success: false,
+          }
+        : {
+            badge: 'Manual entry',
+            detail: 'No automatic extraction was used. Add or review each item before saving.',
+            success: false,
+          };
+
+  const dismissResponder = PanResponder.create({
+    onMoveShouldSetPanResponderCapture: (_, gesture) => {
+      const downwardFromHeader = gesture.y0 < 110
+        && gesture.dy > 18
+        && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.3;
+      const fromLeftEdge = gesture.x0 < 28
+        && gesture.dx > 18
+        && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.3;
+      return downwardFromHeader || fromLeftEdge;
+    },
+    onPanResponderRelease: (_, gesture) => {
+      const dismissDown = gesture.y0 < 110 && (gesture.dy > 110 || gesture.vy > 1);
+      const dismissBack = gesture.x0 < 28 && (gesture.dx > 90 || gesture.vx > 0.9);
+      if (dismissDown || dismissBack) onCancel();
+    },
+  });
+
   return (
     <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
       <LiquidBackground>
+        <View style={styles.dismissSurface} {...dismissResponder.panHandlers}>
         {phase === 'idle' && (
           <View style={styles.container}>
             <GlassView style={styles.card} contentStyle={{ gap: 8 }}>
@@ -1339,6 +1418,7 @@ export const ReceiptScannerSheet = ({
                 size={24}
                 onPress={onCancel}
                 iconColor={theme.colors.onSurfaceVariant}
+                accessibilityLabel="Close receipt scanner"
               />
               <Text
                 variant="titleLarge"
@@ -1364,22 +1444,22 @@ export const ReceiptScannerSheet = ({
                 variant="headlineSmall"
                 style={[styles.idleTitle, { color: theme.colors.onSurface }]}
               >
-                Smart Receipt Scanner
+                Receipt scanner
               </Text>
 
               <Text
                 variant="bodyMedium"
                 style={[styles.idleSubtitle, { color: theme.colors.onSurfaceVariant }]}
               >
-                Take a clear photo of your receipt and we'll automatically extract all items, tax, tip, and total for you.
+                Take a clear photo to create an editable draft of the items, tax, tip, and total.
               </Text>
 
               {/* Feature pills */}
               <View style={styles.featurePills}>
                 {[
-                  { icon: 'flash', label: 'Instant scan' },
-                  { icon: 'shield-check', label: 'On-device' },
-                  { icon: 'format-list-checks', label: 'Auto-itemize' },
+                  { icon: 'flash', label: 'Quick capture' },
+                  { icon: 'shield-check', label: 'Review first' },
+                  { icon: 'format-list-checks', label: 'Item draft' },
                 ].map((f) => (
                   <View
                     key={f.label}
@@ -1397,9 +1477,9 @@ export const ReceiptScannerSheet = ({
               </View>
 
               <View style={[styles.mismatchBanner, { backgroundColor: isDark ? 'rgba(255,150,0,0.12)' : 'rgba(255,140,0,0.08)', marginHorizontal: 20, marginTop: 24 }]}>
-                <Icon source="shield-alert-outline" size={20} color="#FF9500" />
+                <Icon source="shield-alert-outline" size={20} color={theme.colors.warning} />
                 <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1, lineHeight: 18 }}>
-                  Scanned securely on-device. Auto-extraction may contain errors—please cross-check and correct items if required.
+                  Scanning creates a draft. Check every item and amount before saving.
                 </Text>
               </View>
             </View>
@@ -1438,7 +1518,7 @@ export const ReceiptScannerSheet = ({
               imageUri={imageUri || undefined}
             />
             <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center', marginTop: 32, paddingHorizontal: 32, opacity: 0.8, lineHeight: 18 }}>
-              Processing securely on-device. Please be ready to review and correct any potential misreads.
+              Creating an editable draft. Check every item and amount before saving.
             </Text>
           </View>
         )}
@@ -1446,7 +1526,7 @@ export const ReceiptScannerSheet = ({
         {/* Review phase — editable item list */}
         {phase === 'review' && (
           <View style={{ flex: 1 }}>
-            <Pressable style={styles.container} onPress={Keyboard.dismiss}>
+            <Pressable style={styles.container} onPress={Keyboard.dismiss} accessible={false}>
               <GlassView style={styles.reviewCard} contentStyle={{ flex: 1 }}>
               {/* Header */}
               <View style={styles.header}>
@@ -1455,17 +1535,26 @@ export const ReceiptScannerSheet = ({
                   size={24}
                   onPress={onCancel}
                   iconColor={theme.colors.onSurfaceVariant}
+                  accessibilityLabel="Back to receipt scanner"
                 />
-                <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }} activeOpacity={0.8} onPress={handleHeaderTap}>
+                <TouchableOpacity
+                  style={styles.reviewHeaderTitle}
+                  activeOpacity={__DEV__ ? 0.8 : 1}
+                  onPress={handleHeaderTap}
+                  disabled={!__DEV__}
+                  accessible={__DEV__}
+                  accessibilityRole={__DEV__ ? 'button' : undefined}
+                  accessibilityLabel={__DEV__ ? 'Toggle receipt parser details' : undefined}
+                >
                   <Text
                     variant="titleLarge"
                     style={[styles.headerTitle, { color: theme.colors.onSurface }]}
                   >
-                    Review Items
+                    Review items
                   </Text>
-                  <View style={[styles.aiBadge, { backgroundColor: useAI ? 'rgba(76, 175, 80, 0.15)' : 'rgba(158, 158, 158, 0.12)' }]}>
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: useAI ? '#4CAF50' : theme.colors.onSurfaceVariant }}>
-                      {useAI ? '🤖 AI Enhanced' : '📱 On-Device Only'}
+                  <View style={[styles.aiBadge, { backgroundColor: processingDisclosure.success ? `${theme.colors.success}26` : `${theme.colors.onSurfaceVariant}1F` }]}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: processingDisclosure.success ? theme.colors.success : theme.colors.onSurfaceVariant }}>
+                      {processingDisclosure.badge}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -1486,6 +1575,7 @@ export const ReceiptScannerSheet = ({
                     setScannedBaselineItems([]);
                   }}
                   iconColor={theme.colors.onSurfaceVariant}
+                  accessibilityLabel="Scan receipt again"
                 />
               </View>
 
@@ -1499,9 +1589,9 @@ export const ReceiptScannerSheet = ({
                 bottomOffset={40}
               >
                 <View style={[styles.mismatchBanner, { backgroundColor: isDark ? 'rgba(255,150,0,0.12)' : 'rgba(255,140,0,0.08)', marginBottom: 16, marginTop: 0 }]}>
-                  <Icon source="shield-alert-outline" size={18} color="#FF9500" />
+                  <Icon source="shield-alert-outline" size={18} color={theme.colors.warning} />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, flex: 1, lineHeight: 18 }}>
-                    {useAI ? "Processed entirely on-device with Apple Intelligence. Please cross-check and correct any misreads below." : "Processed completely on-device! Please cross-check and correct any OCR misreads below."}
+                    {processingDisclosure.detail}
                   </Text>
                 </View>
 
@@ -1541,16 +1631,21 @@ export const ReceiptScannerSheet = ({
                   )}
                   {lowConfidenceCount > 0 && (
                     <View style={[styles.reviewBadge, { backgroundColor: isDark ? 'rgba(255,149,0,0.14)' : 'rgba(255,149,0,0.12)' }]}>
-                      <Icon source="alert-circle-outline" size={14} color="#FF9500" />
-                      <Text variant="labelSmall" style={{ color: '#FF9500', fontWeight: '700' }}>
+                      <Icon source="alert-circle-outline" size={14} color={theme.colors.warning} />
+                      <Text variant="labelSmall" style={{ color: theme.colors.warning, fontWeight: '700' }}>
                         Review {lowConfidenceCount}
                       </Text>
                     </View>
                   )}
-                  <TouchableOpacity onPress={handleAddItem} style={styles.addItemBtn}>
+                  <TouchableOpacity
+                    onPress={handleAddItem}
+                    style={styles.addItemBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel="Add receipt item"
+                  >
                     <Icon source="plus-circle" size={18} color={theme.colors.primary} />
                     <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>
-                      Add Item
+                      Add item
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -1560,6 +1655,7 @@ export const ReceiptScannerSheet = ({
                   <View style={styles.itemListContainer}>
                     {orderedItems.map((item) => (
                       <ItemCard
+                        currency={currency}
                         key={item.id}
                         item={item}
                         members={members}
@@ -1580,6 +1676,8 @@ export const ReceiptScannerSheet = ({
                   <TouchableOpacity
                     onPress={handleAddItem}
                     style={[styles.emptyState, { borderColor: `${theme.colors.outline}30` }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Add the first receipt item"
                   >
                     <Icon source="plus-circle-outline" size={32} color={theme.colors.onSurfaceVariant} />
                     <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -1605,23 +1703,23 @@ export const ReceiptScannerSheet = ({
 
                     <View style={styles.histogramContainer}>
                       <View style={styles.histogramRow}>
-                        <Text variant="labelSmall" style={[styles.histogramLabel, { color: '#F44336' }]}>Low</Text>
+                        <Text variant="labelSmall" style={[styles.histogramLabel, { color: theme.colors.danger }]}>Low</Text>
                         <View style={[styles.histogramTrack, { backgroundColor: `${theme.colors.onSurface}18` }]}>
-                          <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.low / confidenceStats.total) * 100 : 0}%`, backgroundColor: '#F44336' }]} />
+                          <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.low / confidenceStats.total) * 100 : 0}%`, backgroundColor: theme.colors.danger }]} />
                         </View>
                         <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>{confidenceStats.low}</Text>
                       </View>
                       <View style={styles.histogramRow}>
-                        <Text variant="labelSmall" style={[styles.histogramLabel, { color: '#FF9800' }]}>Med</Text>
+                        <Text variant="labelSmall" style={[styles.histogramLabel, { color: theme.colors.warning }]}>Med</Text>
                         <View style={[styles.histogramTrack, { backgroundColor: `${theme.colors.onSurface}18` }]}>
-                          <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.medium / confidenceStats.total) * 100 : 0}%`, backgroundColor: '#FF9800' }]} />
+                          <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.medium / confidenceStats.total) * 100 : 0}%`, backgroundColor: theme.colors.warning }]} />
                         </View>
                         <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>{confidenceStats.medium}</Text>
                       </View>
                       <View style={styles.histogramRow}>
-                        <Text variant="labelSmall" style={[styles.histogramLabel, { color: '#4CAF50' }]}>High</Text>
+                        <Text variant="labelSmall" style={[styles.histogramLabel, { color: theme.colors.success }]}>High</Text>
                         <View style={[styles.histogramTrack, { backgroundColor: `${theme.colors.onSurface}18` }]}>
-                          <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.high / confidenceStats.total) * 100 : 0}%`, backgroundColor: '#4CAF50' }]} />
+                          <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.high / confidenceStats.total) * 100 : 0}%`, backgroundColor: theme.colors.success }]} />
                         </View>
                         <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>{confidenceStats.high}</Text>
                       </View>
@@ -1643,6 +1741,10 @@ export const ReceiptScannerSheet = ({
                   </View>
                 )}
 
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                  Amounts are entered in {currency}. Check that the receipt uses the same currency; scanning does not convert amounts.
+                </Text>
+
                 {/* Summary section */}
                 <View style={[styles.summarySection, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)', borderColor: `${theme.colors.outline}15` }]}>
                   {/* Subtotal line */}
@@ -1652,7 +1754,7 @@ export const ReceiptScannerSheet = ({
                         Items subtotal
                       </Text>
                       <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                        ${itemsSubtotal.toFixed(2)}
+                        {formatCurrency(itemsSubtotal, currency)}
                       </Text>
                     </View>
                   )}
@@ -1663,21 +1765,21 @@ export const ReceiptScannerSheet = ({
                   <View style={{ flexDirection: 'row', gap: 12 }}>
                     <View style={{ flex: 1 }}>
                       <FloatingLabelInput
-                        label="Tax"
+                        label={`Tax (${currency})`}
                         value={tax}
                         onChangeText={setTax}
                         keyboardType="decimal-pad"
-                        left={<TextInput.Affix text="$" />}
+                        left={<TextInput.Affix text={currency} />}
                       />
                       <GlobalSplitToggle title="tax" price={parseFloat(tax) || 0} config={taxSplitConfig} members={members} theme={theme} isExpanded={expandedPanelId === 'tax'} onToggleExpand={() => setExpandedPanelId(prev => prev === 'tax' ? null : 'tax')} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <FloatingLabelInput
-                        label="Tip"
+                        label={`Tip (${currency})`}
                         value={tip}
                         onChangeText={setTip}
                         keyboardType="decimal-pad"
-                        left={<TextInput.Affix text="$" />}
+                        left={<TextInput.Affix text={currency} />}
                       />
                       <GlobalSplitToggle title="tip" price={parseFloat(tip) || 0} config={tipSplitConfig} members={members} theme={theme} isExpanded={expandedPanelId === 'tip'} onToggleExpand={() => setExpandedPanelId(prev => prev === 'tip' ? null : 'tip')} />
                     </View>
@@ -1685,10 +1787,10 @@ export const ReceiptScannerSheet = ({
 
                   {/* Expanded Global Options Panel */}
                   {expandedPanelId === 'tax' && (
-                     <GlobalSplitPanel title="tax" price={parseFloat(tax) || 0} config={taxSplitConfig} onUpdate={setTaxSplitConfig} members={members} theme={theme} />
+                     <GlobalSplitPanel currency={currency} title="tax" price={parseFloat(tax) || 0} config={taxSplitConfig} onUpdate={setTaxSplitConfig} members={members} theme={theme} />
                   )}
                   {expandedPanelId === 'tip' && (
-                     <GlobalSplitPanel title="tip" price={parseFloat(tip) || 0} config={tipSplitConfig} onUpdate={setTipSplitConfig} members={members} theme={theme} />
+                     <GlobalSplitPanel currency={currency} title="tip" price={parseFloat(tip) || 0} config={tipSplitConfig} onUpdate={setTipSplitConfig} members={members} theme={theme} />
                   )}
 
                   <Divider style={{ backgroundColor: `${theme.colors.outline}15`, marginVertical: 6 }} />
@@ -1699,7 +1801,7 @@ export const ReceiptScannerSheet = ({
                       Calculated Total
                     </Text>
                     <Text variant="titleLarge" style={{ color: theme.colors.primary, fontWeight: '800', fontSize: 22 }}>
-                      ${calculatedTotal.toFixed(2)}
+                      {formatCurrency(calculatedTotal, currency)}
                     </Text>
                   </View>
 
@@ -1710,9 +1812,9 @@ export const ReceiptScannerSheet = ({
                         { backgroundColor: isDark ? 'rgba(255,180,0,0.12)' : 'rgba(255,150,0,0.08)' },
                       ]}
                     >
-                      <Icon source="alert-circle-outline" size={16} color="#FF9500" />
-                      <Text variant="labelSmall" style={{ color: '#FF9500', flex: 1 }}>
-                        Scanned total (${scannedTotal.toFixed(2)}) differs from items + tax + tip (${calculatedTotal.toFixed(2)})
+                      <Icon source="alert-circle-outline" size={16} color={theme.colors.warning} />
+                      <Text variant="labelSmall" style={{ color: theme.colors.warning, flex: 1 }}>
+                        Scanned total ({formatCurrency(scannedTotal, currency)}) differs from items + tax + tip ({formatCurrency(calculatedTotal, currency)})
                       </Text>
                     </View>
                   )}
@@ -1745,7 +1847,7 @@ export const ReceiptScannerSheet = ({
                       !checkConfigValid(tipSplitConfig, tipSplitConfig?.data ? Object.keys(tipSplitConfig.data).filter(k => k !== '_target') : members.map(m => m.id), parseFloat(tip) || 0)
                     }
                   >
-                    Use These Items
+                    Use these items
                   </Button>
                 </View>
               </KeyboardAwareScrollView>
@@ -1753,6 +1855,7 @@ export const ReceiptScannerSheet = ({
             </Pressable>
           </View>
         )}
+        </View>
       </LiquidBackground>
     </KeyboardProvider>
   );
@@ -1761,6 +1864,9 @@ export const ReceiptScannerSheet = ({
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  dismissSurface: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     padding: 12,
@@ -1787,6 +1893,13 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
     fontWeight: '700',
+  },
+  reviewHeaderTitle: {
+    flex: 1,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   aiBadge: {
     paddingHorizontal: 8,
@@ -1867,7 +1980,9 @@ const styles = StyleSheet.create({
   addItemBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 4,
+    minHeight: 44,
     paddingVertical: 4,
     paddingHorizontal: 8,
   },
@@ -1893,12 +2008,12 @@ const styles = StyleSheet.create({
   itemNameInput: {
     flex: 2,
     fontSize: 14,
-    height: 38,
+    minHeight: 44,
   },
   itemPriceInput: {
     flex: 1,
     fontSize: 14,
-    height: 38,
+    minHeight: 44,
     textAlign: 'right',
   },
   itemActions: {
@@ -1908,11 +2023,13 @@ const styles = StyleSheet.create({
   },
   removeBtn: {
     margin: 0,
-    marginLeft: -4,
+    width: 44,
+    height: 44,
   },
   reviewBtn: {
     margin: 0,
-    marginRight: -4,
+    width: 44,
+    height: 44,
   },
   reviewBadge: {
     flexDirection: 'row',
@@ -2029,4 +2146,3 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
 });
-

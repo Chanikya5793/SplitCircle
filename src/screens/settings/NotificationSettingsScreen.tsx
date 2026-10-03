@@ -32,18 +32,8 @@ const formatTimestamp = (value: number | null): string => {
 };
 
 const getErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message.trim();
-  }
-
-  if (typeof error === 'object' && error !== null && 'message' in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === 'string' && message.trim().length > 0) {
-      return message.trim();
-    }
-  }
-
-  return 'Something went wrong while updating notifications.';
+  console.warn('[NotificationSettings] Operation failed:', error);
+  return 'Check your connection and try again.';
 };
 
 const StatusPill = ({
@@ -58,7 +48,7 @@ const StatusPill = ({
   textColor: string;
 }) => (
   <View style={[styles.statusPill, { borderColor: `${color}66`, backgroundColor: `${color}14` }]}>
-    <Text variant="labelSmall" style={[styles.statusPillLabel, { color }]}>
+    <Text variant="labelSmall" style={[styles.statusPillLabel, { color: textColor }]}>
       {label}
     </Text>
     <Text variant="bodySmall" style={[styles.statusPillValue, { color: textColor }]}>
@@ -85,24 +75,27 @@ const ToggleRow = ({
   iconColor,
   disabled,
   onValueChange,
-}: ToggleRowProps) => (
-  <List.Item
+}: ToggleRowProps) => {
+  const { theme } = useTheme();
+  return <List.Item
     title={title}
     description={description}
-    titleStyle={disabled ? styles.disabledText : undefined}
-    descriptionStyle={disabled ? styles.disabledText : undefined}
-    left={() => <List.Icon icon={icon} color={disabled ? '#6B7280' : iconColor} />}
+    onPress={disabled ? undefined : () => { void onValueChange(!value); }}
+    accessibilityRole="switch"
+    accessibilityLabel={title}
+    accessibilityHint={description}
+    accessibilityState={{ checked: value, disabled: !!disabled }}
+    style={styles.toggleRow}
+    titleStyle={disabled ? { color: theme.colors.onSurfaceVariant } : undefined}
+    descriptionStyle={disabled ? { color: theme.colors.muted } : undefined}
+    left={() => <List.Icon icon={icon} color={disabled ? theme.colors.muted : iconColor} />}
     right={() => (
-      <Switch
-        value={value}
-        disabled={disabled}
-        onValueChange={(nextValue) => {
-          void onValueChange(nextValue);
-        }}
-      />
+      <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <Switch value={value} disabled={disabled} />
+      </View>
     )}
-  />
-);
+  />;
+};
 
 export const NotificationSettingsScreen = () => {
   const navigation = useNavigation();
@@ -132,6 +125,7 @@ export const NotificationSettingsScreen = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSendingRemoteTest, setIsSendingRemoteTest] = useState(false);
   const [isSendingLocalTest, setIsSendingLocalTest] = useState(false);
+  const [supportDetailsExpanded, setSupportDetailsExpanded] = useState(false);
   // Persistent call-debug ledger viewer. null = collapsed (not loaded yet).
   const [callDebugText, setCallDebugText] = useState<string | null>(null);
   const [callDebugCount, setCallDebugCount] = useState(0);
@@ -246,17 +240,17 @@ export const NotificationSettingsScreen = () => {
   const deliveryStatusLabel = useMemo(() => {
     switch (currentDevice?.registrationStatus) {
       case 'active':
-        return 'Registered';
+        return 'Ready';
       case 'invalid_token':
-        return 'Token Invalid';
+        return 'Needs Attention';
       case 'permission_blocked':
-        return 'Waiting on iPhone';
+        return 'Allow in Settings';
       case 'signed_out':
-        return 'Signed Out';
+        return 'Sign In Required';
       case 'token_missing':
-        return 'Not Registered';
+        return 'Finishing Setup';
       case 'error':
-        return 'Registration Error';
+        return 'Setup Needs Attention';
       default:
         return 'Checking';
     }
@@ -278,12 +272,11 @@ export const NotificationSettingsScreen = () => {
     }
 
     if (!currentDevice) {
-      return 'This device has not synced its registration record yet.';
+      return 'ManaSplit is still preparing notifications on this device.';
     }
 
     if (!pushToken || currentDevice.registrationStatus !== 'active') {
-      return currentDevice.lastRegistrationError
-        ?? 'This device does not have an active Expo push token yet. Refresh this device first.';
+      return 'Notifications are not ready on this device yet. Refresh this device and try again.';
     }
 
     return null;
@@ -300,7 +293,7 @@ export const NotificationSettingsScreen = () => {
         title: 'Notifications are blocked by iPhone settings',
         description:
           'ManaSplit cannot deliver push notifications until notifications are allowed in Settings for this device.',
-        accent: '#EF4444',
+        accent: theme.colors.danger,
       };
     }
 
@@ -309,16 +302,16 @@ export const NotificationSettingsScreen = () => {
         title: 'Notifications are off in ManaSplit',
         description:
           'iPhone permission may already be available, but this account is currently opted out inside the app.',
-        accent: '#F59E0B',
+        accent: theme.colors.warning,
       };
     }
 
     if (currentDevice?.registrationStatus === 'invalid_token') {
       return {
-        title: 'This device needs to refresh its push token',
+        title: 'Notifications need attention',
         description:
-          'Delivery failed after registration. Refreshing registration should replace the invalid token on the server.',
-        accent: '#F97316',
+          'Refresh this device to restore notification delivery.',
+        accent: theme.colors.warning,
       };
     }
 
@@ -327,24 +320,24 @@ export const NotificationSettingsScreen = () => {
         title: 'Notifications can arrive quietly',
         description:
           'Push is allowed, but iOS may deliver without the full alert experience until the permission is promoted.',
-        accent: '#38BDF8',
+        accent: theme.colors.primary,
       };
     }
 
     if (pushReady) {
       return {
-        title: 'This device is ready for remote push delivery',
+        title: 'Notifications are ready',
         description:
-          'OS permission, app preference, token registration, and Expo handoff are all aligned for this device.',
-        accent: '#10B981',
+          'ManaSplit can send alerts to this device. Send a test notification to confirm one arrives.',
+        accent: theme.colors.success,
       };
     }
 
     return {
-      title: 'ManaSplit is still registering this device',
+      title: 'Finishing notification setup',
       description:
-        'The app is allowed to notify you, but this device has not finished registration with the backend yet.',
-      accent: '#60A5FA',
+        'ManaSplit is still preparing this device for alerts. Refresh if this message does not clear.',
+      accent: theme.colors.primary,
     };
   }, [
     currentDevice?.registrationStatus,
@@ -352,13 +345,17 @@ export const NotificationSettingsScreen = () => {
     permission.state,
     preferences.pushEnabled,
     pushReady,
+    theme.colors.danger,
+    theme.colors.warning,
+    theme.colors.primary,
+    theme.colors.success,
   ]);
 
   const categoryControlsDisabled = !preferences.pushEnabled || !permission.granted;
   const primaryTextColor = theme.colors.onSurface;
-  const secondaryTextColor = isDark ? '#D1D5DB' : '#334155';
-  const tertiaryTextColor = isDark ? '#9CA3AF' : '#64748B';
-  const noticeColor = isDark ? '#FBBF24' : '#B45309';
+  const secondaryTextColor = theme.colors.onSurfaceVariant;
+  const tertiaryTextColor = theme.colors.muted;
+  const noticeColor = theme.colors.warning;
   const categoryDisabledReason = permission.state === 'denied'
     ? 'Turn notifications on in iPhone Settings before category toggles can take effect.'
     : !preferences.pushEnabled
@@ -413,7 +410,7 @@ export const NotificationSettingsScreen = () => {
     lightHaptic();
 
     if (remoteTestBlockedReason) {
-      appAlert('Remote test unavailable', remoteTestBlockedReason);
+      appAlert('Test notification unavailable', remoteTestBlockedReason);
       return;
     }
 
@@ -422,11 +419,11 @@ export const NotificationSettingsScreen = () => {
     try {
       const result = await sendRemoteTestNotification();
       appAlert(
-        'Remote test queued',
-        `Delivery ${result.deliveryId} was queued for ${result.acceptedCount} device${result.acceptedCount === 1 ? '' : 's'}. Check this iPhone for the live push alert.`,
+        'Test notification queued',
+        `A test was queued for ${result.acceptedCount} device${result.acceptedCount === 1 ? '' : 's'}. Watch for the notification. Delivery is not confirmed yet.`,
       );
     } catch (error) {
-      appAlert('Remote test failed', getErrorMessage(error));
+      appAlert('Test notification failed', getErrorMessage(error));
     } finally {
       setIsSendingRemoteTest(false);
     }
@@ -439,7 +436,7 @@ export const NotificationSettingsScreen = () => {
     try {
       await sendLocalTestNotification();
     } catch (error) {
-      appAlert('Local test failed', getErrorMessage(error));
+      appAlert('Preview unavailable', getErrorMessage(error));
     } finally {
       setIsSendingLocalTest(false);
     }
@@ -526,13 +523,7 @@ export const NotificationSettingsScreen = () => {
           </Text>
         </View>
         <GlassView
-          style={[
-            styles.heroCard,
-            {
-              borderColor: `${statusCard.accent}66`,
-              backgroundColor: isDark ? 'rgba(17, 24, 39, 0.34)' : 'rgba(255, 255, 255, 0.22)',
-            },
-          ]}
+          style={[styles.heroCard, { borderColor: `${statusCard.accent}66` }]}
           contentStyle={styles.heroContent}
           intensity={38}
         >
@@ -540,7 +531,7 @@ export const NotificationSettingsScreen = () => {
             <View
               style={[
                 styles.heroMarkShell,
-                { backgroundColor: isDark ? 'rgba(42, 11, 64, 0.72)' : 'rgba(251, 247, 240, 0.74)' },
+                { backgroundColor: theme.colors.primaryContainer },
               ]}
             >
               <MugguMark
@@ -575,13 +566,13 @@ export const NotificationSettingsScreen = () => {
             <StatusPill
               label="App"
               value={appStatusLabel}
-              color={preferences.pushEnabled ? '#10B981' : '#F59E0B'}
+              color={preferences.pushEnabled ? theme.colors.success : theme.colors.warning}
               textColor={primaryTextColor}
             />
             <StatusPill
-              label="Delivery"
+              label="Device"
               value={deliveryStatusLabel}
-              color={pushReady ? '#10B981' : '#60A5FA'}
+              color={pushReady ? theme.colors.success : theme.colors.primary}
               textColor={primaryTextColor}
             />
           </View>
@@ -609,7 +600,7 @@ export const NotificationSettingsScreen = () => {
               loading={isSendingRemoteTest}
               disabled={isSendingRemoteTest || Boolean(remoteTestBlockedReason)}
             >
-              Send Remote Test
+              Send test notification
             </Button>
           </View>
           {remoteTestBlockedReason ? (
@@ -634,12 +625,12 @@ export const NotificationSettingsScreen = () => {
                 permission.state === 'denied'
                   ? 'Blocked by iPhone. Open Settings to allow notifications for this app.'
                   : preferences.pushEnabled
-                    ? 'Remote push is enabled for your account.'
-                    : 'Turn this on to let ManaSplit deliver remote push on your registered devices.'
+                    ? 'ManaSplit can send alerts to devices where you are signed in.'
+                    : 'Turn this on to receive ManaSplit alerts on your devices.'
               }
               value={preferences.pushEnabled}
               icon={preferences.pushEnabled ? 'bell-ring-outline' : 'bell-off-outline'}
-              iconColor={preferences.pushEnabled ? theme.colors.primary : '#F59E0B'}
+              iconColor={preferences.pushEnabled ? theme.colors.primary : theme.colors.warning}
               onValueChange={handleMasterToggle}
             />
           ))}
@@ -660,7 +651,7 @@ export const NotificationSettingsScreen = () => {
             left={() => (
               <List.Icon
                 icon={permission.state === 'denied' ? 'apple-keyboard-command' : 'cellphone-cog'}
-                color={permission.state === 'denied' ? '#EF4444' : theme.colors.primary}
+                color={permission.state === 'denied' ? theme.colors.danger : theme.colors.primary}
               />
             )}
             right={() => (
@@ -672,14 +663,14 @@ export const NotificationSettingsScreen = () => {
         </GlassView>
 
         <GlassView
-          style={[styles.sectionCard, categoryControlsDisabled && styles.disabledSection]}
+          style={styles.sectionCard}
           contentStyle={styles.sectionContent}
         >
           <Text variant="titleMedium" style={[styles.sectionTitle, { color: primaryTextColor }]}>
             Categories
           </Text>
           <Text variant="bodySmall" style={[styles.sectionDescription, { color: tertiaryTextColor }]}>
-            Keep account-wide categories in sync while OS permission remains device-specific.
+            Category choices follow your account. Permission to show alerts is set separately on each device.
           </Text>
           {categoryDisabledReason ? (
             <Text variant="bodySmall" style={[styles.inlineNotice, { color: noticeColor }]}>
@@ -708,7 +699,7 @@ export const NotificationSettingsScreen = () => {
             description="Turn off to stop calls ringing here. Your other devices still ring."
             value={ringHere}
             icon="bell-ring-outline"
-            iconColor="#EF4444"
+            iconColor={theme.colors.danger}
             onValueChange={async (value) => {
               if (!user?.userId) return;
               setRingHere(value);
@@ -722,7 +713,7 @@ export const NotificationSettingsScreen = () => {
               description="New expenses and split requests"
               value={preferences.expenses !== false}
               icon="currency-usd"
-              iconColor="#10B981"
+              iconColor={theme.colors.success}
               disabled={categoryControlsDisabled}
               onValueChange={(value) => updatePreference('expenses', value)}
             />
@@ -734,7 +725,7 @@ export const NotificationSettingsScreen = () => {
               description="Payment settlements and confirmations"
               value={preferences.settlements !== false}
               icon="handshake-outline"
-              iconColor="#F59E0B"
+              iconColor={theme.colors.warning}
               disabled={categoryControlsDisabled}
               onValueChange={(value) => updatePreference('settlements', value)}
             />
@@ -742,11 +733,11 @@ export const NotificationSettingsScreen = () => {
           <Divider />
           {wrapAnchor(SETTING_IDS.notifGroup, (
             <ToggleRow
-              title="Group Updates"
+              title="Group updates"
               description="Members joining or leaving groups"
               value={preferences.groupUpdates !== false}
               icon="account-group-outline"
-              iconColor="#8B5CF6"
+              iconColor={theme.colors.primary}
               disabled={categoryControlsDisabled}
               onValueChange={(value) => updatePreference('groupUpdates', value)}
             />
@@ -758,7 +749,7 @@ export const NotificationSettingsScreen = () => {
               description="Incoming voice and video call alerts"
               value={preferences.calls !== false}
               icon="phone-ring-outline"
-              iconColor="#EF4444"
+              iconColor={theme.colors.danger}
               disabled={categoryControlsDisabled}
               onValueChange={(value) => updatePreference('calls', value)}
             />
@@ -766,11 +757,11 @@ export const NotificationSettingsScreen = () => {
         </GlassView>
 
         <GlassView
-          style={[styles.sectionCard, !preferences.pushEnabled && styles.disabledSection]}
+          style={styles.sectionCard}
           contentStyle={styles.sectionContent}
         >
           <Text variant="titleMedium" style={[styles.sectionTitle, { color: primaryTextColor }]}>
-            Sound and Haptics
+            Sound and haptics
           </Text>
           <Text variant="bodySmall" style={[styles.sectionDescription, { color: tertiaryTextColor }]}>
             These preferences only apply when notifications are enabled in ManaSplit.
@@ -803,10 +794,10 @@ export const NotificationSettingsScreen = () => {
 
         <GlassView style={styles.sectionCard} contentStyle={styles.sectionContent}>
           <Text variant="titleMedium" style={[styles.sectionTitle, { color: primaryTextColor }]}>
-            Diagnostics
+            Test notifications
           </Text>
           <Text variant="bodySmall" style={[styles.sectionDescription, { color: tertiaryTextColor }]}>
-            Remote tests use the backend, Expo Push Service, and receipt tracking. Local tests only preview on-device presentation.
+            Send a test through the notification service to check delivery. The on-device preview shows how an alert looks without testing delivery.
           </Text>
 
           <View style={styles.buttonRow}>
@@ -818,7 +809,7 @@ export const NotificationSettingsScreen = () => {
               loading={isSendingRemoteTest}
               disabled={isSendingRemoteTest || Boolean(remoteTestBlockedReason)}
             >
-              Remote Test
+              Send test notification
             </Button>
             <Button
               mode="outlined"
@@ -828,120 +819,137 @@ export const NotificationSettingsScreen = () => {
               loading={isSendingLocalTest}
               disabled={isSendingLocalTest}
             >
-              Local Preview
+              Preview on this device
             </Button>
           </View>
 
-          <Divider style={styles.diagnosticsDivider} />
+          <Button
+            mode="text"
+            icon={supportDetailsExpanded ? 'chevron-up' : 'chevron-down'}
+            accessibilityLabel="Support details"
+            accessibilityState={{ expanded: supportDetailsExpanded }}
+            onPress={() => {
+              lightHaptic();
+              setSupportDetailsExpanded((expanded) => !expanded);
+            }}
+            style={styles.supportDisclosure}
+          >
+            Support details
+          </Button>
+          {supportDetailsExpanded ? (
+            <View>
+              <Divider style={styles.diagnosticsDivider} />
 
-          <List.Item
-            title="Push service"
-            description="Expo Push Service with APNs on iOS and FCM on Android"
-            left={() => <List.Icon icon="cloud-outline" color={theme.colors.primary} />}
-          />
-          <Divider />
-          <List.Item
-            title="Registration status"
-            description={deliveryStatusLabel}
-            left={() => <List.Icon icon="radar" color={theme.colors.primary} />}
-          />
-          <Divider />
-          <List.Item
-            title="Device runtime"
-            description={runtimeLabel}
-            left={() => <List.Icon icon="cellphone-information" color={theme.colors.primary} />}
-          />
-          <Divider />
-          <List.Item
-            title="Push token"
-            description={pushToken ? `${pushToken.slice(0, 48)}${pushToken.length > 48 ? '…' : ''}` : 'No Expo push token registered yet'}
-            left={() => <List.Icon icon="key-outline" color={theme.colors.primary} />}
-          />
-          <Divider />
-          <List.Item
-            title="Last registration sync"
-            description={formatTimestamp(currentDevice?.lastRegisteredAt ?? null)}
-            left={() => <List.Icon icon="refresh" color={theme.colors.primary} />}
-          />
-          <Divider />
-          <List.Item
-            title="Last delivery receipt"
-            description={
-              currentDevice?.lastReceiptStatus
-                ? `${currentDevice.lastReceiptStatus.toUpperCase()} · ${formatTimestamp(currentDevice.lastReceiptAt)}`
-                : 'No Expo receipt has been recorded for this device yet'
-            }
-            left={() => <List.Icon icon="message-badge-outline" color={theme.colors.primary} />}
-          />
-          {currentDevice?.lastReceiptError ? (
-            <>
+              <List.Item
+                title="Push service"
+                description="Expo Push Service with APNs on iOS and FCM on Android"
+                left={() => <List.Icon icon="cloud-outline" color={theme.colors.primary} />}
+              />
               <Divider />
               <List.Item
-                title="Last receipt error"
-                description={currentDevice.lastReceiptError}
-                left={() => <List.Icon icon="alert-circle-outline" color="#EF4444" />}
+                title="Registration status"
+                description={deliveryStatusLabel}
+                left={() => <List.Icon icon="radar" color={theme.colors.primary} />}
               />
-            </>
-          ) : null}
-          {currentDevice?.lastRegistrationError ? (
-            <>
               <Divider />
               <List.Item
-                title="Last registration error"
-                description={currentDevice.lastRegistrationError}
-                left={() => <List.Icon icon="alert-outline" color="#F97316" />}
+                title="Device runtime"
+                description={runtimeLabel}
+                left={() => <List.Icon icon="cellphone-information" color={theme.colors.primary} />}
               />
-            </>
-          ) : null}
+              <Divider />
+              <List.Item
+                title="Push token"
+                description={pushToken ? 'Available for support diagnostics' : 'Not available yet'}
+                left={() => <List.Icon icon="key-outline" color={theme.colors.primary} />}
+              />
+              <Divider />
+              <List.Item
+                title="Last registration sync"
+                description={formatTimestamp(currentDevice?.lastRegisteredAt ?? null)}
+                left={() => <List.Icon icon="refresh" color={theme.colors.primary} />}
+              />
+              <Divider />
+              <List.Item
+                title="Last delivery receipt"
+                description={
+                  currentDevice?.lastReceiptStatus
+                    ? `${currentDevice.lastReceiptStatus.toUpperCase()} · ${formatTimestamp(currentDevice.lastReceiptAt)}`
+                    : 'No delivery result has been recorded for this device yet'
+                }
+                left={() => <List.Icon icon="message-badge-outline" color={theme.colors.primary} />}
+              />
+              {currentDevice?.lastReceiptError ? (
+                <>
+                  <Divider />
+                  <List.Item
+                    title="Last delivery problem"
+                    description="Delivery did not complete. Refresh setup, then send another test notification."
+                    left={() => <List.Icon icon="alert-circle-outline" color={theme.colors.danger} />}
+                  />
+                </>
+              ) : null}
+              {currentDevice?.lastRegistrationError ? (
+                <>
+                  <Divider />
+                  <List.Item
+                    title="Last setup problem"
+                    description="Notification setup did not complete. Refresh this device and try again."
+                    left={() => <List.Icon icon="alert-outline" color={theme.colors.warning} />}
+                  />
+                </>
+              ) : null}
 
-          <Divider style={styles.diagnosticsDivider} />
-          <List.Item
-            title="Call debug log"
-            description={
-              callDebugText === null
-                ? 'Persistent breadcrumbs from the Recents redial / CallKit pipeline.'
-                : `${callDebugCount} entr${callDebugCount === 1 ? 'y' : 'ies'} recorded (newest first).`
-            }
-            left={() => <List.Icon icon="phone-log" color={theme.colors.primary} />}
-          />
-          <View style={styles.buttonRow}>
-            <Button
-              mode="contained"
-              onPress={() => {
-                void handleLoadCallDebug();
-              }}
-              loading={isLoadingCallDebug}
-            >
-              {callDebugText === null ? 'View log' : 'Refresh'}
-            </Button>
-            <Button
-              mode="outlined"
-              onPress={() => {
-                void handleCopyCallDebug();
-              }}
-              disabled={!callDebugText}
-            >
-              Copy all
-            </Button>
-            <Button
-              mode="text"
-              onPress={() => {
-                void handleClearCallDebug();
-              }}
-            >
-              Clear
-            </Button>
-          </View>
-          {callDebugText !== null ? (
-            <ScrollView style={styles.callDebugLogBox} nestedScrollEnabled>
-              <Text
-                variant="bodySmall"
-                selectable
-                style={[styles.callDebugLogText, { color: secondaryTextColor }]}
-              >
-                {callDebugText}
-              </Text>
-            </ScrollView>
+              <Divider style={styles.diagnosticsDivider} />
+              <List.Item
+                title="Call support log"
+                description={
+                  callDebugText === null
+                    ? 'Recent call events that can help troubleshoot calling problems.'
+                    : `${callDebugCount} entr${callDebugCount === 1 ? 'y' : 'ies'} recorded (newest first).`
+                }
+                left={() => <List.Icon icon="phone-log" color={theme.colors.primary} />}
+              />
+              <View style={styles.buttonRow}>
+                <Button
+                  mode="contained"
+                  onPress={() => {
+                    void handleLoadCallDebug();
+                  }}
+                  loading={isLoadingCallDebug}
+                >
+                  {callDebugText === null ? 'View log' : 'Refresh'}
+                </Button>
+                <Button
+                  mode="outlined"
+                  onPress={() => {
+                    void handleCopyCallDebug();
+                  }}
+                  disabled={!callDebugText}
+                >
+                  Copy all
+                </Button>
+                <Button
+                  mode="text"
+                  onPress={() => {
+                    void handleClearCallDebug();
+                  }}
+                >
+                  Clear
+                </Button>
+              </View>
+              {callDebugText !== null ? (
+                <ScrollView style={[styles.callDebugLogBox, { borderColor: theme.colors.divider, backgroundColor: theme.colors.flatSurfaceAlt }]} nestedScrollEnabled>
+                  <Text
+                    variant="bodySmall"
+                    selectable
+                    style={[styles.callDebugLogText, { color: secondaryTextColor }]}
+                  >
+                    {callDebugText}
+                  </Text>
+                </ScrollView>
+              ) : null}
+            </View>
           ) : null}
         </GlassView>
       </Animated.ScrollView>
@@ -950,6 +958,9 @@ export const NotificationSettingsScreen = () => {
 };
 
 const styles = StyleSheet.create({
+  toggleRow: {
+    minHeight: 48,
+  },
   container: {
     padding: 16,
     // Tightened 16 -> 8 (2026-08-07, compact density pass).
@@ -1058,18 +1069,18 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     lineHeight: 20,
   },
-  disabledSection: {
-    opacity: 0.62,
-  },
-  disabledText: {
-    color: '#6B7280',
-  },
   buttonRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
     paddingHorizontal: 8,
     paddingTop: 4,
+  },
+  supportDisclosure: {
+    alignSelf: 'flex-start',
+    marginTop: 12,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   diagnosticsDivider: {
     marginTop: 12,
@@ -1080,8 +1091,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(148, 163, 184, 0.4)',
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
     padding: 10,
   },
   callDebugLogText: {

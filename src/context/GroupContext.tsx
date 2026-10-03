@@ -1,18 +1,34 @@
 import { db } from '@/firebase';
-import type { ChatMessage, ChatParticipant, Expense, ExpenseRef, ExpenseSplitMetadata, ExpenseSplitParticipantConfig, Group, GroupMember, MoneyInChatSettings, ParticipantShare, Settlement, SystemEventKind } from '@/models';
+import type {
+  ChatMessage,
+  ChatParticipant,
+  Expense,
+  ExpenseRef,
+  Group,
+  GroupMember,
+  MoneyInChatSettings,
+  ParticipantShare,
+  Settlement,
+  SystemEventKind,
+} from '@/models';
 import { resolveMoneyInChat } from '@/models/group';
 import { formatCurrency } from '@/utils/currency';
 import { resolveDisplayName } from '@/utils/identity';
 import { monthKey } from '@/utils/expenseAnalytics';
 import { aggregateRange, budgetStatus, detectAnomalies, memberBreakdown } from '@/utils/statsInsights';
 import { queueMessage } from '@/services/messageQueueService';
-import {
-    getRecurringBillsForGroup,
-    resolveRotationPayer,
-    syncRecurringBillsForGroupWithFallback,
-} from '@/services/recurringBillService';
+import { getRecurringBillsForGroup, resolveRotationPayer, syncRecurringBillsForGroupWithFallback } from '@/services/recurringBillService';
 import { findHiddenLedgerGroup } from '@/services/hiddenLedgerService';
 import { joinGroupByInviteCode } from '@/services/groupJoinService';
+import { mutateGroupMember } from '@/services/groupMemberService';
+import {
+  createExpenseOnServer,
+  convertGroupCurrencyOnServer,
+  deleteExpenseOnServer,
+  updateExpenseOnServer,
+  type ExpenseWriteAuthorization,
+} from '@/services/expenseMutationService';
+import { createSettlementOnServer, deleteSettlementOnServer, updateSettlementOnServer } from '@/services/settlementMutationService';
 import { getRecurrenceSummary } from '@/utils/recurrence';
 import { detectRecurringCandidates } from '@/utils/recurringDetection';
 import { deleteFile, uploadFile } from '@/services/storageService';
@@ -21,30 +37,23 @@ import { enqueueOp, loadOutbox, removeOp } from '@/services/outbox';
 import { findDuplicateExpense, findDuplicateSettlement } from '@/utils/writeIdempotency';
 import { dismissNotificationsForEntity } from '@/utils/notifications';
 import { diffRemovedEntities, type GroupEntityIds } from '@/utils/notificationEntityMatch';
-import {
-    advanceEntityRevision,
-    expectationFor,
-    removeRevisionedEntity,
-    replaceRevisionedEntity,
-    type MutationExpectation,
-} from '@/utils/mutationConflict';
+import { expectationFor, type MutationExpectation } from '@/utils/mutationConflict';
 import { mergeOutboxIntoGroups, type OutboxOp } from '@/utils/outboxApply';
 import { planReceiptUpload, receiptObjectPath } from '@/utils/receiptMutation';
 import NetInfo from '@react-native-community/netinfo';
 import {
-    arrayUnion,
-    collection,
-    deleteDoc,
-    doc,
-    getDocs,
-    onSnapshot,
-    query,
-    runTransaction,
-    serverTimestamp,
-    setDoc,
-    updateDoc,
-    where,
-    writeBatch,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  query,
+  runTransaction,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+  writeBatch,
 } from 'firebase/firestore';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { v4 as uuid } from 'uuid';
@@ -58,10 +67,30 @@ interface GroupContextValue {
   pendingSyncIds: Set<string>;
   createGroup: (name: string, currency: string, requestId?: string) => Promise<string>;
   joinGroup: (inviteCode: string, requestId?: string) => Promise<void>;
-  addExpense: (groupId: string, expense: Omit<Expense, 'expenseId' | 'createdAt' | 'updatedAt'>, fileUri?: string, fileName?: string, requestId?: string) => Promise<void>;
-  updateExpense: (groupId: string, expense: Expense, newFileUri?: string | null, newFileName?: string, requestId?: string, expectation?: MutationExpectation) => Promise<void>;
+  addExpense: (
+    groupId: string,
+    expense: Omit<Expense, 'expenseId' | 'createdAt' | 'updatedAt'>,
+    fileUri?: string,
+    fileName?: string,
+    requestId?: string,
+    authorization?: ExpenseWriteAuthorization,
+  ) => Promise<void>;
+  updateExpense: (
+    groupId: string,
+    expense: Expense,
+    newFileUri?: string | null,
+    newFileName?: string,
+    requestId?: string,
+    expectation?: MutationExpectation,
+    authorization?: ExpenseWriteAuthorization,
+  ) => Promise<void>;
   deleteExpense: (groupId: string, expenseId: string, expectation?: MutationExpectation) => Promise<void>;
-  settleUp: (groupId: string, settlement: Omit<Settlement, 'settlementId' | 'createdAt' | 'status'>, requestId?: string) => Promise<void>;
+  settleUp: (
+    groupId: string,
+    settlement: Omit<Settlement, 'settlementId' | 'createdAt' | 'status'>,
+    requestId?: string,
+    expectedCurrency?: string,
+  ) => Promise<void>;
   updateSettlement: (groupId: string, settlement: Settlement, requestId?: string, expectation?: MutationExpectation) => Promise<void>;
   deleteSettlement: (groupId: string, settlementId: string, expectation?: MutationExpectation) => Promise<void>;
   updateGroup: (groupId: string, updates: { name?: string; description?: string; photoURL?: string }) => Promise<void>;
@@ -71,11 +100,7 @@ interface GroupContextValue {
   /** Admin-gated per-category monthly budgets (ai_layer/docs/22). */
   updateGroupBudgets: (groupId: string, budgets: Record<string, number>) => Promise<void>;
   /** Idempotent "wrapped" digest card post for a completed period. */
-  postGroupDigest: (
-    groupId: string,
-    periodKey: string,
-    window: { startMs: number; endMs: number; label: string },
-  ) => Promise<void>;
+  postGroupDigest: (groupId: string, periodKey: string, window: { startMs: number; endMs: number; label: string }) => Promise<void>;
   /**
    * Idempotent recurring-bill card posts (ai_layer/docs/26): syncs generation,
    * then posts one stateful card per relevant occurrence (recently generated,
@@ -103,7 +128,10 @@ const normalizeTimestamp = (value: unknown): number => {
   if (!value) return Date.now();
   if (typeof value === 'number') return value;
   if (typeof value === 'object' && value !== null) {
-    const maybeTimestamp = value as { toMillis?: () => number; seconds?: number };
+    const maybeTimestamp = value as {
+      toMillis?: () => number;
+      seconds?: number;
+    };
     if (maybeTimestamp.toMillis) {
       return maybeTimestamp.toMillis();
     }
@@ -116,17 +144,14 @@ const normalizeTimestamp = (value: unknown): number => {
 
 const stripUndefinedDeep = <T,>(value: T): T => {
   if (Array.isArray(value)) {
-    return value
-      .map((entry) => stripUndefinedDeep(entry))
-      .filter((entry) => entry !== undefined) as T;
+    return value.map((entry) => stripUndefinedDeep(entry)).filter((entry) => entry !== undefined) as T;
   }
 
   if (value && typeof value === 'object') {
-    const sanitizedEntries = Object.entries(value as Record<string, unknown>)
-      .flatMap(([key, entry]) => {
-        const sanitizedEntry = stripUndefinedDeep(entry);
-        return sanitizedEntry === undefined ? [] : [[key, sanitizedEntry] as const];
-      });
+    const sanitizedEntries = Object.entries(value as Record<string, unknown>).flatMap(([key, entry]) => {
+      const sanitizedEntry = stripUndefinedDeep(entry);
+      return sanitizedEntry === undefined ? [] : [[key, sanitizedEntry] as const];
+    });
 
     return Object.fromEntries(sanitizedEntries) as T;
   }
@@ -200,10 +225,7 @@ const collectGroupEntityIds = (groupList: Group[]): Map<string, GroupEntityIds> 
  * whole groups (deleted, or this user removed) and individual
  * expenses/settlements removed from surviving groups. Best-effort.
  */
-const dismissNotificationsForRemovedEntities = (
-  previous: Map<string, GroupEntityIds>,
-  current: Map<string, GroupEntityIds>,
-): void => {
+const dismissNotificationsForRemovedEntities = (previous: Map<string, GroupEntityIds>, current: Map<string, GroupEntityIds>): void => {
   for (const filter of diffRemovedEntities(previous, current)) {
     void dismissNotificationsForEntity(filter);
   }
@@ -241,7 +263,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     });
   }, []);
 
-  /** Perform the network write for one queued op (idempotent via arrayUnion). */
+  /** Perform one idempotent queued write through its authenticated server boundary. */
   const writeOp = useCallback(async (op: OutboxOp): Promise<void> => {
     if (op.kind === 'addExpense') {
       let expense = op.expense;
@@ -249,27 +271,25 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         try {
           const fileName = op.fileName ?? 'receipt.jpg';
           const url = await uploadFile(op.fileUri, `groups/${op.groupId}/expenses/${op.expense.expenseId}/${fileName}`);
-          expense = { ...op.expense, receipt: stripUndefinedDeep({ ...op.expense.receipt, url, fileName }) };
+          expense = {
+            ...op.expense,
+            receipt: stripUndefinedDeep({
+              ...op.expense.receipt,
+              url,
+              fileName,
+            }),
+          };
         } catch {
           // Image upload failed (e.g. the local file is gone after a relaunch) —
           // still write the expense so the money data isn't lost.
         }
       }
-      await updateDoc(doc(db, 'groups', op.groupId), {
-        expenses: arrayUnion(expense),
-        updatedAt: serverTimestamp(),
-      });
-      await setDoc(doc(db, 'expenses', op.expense.expenseId), {
-        ...expense,
-        groupId: op.groupId,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
+      await createExpenseOnServer(op.groupId, expense, op.authorization, op.expectedCurrency);
     } else {
-      await updateDoc(doc(db, 'groups', op.groupId), {
-        settlements: arrayUnion(op.settlement),
-        updatedAt: serverTimestamp(),
-      });
+      if (!op.expectedCurrency) {
+        throw new Error('This queued settlement is missing its original currency and cannot be synced safely.');
+      }
+      await createSettlementOnServer(op.groupId, op.settlement, op.expectedCurrency);
     }
   }, []);
 
@@ -386,7 +406,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         // Cached groups (hydrated above) remain visible.
         console.warn('Groups subscription failed; showing cached data.', error);
         setLoading(false);
-      }
+      },
     );
 
     return () => {
@@ -444,6 +464,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     fileUri?: string,
     originalFileName?: string,
     requestId?: string,
+    authorization?: ExpenseWriteAuthorization,
   ) => {
     const expenseId = requestId ?? expense.requestId ?? uuid();
     const reqId = requestId ?? expense.requestId ?? expenseId;
@@ -451,6 +472,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     // Idempotency without a server read (works offline): if this expense (by id
     // or requestId) is already in local state, it's a retry/double-submit — no-op.
     const localGroup = groups.find((g) => g.groupId === groupId);
+    if (!localGroup) throw new Error('Group not found');
     if (findDuplicateExpense(localGroup?.expenses, expenseId, reqId)) {
       return;
     }
@@ -477,7 +499,33 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     // Queue durably FIRST so the write survives an app-kill while offline, then
     // reflect it immediately. The actual network write happens in flushOutbox so
     // the UI never blocks on a server ack (offline, write promises never resolve).
-    const op: OutboxOp = { id: expenseId, kind: 'addExpense', groupId, expense: newExpense, fileUri, fileName, createdAt: Date.now() };
+    const op: OutboxOp = {
+      id: expenseId,
+      kind: 'addExpense',
+      groupId,
+      expense: newExpense,
+      fileUri,
+      fileName,
+      expectedCurrency: localGroup?.currency?.toUpperCase(),
+      authorization,
+      createdAt: Date.now(),
+    };
+
+    // A metered split is committed synchronously so its expense write and
+    // quota consumption happen in one server transaction. Ordinary expenses
+    // keep the durable offline queue below.
+    if (authorization) {
+      await writeOp(op);
+      setGroups((prev) => {
+        const next = mergeOutboxIntoGroups(prev, [op]).map(adaptGroup);
+        if (user) void persistGroups(user.userId, next);
+        return next;
+      });
+      postExpenseCard(localGroup, groupId, newExpense);
+      maybePostBudgetAlert(localGroup, groupId, newExpense);
+      maybePostAnomalyAlert(localGroup, groupId, newExpense);
+      return;
+    }
     await enqueueOp(op);
     pendingOpsRef.current = [...pendingOpsRef.current.filter((o) => o.id !== op.id), op];
     refreshPendingIds();
@@ -502,6 +550,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     newFileName?: string,
     requestId?: string,
     expectation: MutationExpectation = expectationFor(updatedExpense),
+    authorization?: ExpenseWriteAuthorization,
   ) => {
     let uploadedPath: string | undefined;
     let committed = false;
@@ -553,32 +602,13 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         delete proposedExpense.receipt;
       }
 
-      const docRef = doc(db, 'groups', groupId);
-      let finalExpense: Expense = proposedExpense;
-      await runTransaction(db, async (txn) => {
-        const snap = await txn.get(docRef);
-        if (!snap.exists()) throw new Error('Group not found');
-        const serverGroup = snap.data() as Group;
-        const replaced = replaceRevisionedEntity({
-          entities: serverGroup.expenses ?? [],
-          entityId: updatedExpense.expenseId,
-          idOf: (expense) => expense.expenseId,
-          proposed: proposedExpense,
-          expectation,
-          entityLabel: 'This expense',
-          updatedAt: mutationAt,
-        });
-        finalExpense = stripUndefinedDeep(replaced.entity);
-        txn.update(docRef, { expenses: replaced.entities, updatedAt: serverTimestamp() });
-        txn.set(doc(db, 'expenses', finalExpense.expenseId), {
-          ...finalExpense,
-          groupId,
-          updatedAt: serverTimestamp(),
-        }, { merge: true });
-      });
+      const response = await updateExpenseOnServer(groupId, proposedExpense, expectation, authorization, group.currency.toUpperCase());
+      const finalExpense = response.expense ?? proposedExpense;
       committed = true;
       if (oldReceiptPath && oldReceiptPath !== uploadedPath) {
-        try { await deleteFile(oldReceiptPath); } catch (cleanupError) {
+        try {
+          await deleteFile(oldReceiptPath);
+        } catch (cleanupError) {
           console.warn('Old receipt cleanup skipped (non-fatal):', cleanupError);
         }
       }
@@ -596,22 +626,28 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       try {
         const q = query(collection(db, 'expenses'), where('expenseId', '==', finalExpense.expenseId));
         const snapshot = await getDocs(q);
-        await Promise.all(snapshot.docs.map(async (docSnap) => {
-          if (docSnap.id === finalExpense.expenseId) {
-            return;
-          }
+        await Promise.all(
+          snapshot.docs.map(async (docSnap) => {
+            if (docSnap.id === finalExpense.expenseId) {
+              return;
+            }
 
-          await updateDoc(doc(db, 'expenses', docSnap.id), {
-            ...finalExpense,
-            updatedAt: serverTimestamp(),
-          });
-        }));
+            await updateDoc(doc(db, 'expenses', docSnap.id), {
+              ...finalExpense,
+              updatedAt: serverTimestamp(),
+            });
+          }),
+        );
       } catch (legacyCleanupError) {
         console.warn('Legacy expense doc cleanup skipped (non-fatal):', legacyCleanupError);
       }
     } catch (error) {
       if (!committed && uploadedPath) {
-        try { await deleteFile(uploadedPath); } catch { /* best-effort orphan cleanup */ }
+        try {
+          await deleteFile(uploadedPath);
+        } catch {
+          /* best-effort orphan cleanup */
+        }
       }
       console.error('Error updating expense:', error);
       throw error;
@@ -627,28 +663,14 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       if (!expenseToDelete) throw new Error('Expense not found');
       const expected = expectation ?? expectationFor(expenseToDelete);
 
-      const docRef = doc(db, 'groups', groupId);
-      await runTransaction(db, async (txn) => {
-        const snap = await txn.get(docRef);
-        if (!snap.exists()) throw new Error('Group not found');
-        const serverGroup = snap.data() as Group;
-        txn.update(docRef, {
-          expenses: removeRevisionedEntity({
-            entities: serverGroup.expenses ?? [],
-            entityId: expenseId,
-            idOf: (expense) => expense.expenseId,
-            expectation: expected,
-            entityLabel: 'This expense',
-          }),
-          updatedAt: serverTimestamp(),
-        });
-        txn.delete(doc(db, 'expenses', expenseId));
-      });
+      await deleteExpenseOnServer(groupId, expenseId, expected);
 
       if (expenseToDelete.receipt?.url) {
         const fileName = expenseToDelete.receipt.fileName || 'receipt.jpg';
         const path = receiptObjectPath(groupId, expenseId, fileName);
-        try { await deleteFile(path); } catch (cleanupError) {
+        try {
+          await deleteFile(path);
+        } catch (cleanupError) {
           console.warn('Deleted expense receipt cleanup skipped (non-fatal):', cleanupError);
         }
       }
@@ -670,13 +692,15 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       try {
         const q = query(collection(db, 'expenses'), where('expenseId', '==', expenseId));
         const snapshot = await getDocs(q);
-        await Promise.all(snapshot.docs.map(async (docSnap) => {
-          if (docSnap.id === expenseId) {
-            return;
-          }
+        await Promise.all(
+          snapshot.docs.map(async (docSnap) => {
+            if (docSnap.id === expenseId) {
+              return;
+            }
 
-          await deleteDoc(doc(db, 'expenses', docSnap.id));
-        }));
+            await deleteDoc(doc(db, 'expenses', docSnap.id));
+          }),
+        );
       } catch (legacyCleanupError) {
         console.warn('Legacy expense doc cleanup skipped (non-fatal):', legacyCleanupError);
       }
@@ -686,17 +710,18 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     }
   };
 
-
   const settleUp = async (
     groupId: string,
     settlement: Omit<Settlement, 'settlementId' | 'createdAt' | 'status'>,
     requestId?: string,
+    expectedCurrency?: string,
   ) => {
     const settlementId = requestId ?? settlement.requestId ?? uuid();
     const reqId = requestId ?? settlement.requestId ?? settlementId;
 
     // Idempotent, offline-capable (same pattern as addExpense): skip if already present.
     const localGroup = groups.find((g) => g.groupId === groupId);
+    if (!localGroup) throw new Error('Group not found');
     if (findDuplicateSettlement(localGroup?.settlements, settlementId, reqId)) {
       return;
     }
@@ -712,7 +737,14 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     }) as Settlement;
 
     // Durable queue + optimistic display; the network write happens in flushOutbox.
-    const op: OutboxOp = { id: settlementId, kind: 'settleUp', groupId, settlement: newSettlement, createdAt: Date.now() };
+    const op: OutboxOp = {
+      id: settlementId,
+      kind: 'settleUp',
+      groupId,
+      settlement: newSettlement,
+      expectedCurrency: (expectedCurrency ?? localGroup.currency).toUpperCase(),
+      createdAt: Date.now(),
+    };
     await enqueueOp(op);
     pendingOpsRef.current = [...pendingOpsRef.current.filter((o) => o.id !== op.id), op];
     refreshPendingIds();
@@ -738,30 +770,13 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       const group = groups.find((g) => g.groupId === groupId);
       if (!group) throw new Error('Group not found');
 
-      const docRef = doc(db, 'groups', groupId);
       const mutationAt = Date.now();
-      await runTransaction(db, async (txn) => {
-        const snap = await txn.get(docRef);
-        if (!snap.exists()) throw new Error('Group not found');
-        const serverGroup = snap.data() as Group;
-        const proposed = stripUndefinedDeep({
-          ...updatedSettlement,
-          requestId: requestId ?? updatedSettlement.requestId ?? updatedSettlement.settlementId,
-        });
-        const replaced = replaceRevisionedEntity({
-          entities: serverGroup.settlements ?? [],
-          entityId: updatedSettlement.settlementId,
-          idOf: (settlement) => settlement.settlementId,
-          proposed,
-          expectation,
-          entityLabel: 'This settlement',
-          updatedAt: mutationAt,
-        });
-        txn.update(docRef, {
-          settlements: replaced.entities,
-          updatedAt: serverTimestamp(),
-        });
+      const proposed = stripUndefinedDeep({
+        ...updatedSettlement,
+        requestId: requestId ?? updatedSettlement.requestId ?? updatedSettlement.settlementId,
+        updatedAt: mutationAt,
       });
+      await updateSettlementOnServer(groupId, proposed, expectation, group.currency);
     } catch (error) {
       console.error('Error updating settlement:', error);
       throw error;
@@ -777,22 +792,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       if (!settlementToDelete) throw new Error('Settlement not found');
       const expected = expectation ?? expectationFor(settlementToDelete);
 
-      const docRef = doc(db, 'groups', groupId);
-      await runTransaction(db, async (txn) => {
-        const snap = await txn.get(docRef);
-        if (!snap.exists()) throw new Error('Group not found');
-        const serverGroup = snap.data() as Group;
-        txn.update(docRef, {
-          settlements: removeRevisionedEntity({
-            entities: serverGroup.settlements ?? [],
-            entityId: settlementId,
-            idOf: (settlement) => settlement.settlementId,
-            expectation: expected,
-            entityLabel: 'This settlement',
-          }),
-          updatedAt: serverTimestamp(),
-        });
-      });
+      await deleteSettlementOnServer(groupId, settlementId, expected);
 
       // Withdraw any delivered notification that deep-links to this
       // settlement on this device.
@@ -850,10 +850,8 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       const chatId = chatDoc.id;
       const chatData = chatDoc.data() as Record<string, unknown>;
 
-      const baseParticipants =
-        options.participantsOverride ?? ((chatData.participants as ChatParticipant[] | undefined) ?? []);
-      const baseParticipantIds =
-        options.participantIdsOverride ?? ((chatData.participantIds as string[] | undefined) ?? []);
+      const baseParticipants = options.participantsOverride ?? (chatData.participants as ChatParticipant[] | undefined) ?? [];
+      const baseParticipantIds = options.participantIdsOverride ?? (chatData.participantIds as string[] | undefined) ?? [];
 
       const msgId = options.fixedMessageId ?? uuid();
       const now = Date.now();
@@ -962,9 +960,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
   // source of truth, the chat is a mirror.
 
   const memberName = (group: Group | undefined, userId: string): string =>
-    resolveDisplayName(
-      [...(group?.members ?? []), ...(group?.archivedMembers ?? [])].find((m) => m.userId === userId),
-    );
+    resolveDisplayName([...(group?.members ?? []), ...(group?.archivedMembers ?? [])].find((m) => m.userId === userId));
 
   const postExpenseCard = (group: Group | undefined, groupId: string, expense: Expense) => {
     const policy = resolveMoneyInChat(group?.moneyInChat).autoPost;
@@ -985,11 +981,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         ...(expense.category ? { category: expense.category } : {}),
       },
     };
-    void writeGroupSystemMessage(
-      groupId,
-      content,
-      policy === 'cards' ? { messageOverrides: { type: 'expense', expenseRef: ref } } : {},
-    );
+    void writeGroupSystemMessage(groupId, content, policy === 'cards' ? { messageOverrides: { type: 'expense', expenseRef: ref } } : {});
   };
 
   const postSettlementCard = (group: Group | undefined, groupId: string, settlement: Settlement) => {
@@ -1013,11 +1005,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         toUserId: settlement.toUserId,
       },
     };
-    void writeGroupSystemMessage(
-      groupId,
-      content,
-      policy === 'cards' ? { messageOverrides: { type: 'expense', expenseRef: ref } } : {},
-    );
+    void writeGroupSystemMessage(groupId, content, policy === 'cards' ? { messageOverrides: { type: 'expense', expenseRef: ref } } : {});
   };
 
   // ── Insights → chat (ai_layer/docs/22): digests, budget alerts, anomalies ──
@@ -1087,10 +1075,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
 
       for (const bill of bills) {
         const isVariable = bill.amountMode === 'variable';
-        const leadMs =
-          bill.recurrenceRule.frequency === 'monthly' || bill.recurrenceRule.frequency === 'yearly'
-            ? UPCOMING_LEAD_MS
-            : 0;
+        const leadMs = bill.recurrenceRule.frequency === 'monthly' || bill.recurrenceRule.frequency === 'yearly' ? UPCOMING_LEAD_MS : 0;
 
         const occurrences = new Set<number>();
         if (bill.lastGeneratedAt && now - bill.lastGeneratedAt <= RECENT_GENERATED_WINDOW_MS) {
@@ -1110,9 +1095,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
           const payerId = resolveRotationPayer(bill);
           const payerName = memberName(group, payerId);
           const summary = getRecurrenceSummary(bill.recurrenceRule);
-          const content = `🔁 ${bill.title} · ${summary}${
-            isVariable ? '' : ` · ${formatCurrency(bill.amount, group.currency)}`
-          }`;
+          const content = `🔁 ${bill.title} · ${summary}${isVariable ? '' : ` · ${formatCurrency(bill.amount, group.currency)}`}`;
           const ref: ExpenseRef = {
             kind: 'recurringBill',
             groupId,
@@ -1134,7 +1117,10 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
             groupId,
             content,
             policy === 'cards'
-              ? { messageOverrides: { type: 'expense', expenseRef: ref }, fixedMessageId: messageId }
+              ? {
+                  messageOverrides: { type: 'expense', expenseRef: ref },
+                  fixedMessageId: messageId,
+                }
               : { fixedMessageId: messageId },
           );
         }
@@ -1151,7 +1137,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         if (!existingMessageIds.has(suggestionId)) {
           await writeGroupSystemMessage(
             groupId,
-            `🔁 "${candidate.title}" has been added ${candidate.occurrenceCount} times on a ${candidate.cadence} rhythm — set it up as a recurring bill and it handles itself. Recurring Bills → New.`,
+            `🔁 "${candidate.title}" has been added ${candidate.occurrenceCount} times on a ${candidate.cadence} rhythm. Set it up as a recurring bill and it handles itself. Recurring bills → New.`,
             { fixedMessageId: suggestionId },
           );
         }
@@ -1209,8 +1195,11 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
           await writeDirectCardMessage(
             chatId,
             participantIds,
-            `🔁 ${bill.title} · ${summary} · ${formatCurrency(bill.amount, ledger.currency)} — awaiting accept`,
-            { messageOverrides: { type: 'expense', expenseRef: ref }, fixedMessageId: messageId },
+            `🔁 ${bill.title} · ${summary} · ${formatCurrency(bill.amount, ledger.currency)} · awaiting acceptance`,
+            {
+              messageOverrides: { type: 'expense', expenseRef: ref },
+              fixedMessageId: messageId,
+            },
           );
         }
       }
@@ -1249,10 +1238,14 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         category: next.category,
       },
     };
-    void writeGroupSystemMessage(groupId, `🎯 ${title} · ${formatCurrency(next.spent, group.currency)} of ${formatCurrency(next.budget, group.currency)}`, {
-      messageOverrides: { type: 'expense', expenseRef: ref },
-      fixedMessageId: `budget-${groupId}-${mk}-${next.category.toLowerCase()}-${threshold}`,
-    });
+    void writeGroupSystemMessage(
+      groupId,
+      `🎯 ${title} · ${formatCurrency(next.spent, group.currency)} of ${formatCurrency(next.budget, group.currency)}`,
+      {
+        messageOverrides: { type: 'expense', expenseRef: ref },
+        fixedMessageId: `budget-${groupId}-${mk}-${next.category.toLowerCase()}-${threshold}`,
+      },
+    );
   };
 
   /** Unusual-spend alert card (opt-in via admin panel; default off). */
@@ -1277,14 +1270,10 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         category: mine.category,
       },
     };
-    void writeGroupSystemMessage(
-      groupId,
-      `📈 ${mine.title} is ${mine.ratio}× the usual for ${mine.category}`,
-      {
-        messageOverrides: { type: 'expense', expenseRef: ref },
-        fixedMessageId: `anomaly-${groupId}-${expense.expenseId}`,
-      },
-    );
+    void writeGroupSystemMessage(groupId, `📈 ${mine.title} is ${mine.ratio}× the usual for ${mine.category}`, {
+      messageOverrides: { type: 'expense', expenseRef: ref },
+      fixedMessageId: `anomaly-${groupId}-${expense.expenseId}`,
+    });
   };
 
   /** Admin-set per-category monthly budgets (group currency). */
@@ -1320,27 +1309,24 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     }
 
     const groupRef = doc(db, 'groups', groupId);
-    await updateDoc(groupRef, { moneyInChat: settings, updatedAt: serverTimestamp() });
+    await updateDoc(groupRef, {
+      moneyInChat: settings,
+      updatedAt: serverTimestamp(),
+    });
 
     setGroups((prev) => {
-      const next = prev.map((g) =>
-        g.groupId === groupId ? { ...g, moneyInChat: settings, updatedAt: Date.now() } : g,
-      );
+      const next = prev.map((g) => (g.groupId === groupId ? { ...g, moneyInChat: settings, updatedAt: Date.now() } : g));
       if (user) void persistGroups(user.userId, next);
       return next;
     });
 
-    void writeGroupSystemMessage(
-      groupId,
-      `${resolveDisplayName(me)} updated Money in Chat settings`,
-      { systemEventKind: 'money_in_chat_updated', relatedUserId: me.userId },
-    );
+    void writeGroupSystemMessage(groupId, `${resolveDisplayName(me)} updated Money in Chat settings`, {
+      systemEventKind: 'money_in_chat_updated',
+      relatedUserId: me.userId,
+    });
   };
 
-  const updateGroup = async (
-    groupId: string,
-    updates: { name?: string; description?: string; photoURL?: string },
-  ) => {
+  const updateGroup = async (groupId: string, updates: { name?: string; description?: string; photoURL?: string }) => {
     if (!user) throw new Error('You must be signed in to edit a group.');
     const group = groups.find((g) => g.groupId === groupId);
     if (!group) throw new Error('Group not found.');
@@ -1359,7 +1345,9 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     const trimmedDescription = updates.description?.trim();
     const hasDescription = updates.description !== undefined;
 
-    const writePayload: Record<string, unknown> = { updatedAt: serverTimestamp() };
+    const writePayload: Record<string, unknown> = {
+      updatedAt: serverTimestamp(),
+    };
     if (hasName && trimmedName) writePayload.name = trimmedName;
     if (hasDescription) writePayload.description = trimmedDescription ?? '';
     if (updates.photoURL !== undefined) writePayload.photoURL = updates.photoURL;
@@ -1372,14 +1360,12 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     await updateDoc(doc(db, 'groups', groupId), writePayload);
 
     if (hasName && trimmedName && trimmedName !== group.name) {
-      await writeGroupSystemMessage(
-        groupId,
-        `${resolveDisplayName(user)} renamed the group to "${trimmedName}"`,
-        { systemEventKind: 'group_renamed', relatedUserId: user.userId },
-      );
+      await writeGroupSystemMessage(groupId, `${resolveDisplayName(user)} renamed the group to "${trimmedName}"`, {
+        systemEventKind: 'group_renamed',
+        relatedUserId: user.userId,
+      });
     }
   };
-
 
   /**
    * Convert every monetary value in the group to `newCurrency` using `rate`
@@ -1400,117 +1386,16 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     const target = newCurrency.toUpperCase();
     if (target === group.currency?.toUpperCase()) return;
 
-    const zeroDecimal = ['JPY', 'KRW', 'VND', 'CLP'].includes(target);
-    // Minor-unit scale for this target currency (100 = cents, 1 = whole units
-    // for zero-decimal currencies like JPY) — all rounding below happens in
-    // integer minor units to avoid floating-point drift.
-    const scale = zeroDecimal ? 1 : 100;
-    const toRawUnits = (v: number) => (v || 0) * rate * scale;
-    const round = (v: number) => Math.round(toRawUnits(v)) / scale;
-    const convertMoney = (v: number | undefined): number | undefined =>
-      v === undefined ? undefined : round(v);
+    if (pendingOpsRef.current.some((operation) => operation.groupId === groupId)) {
+      throw new Error('Wait for this group to finish syncing before converting its currency.');
+    }
 
-    /**
-     * Rounds a set of raw (unrounded) minor-unit values so they sum EXACTLY
-     * to round(total) — remainder minor-units go to the largest fractional
-     * parts first, the same convention splitMath.ts uses for split rounding.
-     * Without this, rounding every share independently drifts the sum away
-     * from the converted total by a cent or more per expense.
-     */
-    const reconcileShares = (total: number, raw: number[]): number[] => {
-      const totalUnits = Math.round(toRawUnits(total));
-      const floored = raw.map((v) => Math.floor(toRawUnits(v)));
-      let remainder = totalUnits - floored.reduce((a, b) => a + b, 0);
-      const byFraction = raw
-        .map((v, i) => ({ i, frac: toRawUnits(v) - Math.floor(toRawUnits(v)) }))
-        .sort((a, b) => b.frac - a.frac);
-      for (const { i } of byFraction) {
-        if (remainder === 0) break;
-        floored[i] += remainder > 0 ? 1 : -1;
-        remainder += remainder > 0 ? -1 : 1;
-      }
-      return floored.map((u) => u / scale);
-    };
+    await convertGroupCurrencyOnServer(groupId, group.currency.toUpperCase(), target, rate);
 
-    const convertParticipantConfig = (
-      cfg: ExpenseSplitParticipantConfig,
-    ): ExpenseSplitParticipantConfig => ({
-      ...cfg,
-      exactAmount: convertMoney(cfg.exactAmount),
-      adjustment: convertMoney(cfg.adjustment),
-      historicalPaid: convertMoney(cfg.historicalPaid),
-      computedAmount: convertMoney(cfg.computedAmount),
-    });
-
-    const convertSplitMetadata = (
-      meta: ExpenseSplitMetadata | undefined,
-    ): ExpenseSplitMetadata | undefined => {
-      if (!meta) return meta;
-      return {
-        ...meta,
-        taxAmount: convertMoney(meta.taxAmount),
-        tipAmount: convertMoney(meta.tipAmount),
-        receiptItems: meta.receiptItems?.map((item) => ({ ...item, price: round(item.price) })),
-        itemCategories: meta.itemCategories?.map((cat) => ({ ...cat, amount: round(cat.amount) })),
-        participantConfig: meta.participantConfig?.map(convertParticipantConfig),
-      };
-    };
-
-    const conversionAt = Date.now();
-    await runTransaction(db, async (txn) => {
-      const ref = doc(db, 'groups', groupId);
-      const snap = await txn.get(ref);
-      if (!snap.exists()) throw new Error('Group not found.');
-      const data = snap.data() as Group;
-
-      const expenses = (data.expenses ?? []).map((expense) => {
-        const shares = reconcileShares(
-          expense.amount,
-          (expense.participants ?? []).map((p) => p.share),
-        );
-        return {
-          ...advanceEntityRevision(expense, conversionAt),
-          amount: round(expense.amount),
-          participants: (expense.participants ?? []).map((participantShare, i) => ({
-            ...participantShare,
-            share: shares[i],
-          })),
-          splitMetadata: convertSplitMetadata(expense.splitMetadata),
-        };
-      });
-      const settlements = (data.settlements ?? []).map((settlement) => ({
-        ...advanceEntityRevision(settlement, conversionAt),
-        amount: round(settlement.amount),
-      }));
-      // Per-category budget thresholds are stored in the group currency too —
-      // left unconverted, a budget silently becomes looser or tighter by the
-      // conversion factor with no warning the next time it's checked.
-      const budgets = data.budgets
-        ? Object.fromEntries(
-            Object.entries(data.budgets).map(([category, amount]) => [category, round(amount)]),
-          )
-        : data.budgets;
-
-      txn.update(ref, {
-        currency: target,
-        expenses,
-        settlements,
-        ...(budgets ? { budgets } : {}),
-        updatedAt: serverTimestamp(),
-      });
-    });
-
-    await writeGroupSystemMessage(
-      groupId,
-      `converted the group currency from ${group.currency} to ${target}`,
-    );
+    await writeGroupSystemMessage(groupId, `converted the group currency from ${group.currency} to ${target}`);
   };
 
-  const updateMemberRole = async (
-    groupId: string,
-    userId: string,
-    role: 'admin' | 'member',
-  ) => {
+  const updateMemberRole = async (groupId: string, userId: string, role: 'admin' | 'member') => {
     if (!user) throw new Error('You must be signed in.');
     const group = groups.find((g) => g.groupId === groupId);
     if (!group) throw new Error('Group not found.');
@@ -1527,22 +1412,11 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     }
     if (target.role === role) return;
 
-    await runTransaction(db, async (txn) => {
-      const ref = doc(db, 'groups', groupId);
-      const snap = await txn.get(ref);
-      if (!snap.exists()) throw new Error('Group not found.');
-      const data = snap.data() as Group;
-      const newMembers = (data.members ?? []).map((member) =>
-        member.userId === userId ? { ...member, role } : member,
-      );
-      txn.update(ref, { members: newMembers, updatedAt: serverTimestamp() });
-    });
+    await mutateGroupMember(groupId, userId, role === 'admin' ? 'promote' : 'demote');
 
     await writeGroupSystemMessage(
       groupId,
-      role === 'admin'
-        ? `${resolveDisplayName(target)} is now an admin`
-        : `${resolveDisplayName(target)} is no longer an admin`,
+      role === 'admin' ? `${resolveDisplayName(target)} is now an admin` : `${resolveDisplayName(target)} is no longer an admin`,
       {
         systemEventKind: role === 'admin' ? 'role_changed_admin' : 'role_changed_member',
         relatedUserId: target.userId,
@@ -1573,84 +1447,23 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       throw new Error('Admins can only remove regular members. Ask the owner.');
     }
 
-    let nextParticipants: ChatParticipant[] | undefined;
-    let nextParticipantIds: string[] | undefined;
+    await mutateGroupMember(groupId, userId, 'remove');
+    const nextParticipants: ChatParticipant[] = group.members
+      .filter((member) => member.userId !== userId)
+      .map((member) => ({
+        userId: member.userId,
+        displayName: resolveDisplayName(member),
+        ...(member.photoURL ? { photoURL: member.photoURL } : {}),
+        status: 'offline',
+      }));
+    const nextParticipantIds = nextParticipants.map((participant) => participant.userId);
 
-    await runTransaction(db, async (txn) => {
-      const ref = doc(db, 'groups', groupId);
-      const snap = await txn.get(ref);
-      if (!snap.exists()) throw new Error('Group not found.');
-      const data = snap.data() as Group;
-
-      const removed = (data.members ?? []).find((member) => member.userId === userId);
-      const newMembers = (data.members ?? []).filter((member) => member.userId !== userId);
-      const newMemberIds = (data.memberIds ?? []).filter((id) => id !== userId);
-
-      // Archive instead of drop: keeps displayName/photo resolvable forever
-      // so historical balances/debts don't render as "Unknown".
-      const existingArchive = (data.archivedMembers ?? []).filter(
-        (member) => member.userId !== userId,
-      );
-      const archivedEntry: GroupMember = removed
-        ? {
-            ...removed,
-            displayName: resolveDisplayName(removed),
-            role: 'member',
-            balance: 0,
-            archived: true,
-            archivedAt: Date.now(),
-            archivedReason: 'removed',
-          }
-        : {
-            userId,
-            displayName: resolveDisplayName(target),
-            ...(target.photoURL ? { photoURL: target.photoURL } : {}),
-            role: 'member',
-            balance: 0,
-            archived: true,
-            archivedAt: Date.now(),
-            archivedReason: 'removed',
-          };
-
-      // stripUndefinedDeep must not wrap serverTimestamp() — see the comment
-      // at its joinGroup call site for why that silently corrupts the sentinel.
-      txn.update(ref, {
-        ...stripUndefinedDeep({
-          members: newMembers,
-          memberIds: newMemberIds,
-          archivedMembers: [...existingArchive, archivedEntry],
-        }),
-        updatedAt: serverTimestamp(),
-      });
+    await writeGroupSystemMessage(groupId, `${resolveDisplayName(target)} was removed from the group`, {
+      participantsOverride: nextParticipants,
+      participantIdsOverride: nextParticipantIds,
+      systemEventKind: 'member_removed',
+      relatedUserId: target.userId,
     });
-
-    // Mirror removal in the chat thread (best effort).
-    try {
-      const chatsRef = collection(db, 'chats');
-      const chatQ = query(chatsRef, where('groupId', '==', groupId));
-      const chatSnap = await getDocs(chatQ);
-      if (!chatSnap.empty) {
-        const chatDoc = chatSnap.docs[0];
-        const chatData = chatDoc.data() as Record<string, unknown>;
-        const currentParticipants = (chatData.participants as ChatParticipant[] | undefined) ?? [];
-        const currentParticipantIds = (chatData.participantIds as string[] | undefined) ?? [];
-        nextParticipants = currentParticipants.filter((p) => p.userId !== userId);
-        nextParticipantIds = currentParticipantIds.filter((id) => id !== userId);
-      }
-    } catch (error) {
-      console.warn('removeMember chat sync prefetch failed', error);
-    }
-
-    await writeGroupSystemMessage(
-      groupId,
-      `${resolveDisplayName(target)} was removed from the group`,
-      {
-        participantsOverride: nextParticipants,
-        participantIdsOverride: nextParticipantIds,
-        systemEventKind: 'member_removed',
-        relatedUserId: target.userId,
-      },
-    );
   };
 
   const leaveGroup = async (groupId: string) => {
@@ -1669,8 +1482,8 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     if (Math.abs(me.balance) >= 0.005) {
       throw new Error(
         me.balance > 0
-          ? `You're owed ${formatCurrency(me.balance, group.currency)} — settle up before leaving.`
-          : `You owe ${formatCurrency(Math.abs(me.balance), group.currency)} — settle up before leaving.`,
+          ? `You're owed ${formatCurrency(me.balance, group.currency)}. Settle up before leaving.`
+          : `You owe ${formatCurrency(Math.abs(me.balance), group.currency)}. Settle up before leaving.`,
       );
     }
 
@@ -1686,9 +1499,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       const newMembers = (data.members ?? []).filter((member) => member.userId !== user.userId);
       const newMemberIds = (data.memberIds ?? []).filter((id) => id !== user.userId);
 
-      const existingArchive = (data.archivedMembers ?? []).filter(
-        (member) => member.userId !== user.userId,
-      );
+      const existingArchive = (data.archivedMembers ?? []).filter((member) => member.userId !== user.userId);
       const archivedEntry: GroupMember = {
         userId: user.userId,
         displayName: resolveDisplayName(meRecord ?? me),
@@ -1764,9 +1575,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
 
     const opCount = 1 + chatSnap.size + expSnap.size;
     if (opCount > 450) {
-      throw new Error(
-        'This group has too many linked records to delete in a single operation. Contact support.',
-      );
+      throw new Error('This group has too many linked records to delete in a single operation. Contact support.');
     }
 
     await batch.commit();

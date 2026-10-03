@@ -130,7 +130,7 @@ describe('what did I pay for / recent', () => {
   it('"what did I pay for" lists the user\'s paid expenses', () => {
     const r = answerExpenseQuery('what did I pay for?', ctx(expenses));
     expect(r.answer).toContain('You paid for 1 expense');
-    expect(r.answer).toContain('Hotel — 200.00 USD');
+    expect(r.answer).toContain('Hotel · 200.00 USD');
     expect(r.sources).toHaveLength(1);
   });
 
@@ -150,7 +150,7 @@ describe('biggest / total / count / summary', () => {
 
   it('biggest expenses are ranked correctly', () => {
     const r = answerExpenseQuery('what were our biggest expenses?', ctx(expenses));
-    expect(r.answer).toContain('1. Hotel — 999.99 USD');
+    expect(r.answer).toContain('1. Hotel · 999.99 USD');
     expect(r.sources[0].title).toBe('Hotel');
   });
 

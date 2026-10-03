@@ -34,20 +34,12 @@ import { authenticate, biometricLabel, isBiometricAvailable } from '@/services/b
 import { lightHaptic, mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Animated,
-  Easing,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Animated, Easing, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Switch, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassCard } from './GlassCard';
 import { GuardCodePad, type CodePadOutcome } from './GuardCodePad';
+import { ScrimBackdrop } from './ScrimBackdrop';
 
 // ---------------------------------------------------------------------------
 // Translucent chrome ON the glass — tints only, the material shows through.
@@ -59,10 +51,25 @@ const segSelectedBg = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.16)' : 
 
 // Editable draft keys — flushed as one updateGuard() diff.
 const DRAFT_KEYS = [
-  'enabled', 'action', 'textStyle', 'amountStyle', 'hideNames', 'hidePhotos',
-  'hidePreviews', 'hideWallpaper', 'hideProfile', 'targets', 'groupScope',
-  'chatScope', 'sensitivity', 'rearmOnBackground', 'biometricUnlock',
-  'hideOnScreenshot', 'blockScreenRecording', 'panicCorner', 'flipToHide',
+  'enabled',
+  'action',
+  'textStyle',
+  'amountStyle',
+  'hideNames',
+  'hidePhotos',
+  'hidePreviews',
+  'hideWallpaper',
+  'hideProfile',
+  'targets',
+  'groupScope',
+  'chatScope',
+  'sensitivity',
+  'rearmOnBackground',
+  'biometricUnlock',
+  'hideOnScreenshot',
+  'blockScreenRecording',
+  'panicCorner',
+  'flipToHide',
   'revealTimeoutMs',
 ] as const;
 type DraftKey = (typeof DRAFT_KEYS)[number];
@@ -91,9 +98,21 @@ const draftFrom = (s: PrivacyGuardSettings): Draft => ({
   revealTimeoutMs: s.revealTimeoutMs,
 });
 
-const TARGET_ROWS: Array<{ key: keyof GuardTargets; label: string; hint: string }> = [
-  { key: 'expenses', label: 'Expenses & balances', hint: 'Amounts in expense groups' },
-  { key: 'charts', label: 'Charts & stats', hint: 'Spending charts and insights' },
+const TARGET_ROWS: Array<{
+  key: keyof GuardTargets;
+  label: string;
+  hint: string;
+}> = [
+  {
+    key: 'expenses',
+    label: 'Expenses & balances',
+    hint: 'Amounts in expense groups',
+  },
+  {
+    key: 'charts',
+    label: 'Charts & stats',
+    hint: 'Spending charts and insights',
+  },
   { key: 'chats', label: 'Chats', hint: 'Conversations and previews' },
   { key: 'calls', label: 'Calls', hint: 'Call history' },
   { key: 'friends', label: 'Friends', hint: 'Friends list and balances' },
@@ -123,6 +142,7 @@ const Segment = <T extends string>({ options, value, onChange }: SegmentProps<T>
               onChange(o.value);
             }}
             accessibilityRole="button"
+            accessibilityLabel={o.label}
             accessibilityState={{ selected }}
             style={[
               styles.segmentItem,
@@ -167,17 +187,7 @@ const Card = ({ children, style }: { children: React.ReactNode; style?: object }
   if (theme?.surfaceStyle === 'flat') {
     return <View style={[styles.cardFlat, style]}>{children}</View>;
   }
-  return (
-    <View
-      style={[
-        styles.card,
-        { backgroundColor: cardTint(isDark), borderColor: hairline(isDark) },
-        style,
-      ]}
-    >
-      {children}
-    </View>
-  );
+  return <View style={[styles.card, { backgroundColor: cardTint(isDark), borderColor: hairline(isDark) }, style]}>{children}</View>;
 };
 
 const Row = ({
@@ -203,7 +213,10 @@ const Row = ({
       style={[
         styles.row,
         flat && styles.rowFlat,
-        !last && { borderBottomColor: hairline(isDark), borderBottomWidth: StyleSheet.hairlineWidth },
+        !last && {
+          borderBottomColor: hairline(isDark),
+          borderBottomWidth: StyleSheet.hairlineWidth,
+        },
       ]}
     >
       <View style={styles.rowText}>
@@ -240,20 +253,28 @@ const ToggleRow = ({
   onValueChange: (v: boolean) => void;
   last?: boolean;
 }) => (
-  <Row
-    label={label}
-    hint={hint}
-    last={last}
-    right={
-      <Switch
-        value={value}
-        onValueChange={(v) => {
-          selectionHaptic();
-          onValueChange(v);
-        }}
-      />
-    }
-  />
+  <TouchableOpacity
+    onPress={() => {
+      selectionHaptic();
+      onValueChange(!value);
+    }}
+    activeOpacity={0.65}
+    accessibilityRole="switch"
+    accessibilityLabel={label}
+    accessibilityHint={hint}
+    accessibilityState={{ checked: value }}
+  >
+    <Row
+      label={label}
+      hint={hint}
+      last={last}
+      right={
+        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          <Switch value={value} onValueChange={onValueChange} />
+        </View>
+      }
+    />
+  </TouchableOpacity>
 );
 
 const Label = ({ text }: { text: string }) => {
@@ -280,7 +301,10 @@ const ScopeEditor = ({ scope, items, onChange }: ScopeEditorProps) => {
   const toggleId = (id: string) => {
     selectionHaptic();
     const has = scope.ids.includes(id);
-    onChange({ ...scope, ids: has ? scope.ids.filter((x) => x !== id) : [...scope.ids, id] });
+    onChange({
+      ...scope,
+      ids: has ? scope.ids.filter((x) => x !== id) : [...scope.ids, id],
+    });
   };
 
   const selectedCount = items.filter((i) => scope.ids.includes(i.id)).length;
@@ -307,7 +331,10 @@ const ScopeEditor = ({ scope, items, onChange }: ScopeEditorProps) => {
           <View
             style={[
               styles.scopeHeader,
-              { borderBottomColor: hairline(isDark), borderBottomWidth: StyleSheet.hairlineWidth },
+              {
+                borderBottomColor: hairline(isDark),
+                borderBottomWidth: StyleSheet.hairlineWidth,
+              },
             ]}
           >
             <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }}>
@@ -322,6 +349,8 @@ const ScopeEditor = ({ scope, items, onChange }: ScopeEditorProps) => {
                 });
               }}
               accessibilityRole="button"
+              accessibilityLabel={scope.ids.length === items.length ? 'Clear selection' : 'Select all'}
+              style={styles.scopeAction}
             >
               <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>
                 {scope.ids.length === items.length ? 'Clear' : 'Select all'}
@@ -344,6 +373,7 @@ const ScopeEditor = ({ scope, items, onChange }: ScopeEditorProps) => {
                   onPress={() => toggleId(id)}
                   activeOpacity={0.65}
                   accessibilityRole="button"
+                  accessibilityLabel={label}
                   accessibilityState={{ selected }}
                 >
                   <View
@@ -356,15 +386,17 @@ const ScopeEditor = ({ scope, items, onChange }: ScopeEditorProps) => {
                     ]}
                   >
                     <View style={[styles.initialChip, { backgroundColor: trackBg(isDark) }]}>
-                      <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '700' }}>
+                      <Text
+                        variant="labelSmall"
+                        style={{
+                          color: theme.colors.onSurfaceVariant,
+                          fontWeight: '700',
+                        }}
+                      >
                         {initials}
                       </Text>
                     </View>
-                    <Text
-                      variant="bodyMedium"
-                      numberOfLines={1}
-                      style={{ color: theme.colors.onSurface, flex: 1 }}
-                    >
+                    <Text variant="bodyMedium" numberOfLines={1} style={{ color: theme.colors.onSurface, flex: 1 }}>
                       {label}
                     </Text>
                     <Ionicons
@@ -405,9 +437,7 @@ const DisguisePreview = ({ draft }: { draft: Draft }) => {
   const style = draft.textStyle;
   const groupName = draft.hideNames ? maskTextValue('Goa Trip 2026', style, 'group') : 'Goa Trip 2026';
   const personName = draft.hideNames ? maskTextValue('Alex Kim', style, 'person') : 'Alex Kim';
-  const preview = draft.hidePreviews
-    ? maskTextValue('Sent the hotel payment', style, 'preview')
-    : 'Sent the hotel payment';
+  const preview = draft.hidePreviews ? maskTextValue('Sent the hotel payment', style, 'preview') : 'Sent the hotel payment';
   const amount =
     draft.amountStyle === 'zeros'
       ? formatCurrency(0, 'USD')
@@ -421,14 +451,23 @@ const DisguisePreview = ({ draft }: { draft: Draft }) => {
       <View
         style={[
           styles.previewChatRow,
-          { borderBottomColor: hairline(isDark), borderBottomWidth: StyleSheet.hairlineWidth },
+          {
+            borderBottomColor: hairline(isDark),
+            borderBottomWidth: StyleSheet.hairlineWidth,
+          },
         ]}
       >
         <View style={[styles.previewAvatar, { backgroundColor: trackBg(isDark) }]}>
           {draft.hidePhotos ? (
             <Ionicons name="person" size={16} color={theme.colors.onSurfaceVariant} />
           ) : (
-            <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '700' }}>
+            <Text
+              variant="labelSmall"
+              style={{
+                color: theme.colors.onSurfaceVariant,
+                fontWeight: '700',
+              }}
+            >
               {initials}
             </Text>
           )}
@@ -454,7 +493,14 @@ const DisguisePreview = ({ draft }: { draft: Draft }) => {
             Paid by {personName}
           </Text>
         </View>
-        <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '700', fontVariant: ['tabular-nums'] }}>
+        <Text
+          variant="bodyMedium"
+          style={{
+            color: theme.colors.onSurface,
+            fontWeight: '700',
+            fontVariant: ['tabular-nums'],
+          }}
+        >
           {amount}
         </Text>
       </View>
@@ -481,7 +527,10 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
   const [codePad, setCodePad] = useState<null | 'secret' | 'duress'>(null);
   const [bioAvailable, setBioAvailable] = useState(false);
   const [bioLabel, setBioLabel] = useState('Face ID');
-  const [failedAttempts, setFailedAttempts] = useState<{ count: number; lastAt: number }>({ count: 0, lastAt: 0 });
+  const [failedAttempts, setFailedAttempts] = useState<{
+    count: number;
+    lastAt: number;
+  }>({ count: 0, lastAt: 0 });
 
   useEffect(() => {
     void isBiometricAvailable().then(setBioAvailable);
@@ -545,10 +594,7 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
     if (next) onClose();
   };
 
-  const groupItems = useMemo(
-    () => groups.map((g) => ({ id: g.groupId, label: g.name })),
-    [groups],
-  );
+  const groupItems = useMemo(() => groups.map((g) => ({ id: g.groupId, label: g.name })), [groups]);
   const chatItems = useMemo(
     () =>
       threads.map((t) => {
@@ -566,27 +612,34 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
 
   const activeTargets = TARGET_ROWS.filter((t) => draft.targets[t.key]);
   const footerSummary = !draft.enabled
-    ? 'Off — shaking does nothing'
+    ? 'Off. Shaking does nothing'
     : settings.active
-      ? 'Hidden now — shake or reveal to show'
+      ? 'Hidden now. Shake or reveal to show'
       : `Armed · ${draft.action === 'vanish' ? 'vanish' : 'disguise'} · ${
-          draft.targets.everything
-            ? 'everything'
-            : `${activeTargets.length || 'no'} surface${activeTargets.length === 1 ? '' : 's'}`
+          draft.targets.everything ? 'everything' : `${activeTargets.length || 'no'} surface${activeTargets.length === 1 ? '' : 's'}`
         }`;
 
-  const translateY = slide.interpolate({ inputRange: [0, 1], outputRange: [sheetH + 80, 0] });
+  const translateY = slide.interpolate({
+    inputRange: [0, 1],
+    outputRange: [sheetH + 80, 0],
+  });
 
   return (
     <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={close}>
       <View style={styles.overlay} pointerEvents="box-none">
-        <Pressable style={styles.backdrop} onPress={close} accessibilityLabel="Close" />
-        <Animated.View
-          onLayout={(e) => setSheetH(e.nativeEvent.layout.height)}
-          style={[styles.sheetWrap, { transform: [{ translateY }] }]}
-        >
+        <Pressable style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel="Close privacy guard settings">
+          <ScrimBackdrop pointerEvents="none" />
+        </Pressable>
+        <Animated.View onLayout={(e) => setSheetH(e.nativeEvent.layout.height)} style={[styles.sheetWrap, { transform: [{ translateY }] }]}>
           <GlassCard role="floating" style={styles.sheet} contentStyle={styles.sheetContent} intensity={70}>
-            <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)' }]} />
+            <View
+              style={[
+                styles.grabber,
+                {
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)',
+                },
+              ]}
+            />
             <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
               Shake to hide
             </Text>
@@ -594,14 +647,19 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
               A firm shake disguises or hides the chosen parts of the app until you enter the code.
             </Text>
 
-            <ScrollView
-              style={styles.scroll}
-              contentContainerStyle={styles.body}
-              showsVerticalScrollIndicator={false}
-            >
+            <ScrollView style={styles.scroll} contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
               {/* Hero status card */}
               <Card>
-                <View style={styles.heroRow}>
+                <Pressable
+                  style={styles.heroRow}
+                  onPress={() => {
+                    selectionHaptic();
+                    setArmed(!draft.enabled);
+                  }}
+                  accessibilityRole="switch"
+                  accessibilityLabel="Shake to hide"
+                  accessibilityState={{ checked: draft.enabled }}
+                >
                   <View style={[styles.heroIcon, { backgroundColor: trackBg(isDark) }]}>
                     <Ionicons
                       name={settings.active ? 'eye-off' : 'shield-half-outline'}
@@ -610,25 +668,45 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
                     />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                    <Text
+                      variant="bodyLarge"
+                      style={{
+                        color: theme.colors.onSurface,
+                        fontWeight: '700',
+                      }}
+                    >
                       {draft.enabled ? 'Armed' : 'Off'}
                     </Text>
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
                       {draft.enabled
                         ? settings.active
-                          ? 'Shields are up — content is hidden'
+                          ? 'Shields are up. Content is hidden'
                           : 'A firm shake hides the chosen surfaces'
                         : 'Nothing happens while off'}
                     </Text>
                   </View>
-                  <Switch value={draft.enabled} onValueChange={(v) => { selectionHaptic(); setArmed(v); }} />
-                </View>
+                  <Switch
+                    value={draft.enabled}
+                    onValueChange={(v) => {
+                      selectionHaptic();
+                      setArmed(v);
+                    }}
+                    pointerEvents="none"
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                  />
+                </Pressable>
                 <View style={[styles.heroActions, { borderTopColor: hairline(isDark) }]}>
                   <TouchableOpacity
                     onPress={toggleHidden}
                     activeOpacity={0.75}
                     accessibilityRole="button"
-                    style={[styles.heroButton, { backgroundColor: settings.active ? trackBg(isDark) : theme.colors.primary }]}
+                    style={[
+                      styles.heroButton,
+                      {
+                        backgroundColor: settings.active ? trackBg(isDark) : theme.colors.primary,
+                      },
+                    ]}
                   >
                     <Ionicons
                       name={settings.active ? 'eye-outline' : 'eye-off-outline'}
@@ -681,8 +759,8 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
                     onChange={(v) => patch({ amountStyle: v })}
                   />
                   <Text variant="labelSmall" style={[styles.hintLine, { color: theme.colors.onSurfaceVariant }]}>
-                    Fake names and the decoy ledger are drawn from real words and scale every amount
-                    consistently — balances still add up, so nothing looks redacted.
+                    Fake names and the decoy ledger are drawn from real words and scale every amount consistently. Balances still add up, so
+                    nothing looks redacted.
                   </Text>
                   <DisguisePreview draft={draft} />
                   <TouchableOpacity
@@ -690,7 +768,9 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
                       // Immediate action: rotating the salt re-randomizes every
                       // fake name and decoy amount (the preview updates live).
                       lightHaptic();
-                      void updateGuard({ disguiseSalt: Math.random().toString(36).slice(2, 10) });
+                      void updateGuard({
+                        disguiseSalt: Math.random().toString(36).slice(2, 10),
+                      });
                     }}
                     accessibilityRole="button"
                     style={styles.shuffleBtn}
@@ -701,7 +781,7 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
                     </Text>
                   </TouchableOpacity>
                   <Text variant="labelSmall" style={[styles.hintCentered, { color: theme.colors.onSurfaceVariant }]}>
-                    New fake names & amounts — for when someone has already seen these.
+                    New fake names & amounts. For when someone has already seen these.
                   </Text>
 
                   <Label text="ALSO DISGUISE" />
@@ -774,14 +854,10 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
               {!draft.targets.everything && (draft.targets.expenses || draft.targets.charts) && (
                 <>
                   <Label text="WHICH EXPENSE GROUPS" />
-                  <ScopeEditor
-                    scope={draft.groupScope}
-                    items={groupItems}
-                    onChange={(s) => patch({ groupScope: s })}
-                  />
+                  <ScopeEditor scope={draft.groupScope} items={groupItems} onChange={(s) => patch({ groupScope: s })} />
                   {draft.groupScope.mode !== 'all' && (
                     <Text variant="labelSmall" style={[styles.hintLine, { color: theme.colors.onSurfaceVariant }]}>
-                      Covered groups disappear from lists entirely while hidden — no masked rows.
+                      Covered groups disappear from lists entirely while hidden. No masked rows.
                     </Text>
                   )}
                 </>
@@ -790,11 +866,7 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
               {!draft.targets.everything && draft.targets.chats && (
                 <>
                   <Label text="WHICH CHATS" />
-                  <ScopeEditor
-                    scope={draft.chatScope}
-                    items={chatItems}
-                    onChange={(s) => patch({ chatScope: s })}
-                  />
+                  <ScopeEditor scope={draft.chatScope} items={chatItems} onChange={(s) => patch({ chatScope: s })} />
                   {draft.chatScope.mode !== 'all' && (
                     <Text variant="labelSmall" style={[styles.hintLine, { color: theme.colors.onSurfaceVariant }]}>
                       Covered chats disappear from the chat list, calls, and search while hidden.
@@ -864,7 +936,7 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
                 onChange={(v) => patch({ panicCorner: v })}
               />
               <Text variant="labelSmall" style={[styles.hintLine, { color: theme.colors.onSurfaceVariant }]}>
-                Triple-tap that corner of the screen to hide — silent, no shaking.
+                Triple-tap that corner of the screen to hide. Silent, no shaking.
               </Text>
 
               {/* Security */}
@@ -894,9 +966,7 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
                 <Row
                   label={settings.duressCodeHash ? 'Change duress code' : 'Set duress code'}
                   hint={
-                    settings.duressCodeHash
-                      ? 'Set — entering it fakes an unlock into a decoy app'
-                      : 'A second code for when someone makes you open it'
+                    settings.duressCodeHash ? 'Set. Entering it opens the decoy view' : 'A second code for when someone makes you open it'
                   }
                   onPress={() => {
                     lightHaptic();
@@ -950,15 +1020,13 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
                 />
               </Card>
               <Text variant="labelSmall" style={[styles.hintLine, { color: theme.colors.onSurfaceVariant }]}>
-                The duress code looks exactly like a real unlock — but sensitive chats and groups are
-                silently absent and every remaining figure is a convincing fake. Backgrounding the
-                app re-locks it.
+                The duress code looks exactly like a real unlock. But sensitive chats and groups are silently absent and every remaining
+                figure is a convincing fake. Backgrounding the app re-locks it.
               </Text>
 
               <Text variant="labelSmall" style={[styles.footnote, { color: theme.colors.onSurfaceVariant }]}>
-                To get back here: tap the version line in Settings 7 times, then enter your code.
-                When everything is locked, triple-tap the app name on the blank screen instead.
-                These settings live only on this device.
+                To get back here: tap the version line in Settings 7 times, then enter your code. When everything is locked, triple-tap the
+                app name on the blank screen instead. These settings live only on this device.
               </Text>
             </ScrollView>
 
@@ -966,14 +1034,13 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
             <View
               style={[
                 styles.footer,
-                { borderTopColor: hairline(isDark), paddingBottom: insets.bottom + 8 },
+                {
+                  borderTopColor: hairline(isDark),
+                  paddingBottom: insets.bottom + 8,
+                },
               ]}
             >
-              <Text
-                variant="labelSmall"
-                numberOfLines={2}
-                style={[styles.footerSummary, { color: theme.colors.onSurfaceVariant }]}
-              >
+              <Text variant="labelSmall" numberOfLines={2} style={[styles.footerSummary, { color: theme.colors.onSurfaceVariant }]}>
                 {footerSummary}
               </Text>
               <TouchableOpacity
@@ -999,23 +1066,25 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
         visible={codePad !== null}
         mode="set"
         title={codePad === 'duress' ? (settings.duressCodeHash ? 'Change duress code' : 'Set duress code') : 'New secret code'}
-        subtitle={
-          codePad === 'duress'
-            ? 'Must differ from your real code.'
-            : 'Used to open these settings and to unlock after a shake.'
-        }
+        subtitle={codePad === 'duress' ? 'Must differ from your real code.' : 'Used to open these settings and to unlock after a shake.'}
         onClose={() => setCodePad(null)}
         onSubmit={async (code): Promise<CodePadOutcome> => {
           const digest = await hashCode(code);
           if (codePad === 'duress') {
             if (digest === settings.codeHash) {
-              return { status: 'invalid', message: 'The duress code must not match your real code.' };
+              return {
+                status: 'invalid',
+                message: 'The duress code must not match your real code.',
+              };
             }
             await updateGuard({ duressCodeHash: digest });
             return { status: 'ok' };
           }
           if (settings.duressCodeHash && digest === settings.duressCodeHash) {
-            return { status: 'invalid', message: 'That already is your duress code — pick another.' };
+            return {
+              status: 'invalid',
+              message: 'That is already your duress code. Pick another.',
+            };
           }
           await updateGuard({ codeHash: digest });
           return { status: 'ok' };
@@ -1032,7 +1101,6 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.45)', // full-screen scrim — fades with the Modal
   },
   sheetWrap: {
     // FIXED height, not maxHeight: the GlassCard inside uses flex:1, and
@@ -1115,6 +1183,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   shuffleBtn: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1130,6 +1199,7 @@ const styles = StyleSheet.create({
   },
   segmentItem: {
     flex: 1,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 8,
@@ -1140,13 +1210,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    minHeight: 52,
+    paddingVertical: 4,
+  },
+  scopeAction: {
+    minHeight: 44,
+    minWidth: 72,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
   scopeEmpty: {
     paddingHorizontal: 14,
     paddingVertical: 14,
   },
   scopeRow: {
+    minHeight: 52,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -1179,6 +1257,7 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   heroButton: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1233,6 +1312,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   doneBtn: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingVertical: 10,
     paddingHorizontal: 26,
     borderRadius: 999,

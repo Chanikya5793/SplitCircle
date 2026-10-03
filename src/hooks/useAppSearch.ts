@@ -113,6 +113,7 @@ export const useAppSearch = () => {
 
     // Groups + their expenses
     for (const g of groups) {
+      if (g.hidden) continue;
       const names: Record<string, string> = {};
       for (const m of [...(g.members ?? []), ...(g.archivedMembers ?? [])]) {
         names[m.userId] = resolveDisplayName(m, 'Someone');
@@ -286,8 +287,7 @@ export const useAppSearch = () => {
     }
 
     return items;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, threads, friends, calls, user?.userId, user?.lockedChats, guard.active, guard.settings]);
+  }, [groups, threads, friends, calls, user?.userId, user?.lockedChats, guard.active, guard.settings, guard.isShielded]);
 
   const [baseIndex, setBaseIndex] = useState<SearchItem[]>([]);
   const [messageIndex, setMessageIndex] = useState<SearchItem[]>([]);
@@ -364,7 +364,17 @@ export const useAppSearch = () => {
   }, [threads, user?.userId, user?.lockedChats, guard.active, guard.settings]);
 
   // Full index is a cheap concat of the two tiers — no expensive reflatten.
-  const index = useMemo<SearchItem[]>(() => [...baseIndex, ...messageIndex], [baseIndex, messageIndex]);
+  // The debounced builders can still hold a pre-lock snapshot for one render.
+  // Apply the guard again at the read boundary, before a result or suggestion
+  // can paint while the new index is being assembled.
+  const hiddenGroupIds = useMemo(() => new Set(groups.filter((g) => g.hidden).map((g) => g.groupId)), [groups]);
+  const index = useMemo<SearchItem[]>(() => [...baseIndex, ...messageIndex].filter((item) => {
+    if (item.guardTarget === 'expenses' && item.guardEntityId && hiddenGroupIds.has(item.guardEntityId)) return false;
+    if (!guard.active) return true;
+    if (item.guardTarget && guard.isShielded(item.guardTarget, item.guardEntityId)) return false;
+    if (guard.settings.hidePreviews && (item.type === 'message' || item.type === 'chat')) return false;
+    return true;
+  }), [baseIndex, messageIndex, hiddenGroupIds, guard.active, guard.settings, guard.isShielded]);
 
   const itemMatchesScope = useCallback((item: SearchItem, scope: AppSearchScope) => {
     if (scope === 'all') return true;
@@ -420,11 +430,9 @@ export const useAppSearch = () => {
       const uniq = (arr: string[]) =>
         Array.from(new Set(arr.map((s) => s.trim()).filter(Boolean)));
 
-      const groupNames = shielded('expenses')
-        ? []
-        : uniq(
+      const groupNames = uniq(
             [...groups]
-              .filter((g) => !shielded('expenses', g.groupId))
+              .filter((g) => !g.hidden && !shielded('expenses', g.groupId))
               .sort((a, b) => byRecency(a.updatedAt, b.updatedAt))
               .map((g) => g.name),
           );
@@ -457,8 +465,7 @@ export const useAppSearch = () => {
           return uniq([...groupNames.slice(0, 3), ...friendNames.slice(0, 3)]).slice(0, 6);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [groups, friends, calls, guard.active],
+    [groups, friends, calls, guard.active, guard.settings, guard.isShielded],
   );
 
   return { search, indexSize: index.length, firstSearchableGroupId, getSuggestions };

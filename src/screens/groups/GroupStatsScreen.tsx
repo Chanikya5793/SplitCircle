@@ -1,3 +1,4 @@
+import { DetailScreenScaffold } from '@/components/ui/DetailScreenScaffold';
 // Group stats — upgraded per ai_layer/docs/22: range selector, AI/heuristic
 // insight cards, trends with deltas, member breakdown + fairness meter
 // (admin-gated visibility), merchants & receipt savings, forecast card, and
@@ -16,7 +17,7 @@ import {
   PaceBullet,
   SpendHeatmap,
 } from '@/components/stats/StatsVisuals';
-import { GuardedScreen } from '@/components/ui';
+import { GuardedScreen, SCREEN_GUTTER } from '@/components/ui';
 import { SpendingChart } from '@/components/SpendingChart';
 import { useAuth } from '@/context/AuthContext';
 import { useDisplayCurrency } from '@/context/DisplayCurrencyContext';
@@ -49,9 +50,8 @@ import {
   type StatsRange,
 } from '@/utils/statsInsights';
 import { lightHaptic } from '@/utils/haptics';
-import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { PieChart } from 'react-native-chart-kit';
 import { Icon, Text } from 'react-native-paper';
 
@@ -78,8 +78,8 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const { width: screenWidth } = useWindowDimensions();
-  const headerHeight = useHeaderHeight();
 
+  const [analysisExpanded, setAnalysisExpanded] = useState(false);
   const [range, setRange] = useState<StatsRange>('month');
   const [narrative, setNarrative] = useState<InsightNarrative | null>(null);
   const [narrativeLoading, setNarrativeLoading] = useState(false);
@@ -305,7 +305,9 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
   return (
     <LiquidBackground>
       <GuardedScreen target="expenses" entityId={group.groupId} label="Stats hidden">
-        <ScrollView contentContainerStyle={[styles.container, { paddingTop: headerHeight + 8 }]}>
+        <DetailScreenScaffold bottomSpacing={180}
+          horizontalInset={SCREEN_GUTTER}
+          contentContainerStyle={styles.container}>
           {/* Range selector */}
           <View style={styles.rangeRow}>
             {(Object.keys(RANGE_LABELS) as StatsRange[]).map((r) => (
@@ -317,6 +319,7 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={`Show ${RANGE_LABELS[r]}`}
+                accessibilityState={{ selected: range === r }}
                 style={[
                   styles.rangeChip,
                   {
@@ -338,6 +341,9 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
             ))}
           </View>
 
+          <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+            {RANGE_LABELS[range]} · {getConversion(group.groupId, group.currency)?.target ?? group.currency}
+          </Text>
           {/* Headline totals */}
           <GlassView style={styles.card}>
             <View style={styles.totalsRow}>
@@ -375,111 +381,6 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
             )}
           </GlassView>
 
-          {/* AI narrative (labeled by engine) */}
-          {narrative ? (
-            <TouchableOpacity
-              activeOpacity={0.88}
-              onPress={() => {
-                lightHaptic();
-                setChatOpen(true);
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Chat about these insights"
-            >
-            <GlassView style={styles.card}>
-              <View style={styles.aiHeader}>
-                <Icon
-                  source={narrative.source === 'pcc' ? 'cloud-lock-outline' : 'chip'}
-                  size={16}
-                  color={theme.colors.primary}
-                />
-                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }}>
-                  {narrative.source === 'pcc' ? 'Private Cloud Compute' : 'On-device intelligence'}
-                </Text>
-                <Icon source="chat-outline" size={16} color={theme.colors.primary} />
-              </View>
-              <Text
-                variant="bodyMedium"
-                style={{ color: theme.colors.onSurface }}
-                // First render is unclamped so onTextLayout sees the true line
-                // count; after that we clamp to 3 until the user expands.
-                numberOfLines={aiCollapsible && !aiExpanded ? 3 : undefined}
-                onTextLayout={(e) => {
-                  if (aiLineCount === 0) setAiLineCount(e.nativeEvent.lines.length);
-                }}
-              >
-                {narrative.text}
-              </Text>
-              {aiCollapsible && (
-                <TouchableOpacity
-                  onPress={() => {
-                    lightHaptic();
-                    setAiExpanded((v) => !v);
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel={aiExpanded ? 'Show less' : 'Show more'}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600', marginTop: 4 }}>
-                    {aiExpanded ? 'Less' : 'More'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </GlassView>
-            </TouchableOpacity>
-          ) : (
-            narrativeLoading && <AiNarrativeSkeleton />
-          )}
-
-          {/* Insight cards (deterministic — always available) */}
-          {bundle.cards.length > 0 && (
-            <View style={styles.cardsStack}>
-              {bundle.cards.map((c) => (
-                <GlassView key={c.id} style={styles.insightCard}>
-                  <View style={[styles.insightIcon, { backgroundColor: `${severityColor(c.severity)}22` }]}>
-                    <Icon source={CARD_ICONS[c.kind]} size={18} color={severityColor(c.severity)} />
-                  </View>
-                  <View style={styles.insightBody}>
-                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                      {c.title}
-                    </Text>
-                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                      {c.body}
-                    </Text>
-                  </View>
-                  {c.amount != null && (
-                    <Text variant="bodyMedium" style={{ color: severityColor(c.severity), fontWeight: '700' }}>
-                      {fmtMoney(c.amount, group.currency)}
-                    </Text>
-                  )}
-                </GlassView>
-              ))}
-            </View>
-          )}
-
-          {/* Momentum: this month vs last, per category */}
-          {momentumRows.length > 0 && (
-            <GlassView style={styles.card}>
-              <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-                Momentum
-              </Text>
-              <MomentumBars rows={momentumRows} />
-            </GlassView>
-          )}
-
-          {/* Spending trend */}
-          <SpendingChart expenses={group.expenses} currency={group.currency} rate={displayRate} showPieChart={false} />
-
-          {/* Rhythm: daily heatmap over the last 12 weeks */}
-          {bundle.heatmap.max > 0 && (
-            <GlassView style={styles.card}>
-              <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-                Rhythm
-              </Text>
-              <SpendHeatmap data={bundle.heatmap} />
-            </GlassView>
-          )}
-
           {/* Category pie + budgets */}
           <GlassView style={styles.card}>
             <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
@@ -500,8 +401,15 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
             ) : (
               <Text style={{ color: theme.colors.onSurfaceVariant }}>No expenses in this range.</Text>
             )}
+            {bundle.aggregate.byCategory.map((category) => (
+              <View key={category.category} style={{ gap: 2, marginTop: 8 }}>
+                <Text style={{ color: theme.colors.onSurface }}>{category.category}</Text>
+                <Text style={{ color: theme.colors.onSurfaceVariant }}>{fmtMoney(category.total, group.currency)}</Text>
+              </View>
+            ))}
             {bundle.budgets.length > 0 && (
               <View style={styles.budgetBlock}>
+                <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>Budgets · this month</Text>
                 {bundle.budgets.map((b) => (
                   <View key={b.category} style={styles.budgetRow}>
                     <View style={styles.budgetHeader}>
@@ -586,6 +494,128 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
             )}
           </GlassView>
 
+          <TouchableOpacity
+            onPress={() => { lightHaptic(); setAnalysisExpanded((expanded) => !expanded); }}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: analysisExpanded }}
+            style={{ minHeight: 48, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+          >
+            <Text style={{ color: theme.colors.primary, flex: 1 }}>More analysis</Text>
+            <Icon source={analysisExpanded ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.primary} />
+          </TouchableOpacity>
+          {analysisExpanded ? (
+            <View style={{ gap: 12 }}>
+              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                Comparisons and forecasts use their own periods, shown below. They may differ from the selected range.
+              </Text>
+          {/* AI narrative (labeled by engine) */}
+          {narrative ? (
+            <GlassView style={styles.card}>
+              <TouchableOpacity
+                activeOpacity={0.88}
+                onPress={() => {
+                  lightHaptic();
+                  setChatOpen(true);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Chat about these insights"
+              >
+                <View>
+              <View style={styles.aiHeader}>
+                <Icon
+                  source={narrative.source === 'pcc' ? 'cloud-lock-outline' : 'chip'}
+                  size={16}
+                  color={theme.colors.primary}
+                />
+                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }}>
+                  {narrative.source === 'pcc' ? 'Private Cloud Compute' : 'On-device intelligence'}
+                </Text>
+                <Icon source="chat-outline" size={16} color={theme.colors.primary} />
+              </View>
+              <Text
+                variant="bodyMedium"
+                style={{ color: theme.colors.onSurface }}
+                // First render is unclamped so onTextLayout sees the true line
+                // count; after that we clamp to 3 until the user expands.
+                numberOfLines={aiCollapsible && !aiExpanded ? 3 : undefined}
+                onTextLayout={(e) => {
+                  if (aiLineCount === 0) setAiLineCount(e.nativeEvent.lines.length);
+                }}
+              >
+                {narrative.text}
+              </Text>
+                </View>
+              </TouchableOpacity>
+              {aiCollapsible && (
+                <TouchableOpacity
+                  onPress={() => {
+                    lightHaptic();
+                    setAiExpanded((v) => !v);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={aiExpanded ? 'Show less' : 'Show more'}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600', marginTop: 4 }}>
+                    {aiExpanded ? 'Less' : 'More'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </GlassView>
+          ) : (
+            narrativeLoading && <AiNarrativeSkeleton />
+          )}
+
+          {/* Insight cards (deterministic — always available) */}
+          {bundle.cards.length > 0 && (
+            <View style={styles.cardsStack}>
+              {bundle.cards.map((c) => (
+                <GlassView key={c.id} style={styles.insightCard}>
+                  <View style={[styles.insightIcon, { backgroundColor: `${severityColor(c.severity)}22` }]}>
+                    <Icon source={CARD_ICONS[c.kind]} size={18} color={severityColor(c.severity)} />
+                  </View>
+                  <View style={styles.insightBody}>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                      {c.title}
+                    </Text>
+                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                      {c.body}
+                    </Text>
+                  </View>
+                  {c.amount != null && (
+                    <Text variant="bodyMedium" style={{ color: severityColor(c.severity), fontWeight: '700' }}>
+                      {fmtMoney(c.amount, group.currency)}
+                    </Text>
+                  )}
+                </GlassView>
+              ))}
+            </View>
+          )}
+
+          {/* Momentum: this month vs last, per category */}
+          {momentumRows.length > 0 && (
+            <GlassView style={styles.card}>
+              <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+                Categories: this month vs last month
+              </Text>
+              <MomentumBars rows={momentumRows} />
+            </GlassView>
+          )}
+
+          {/* Spending trend */}
+          <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>Weekly spending · recent recorded weeks, across all expenses</Text>
+          <SpendingChart expenses={group.expenses} currency={group.currency} rate={displayRate} showPieChart={false} />
+
+          {/* Rhythm: daily heatmap over the last 12 weeks */}
+          {bundle.heatmap.max > 0 && (
+            <GlassView style={styles.card}>
+              <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+                Daily spending: last 12 weeks
+              </Text>
+              <SpendHeatmap data={bundle.heatmap} />
+            </GlassView>
+          )}
+
           {/* Merchants & savings */}
           {bundle.merchants.merchants.length > 0 && (
             <GlassView style={styles.card}>
@@ -619,7 +649,7 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
           {/* Forecast */}
           <GlassView style={styles.card}>
             <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-              This month's trajectory
+              Forecast · this month
             </Text>
             <View style={styles.totalsRow}>
               <View style={styles.totalCol}>
@@ -659,7 +689,9 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
               </Text>
             )}
           </GlassView>
-        </ScrollView>
+            </View>
+          ) : null}
+        </DetailScreenScaffold>
 
         {/* Insights chat — the narrative card, picked up as a thread (doc 23). */}
         {narrative && (
@@ -686,7 +718,6 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
 
 const styles = StyleSheet.create({
   container: {
-    padding: 16,
     paddingBottom: 180,
     // Tightened 12 -> 8 (2026-08-07, compact density pass).
     gap: 8,

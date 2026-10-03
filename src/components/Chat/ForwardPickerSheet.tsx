@@ -1,5 +1,5 @@
 import { FONT_CAP } from '@/utils/a11yText';
-import { GlassCard } from '@/components/ui';
+import { GlassCard, ScrimBackdrop } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
@@ -19,6 +19,7 @@ import {
   View,
 } from 'react-native';
 import { Avatar, Text, TextInput } from 'react-native-paper';
+import Animated, { SlideInDown } from 'react-native-reanimated';
 
 interface ForwardPickerSheetProps {
   visible: boolean;
@@ -95,21 +96,33 @@ export const ForwardPickerSheet = ({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType="fade"
       statusBarTranslucent
       onRequestClose={handleClose}
     >
       <View style={styles.root}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={handleClose}>
-          <View style={styles.backdrop} />
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={handleClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close forward picker"
+        >
+          <ScrimBackdrop pointerEvents="none" />
         </Pressable>
+        {visible ? (
+        <Animated.View entering={SlideInDown.springify().damping(30).stiffness(350)} accessibilityViewIsModal>
         <GlassCard role="floating" style={styles.sheetGlass} contentStyle={styles.sheetContent}>
           <View style={styles.handleWrap}>
             <View style={[styles.handle, { backgroundColor: isDark ? '#555' : '#ccc' }]} />
           </View>
           <View style={styles.header}>
             <Text style={[styles.title, { color: theme.colors.onSurface }]}>Forward to</Text>
-            <TouchableOpacity onPress={handleClose} hitSlop={10}>
+            <TouchableOpacity
+              onPress={handleClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close forward picker"
+              style={styles.closeButton}
+            >
               <Ionicons name="close" size={22} color={theme.colors.onSurfaceVariant} />
             </TouchableOpacity>
           </View>
@@ -147,6 +160,9 @@ export const ForwardPickerSheet = ({
                   onPress={() => toggle(item.chatId)}
                   activeOpacity={0.7}
                   style={styles.row}
+                  accessibilityRole="checkbox"
+                  accessibilityLabel={titleFor(item)}
+                  accessibilityState={{ checked: selected }}
                 >
                   {photo ? (
                     <Avatar.Image size={42} source={{ uri: photo }} />
@@ -155,7 +171,7 @@ export const ForwardPickerSheet = ({
                       size={42}
                       label={initialsFor(item)}
                       style={{ backgroundColor: theme.colors.primary }}
-                      color="#fff"
+                      color={theme.colors.onPrimary}
         maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
       />
                   )}
@@ -176,7 +192,7 @@ export const ForwardPickerSheet = ({
                       },
                     ]}
                   >
-                    {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
+                    {selected && <Ionicons name="checkmark" size={14} color={theme.colors.onPrimary} />}
                   </View>
                 </TouchableOpacity>
               );
@@ -196,19 +212,30 @@ export const ForwardPickerSheet = ({
               styles.sendButton,
               {
                 backgroundColor: selectedIds.length === 0
-                  ? (isDark ? '#444' : '#ccc')
+                  ? theme.colors.surfaceVariant
                   : theme.colors.primary,
               },
             ]}
           >
-            <Ionicons name="send" size={18} color="#fff" />
-            <Text style={styles.sendButtonText}>
+            <Ionicons
+              name="send"
+              size={18}
+              color={selectedIds.length === 0 ? theme.colors.onSurfaceVariant : theme.colors.onPrimary}
+            />
+            <Text
+              style={[
+                styles.sendButtonText,
+                { color: selectedIds.length === 0 ? theme.colors.onSurfaceVariant : theme.colors.onPrimary },
+              ]}
+            >
               {selectedIds.length === 0
                 ? 'Select chats'
                 : `Forward to ${selectedIds.length} chat${selectedIds.length === 1 ? '' : 's'}`}
             </Text>
           </TouchableOpacity>
         </GlassCard>
+        </Animated.View>
+        ) : null}
       </View>
     </Modal>
   );
@@ -216,7 +243,6 @@ export const ForwardPickerSheet = ({
 
 const styles = StyleSheet.create({
   root: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)' },
   sheetGlass: {
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
@@ -239,6 +265,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   title: { fontSize: 18, fontWeight: '700' },
+  closeButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -249,7 +276,7 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     backgroundColor: 'transparent',
-    height: 40,
+    minHeight: 44,
   },
   list: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12 },
   row: {
@@ -280,7 +307,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   sendButtonText: {
-    color: '#fff',
     fontSize: 15,
     fontWeight: '600',
   },

@@ -26,7 +26,10 @@ MIN_FREE_GB=12
 if [ "${EAS_BUILD_PLATFORM:-}" = "android" ]; then
   MIN_FREE_GB=6
 fi
-FREE_GB=$(df -g / | awk 'NR==2 {print $4}')
+# Measure the writable volume that actually holds DerivedData. On modern APFS,
+# `df -g /` can report the sealed system volume and overstate the space the
+# archive is able to consume on /System/Volumes/Data.
+FREE_GB=$(df -g "$DERIVED" | awk 'NR==2 {print $4}')
 if [ "${FREE_GB:-0}" -lt "$MIN_FREE_GB" ]; then
   echo "❌ eas-local-preflight: only ${FREE_GB}GB free — this build needs ~${MIN_FREE_GB}GB."
   echo "   Free up space (check ~/Library/Developer/Xcode/DerivedData and old build artifacts) and retry."

@@ -207,7 +207,7 @@ export const subscribeToSyncBatches = (
         // rejected without ever being handed to the crypto that decrypts it.
         const authentic = await verifyWithIdentity(raw.b, raw.sig, responder.identityKey);
         if (!authentic) {
-          console.error('⚠️ Sync batch failed signature verification — discarded', {
+          console.error('⚠️ Sync batch failed signature verification. Discarded', {
             responderDeviceId: raw.responderDeviceId,
           });
           await consume();
@@ -243,7 +243,7 @@ export const subscribeToSyncBatches = (
         // push unsolicited history into this one.
         const request = outstandingRequestFor(body.chatId);
         if (!request || !isBatchForRequest(body, request)) {
-          console.error('⚠️ Sync batch did not match an outstanding request — discarded', {
+          console.error('⚠️ Sync batch did not match an outstanding request. Discarded', {
             chatId: body.chatId,
           });
           await consume();

@@ -1,3 +1,4 @@
+import { DetailScreenScaffold } from '@/components/ui/DetailScreenScaffold';
 // Personal cross-group spending dashboard (ai_layer/docs/22). Aggregates the
 // user's OWN share across every visible group — amounts stay in each group's
 // currency (no silent cross-currency summing). Hosts the PCC deep-analysis
@@ -9,7 +10,7 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { AiNarrativeSkeleton } from '@/components/stats/AiNarrativeSkeleton';
 import { InsightChatOverlay } from '@/components/stats/InsightChatOverlay';
 import { HBar } from '@/components/stats/StatsVisuals';
-import { GuardedScreen } from '@/components/ui';
+import { GuardedScreen, SCREEN_GUTTER } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -24,17 +25,17 @@ import { formatCurrency } from '@/utils/currency';
 import { buildPersonalStats, RANGE_LABELS, type StatsRange } from '@/utils/statsInsights';
 import { lightHaptic } from '@/utils/haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ScrollView,
+
   StyleSheet,
+  Pressable,
   Switch,
   TextInput as RNTextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Icon, Text } from 'react-native-paper';
+import { Button, Icon, Text } from 'react-native-paper';
 
 const PERSONAL_BUDGETS_KEY = 'personal_budgets_v1';
 
@@ -45,9 +46,10 @@ export const PersonalStatsScreen = () => {
   const { groups } = useGroups();
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
-  const headerHeight = useHeaderHeight();
 
   const [range, setRange] = useState<StatsRange>('month');
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [showBudgets, setShowBudgets] = useState(false);
   const [narrative, setNarrative] = useState<InsightNarrative | null>(null);
   const [narrativeLoading, setNarrativeLoading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -62,6 +64,12 @@ export const PersonalStatsScreen = () => {
     if (!user) return null;
     return buildPersonalStats(visibleGroups, user.userId, range, Date.now());
   }, [visibleGroups, user?.userId, range]);
+
+  const spendingTotals = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const group of bundle?.groups ?? []) totals.set(group.currency, (totals.get(group.currency) ?? 0) + group.yourShare);
+    return [...totals.entries()];
+  }, [bundle]);
 
   const monthBundle = useMemo(() => {
     if (!user) return null;
@@ -152,8 +160,9 @@ export const PersonalStatsScreen = () => {
   return (
     <LiquidBackground>
       <GuardedScreen target="expenses" label="Stats hidden" duressBehavior="blank" duressLabel="Not enough activity to chart yet.">
-        <ScrollView
-          contentContainerStyle={[styles.container, { paddingTop: headerHeight + 8 }]}
+        <DetailScreenScaffold bottomSpacing={140}
+          horizontalInset={SCREEN_GUTTER}
+          contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
         >
@@ -165,8 +174,9 @@ export const PersonalStatsScreen = () => {
                   lightHaptic();
                   setRange(r);
                 }}
-                accessibilityRole="button"
+                accessibilityRole="radio"
                 accessibilityLabel={`Show ${RANGE_LABELS[r]}`}
+                accessibilityState={{ checked: range === r }}
                 style={[
                   styles.rangeChip,
                   {
@@ -188,6 +198,82 @@ export const PersonalStatsScreen = () => {
             ))}
           </View>
 
+          <GlassView style={styles.card}>
+            <Text style={[theme.typography.subtitle, { color: theme.colors.onSurface }]}>Your spending · {RANGE_LABELS[range]}</Text>
+            <Text style={[theme.typography.caption, { color: theme.colors.onSurfaceVariant }]}>Your share across visible groups. Currencies are shown separately.</Text>
+            {spendingTotals.length ? spendingTotals.map(([currency, total]) => (
+              <View key={currency} style={{ marginTop: theme.spacing.md }}>
+                <Text style={[theme.typography.caption, { color: theme.colors.onSurfaceVariant }]}>{currency}</Text>
+                <Text style={[theme.typography.headline, { color: theme.colors.onSurface, fontVariant: ['tabular-nums'] }]}>{formatCurrency(total, currency)}</Text>
+              </View>
+            )) : <Text style={{ color: theme.colors.onSurfaceVariant }}>No spending recorded in this period. Try another period or add an expense.</Text>}
+          </GlassView>
+
+          <GlassView style={styles.card}>
+            <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+              Your share by group
+            </Text>
+            {(bundle?.groups ?? []).length === 0 ? (
+              <Text style={{ color: theme.colors.onSurfaceVariant }}>No spending in this range.</Text>
+            ) : (
+              (() => {
+                const rows = bundle?.groups ?? [];
+                // Bars only compare within ONE currency — mixed-currency lists
+                // stay numeric-only (no silent cross-currency scaling).
+                const singleCurrency = new Set(rows.map((g) => g.currency)).size === 1;
+                const maxShare = rows.reduce((m, g) => Math.max(m, g.yourShare), 0);
+                return rows.map((g) => (
+                  <View key={g.groupId} style={styles.rowBlock}>
+                    <View style={styles.row}>
+                      <Text style={[styles.rowName, { color: theme.colors.onSurface }]} numberOfLines={theme.fontScale >= 1.5 ? undefined : 1}>
+                        {g.name}
+                        <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                          {'  '}×{g.count}
+                        </Text>
+                      </Text>
+                      <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                        {formatCurrency(g.yourShare, g.currency)}
+                      </Text>
+                    </View>
+                    {singleCurrency && (
+                      <HBar value={g.yourShare} max={maxShare} color={theme.colors.chart[0]} height={5} />
+                    )}
+                  </View>
+                ));
+              })()
+            )}
+          </GlassView>
+
+          {Object.entries(bundle?.categoriesByCurrency ?? {}).map(([currency, cats]) => (
+            <GlassView key={currency} style={styles.card}>
+              <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+                Your categories · {currency}
+              </Text>
+              {cats.map((c) => (
+                <View key={c.category} style={styles.rowBlock}>
+                  <View style={styles.row}>
+                    <Text style={[styles.rowName, { color: theme.colors.onSurface }]} numberOfLines={theme.fontScale >= 1.5 ? undefined : 1}>
+                      {c.category}
+                    </Text>
+                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                      {formatCurrency(c.yourShare, currency)}
+                    </Text>
+                  </View>
+                  <HBar
+                    value={c.yourShare}
+                    max={cats[0]?.yourShare ?? 0}
+                    color={theme.colors.chart[0]}
+                    height={5}
+                  />
+                </View>
+              ))}
+            </GlassView>
+          ))}
+
+          <Button mode="text" accessibilityState={{ expanded: showAnalysis }} onPress={() => setShowAnalysis((value) => !value)}>
+            {showAnalysis ? 'Hide analysis' : 'More analysis'}
+          </Button>
+          {showAnalysis ? <View>
           {narrative ? (
             <TouchableOpacity
               activeOpacity={0.88}
@@ -219,81 +305,27 @@ export const PersonalStatsScreen = () => {
             narrativeLoading && <AiNarrativeSkeleton />
           )}
 
-          <GlassView style={styles.card}>
-            <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-              Your share by group
-            </Text>
-            {(bundle?.groups ?? []).length === 0 ? (
-              <Text style={{ color: theme.colors.onSurfaceVariant }}>No spending in this range.</Text>
-            ) : (
-              (() => {
-                const rows = bundle?.groups ?? [];
-                // Bars only compare within ONE currency — mixed-currency lists
-                // stay numeric-only (no silent cross-currency scaling).
-                const singleCurrency = new Set(rows.map((g) => g.currency)).size === 1;
-                const maxShare = rows.reduce((m, g) => Math.max(m, g.yourShare), 0);
-                return rows.map((g) => (
-                  <View key={g.groupId} style={styles.rowBlock}>
-                    <View style={styles.row}>
-                      <Text style={[styles.rowName, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                        {g.name}
-                        <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                          {'  '}×{g.count}
-                        </Text>
-                      </Text>
-                      <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                        {formatCurrency(g.yourShare, g.currency)}
-                      </Text>
-                    </View>
-                    {singleCurrency && (
-                      <HBar value={g.yourShare} max={maxShare} color={theme.colors.chart[0]} height={5} />
-                    )}
-                  </View>
-                ));
-              })()
-            )}
-          </GlassView>
+          </View> : null}
 
-          {Object.entries(bundle?.categoriesByCurrency ?? {}).map(([currency, cats]) => (
-            <GlassView key={currency} style={styles.card}>
-              <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-                Your categories · {currency}
-              </Text>
-              {cats.map((c) => (
-                <View key={c.category} style={styles.rowBlock}>
-                  <View style={styles.row}>
-                    <Text style={[styles.rowName, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                      {c.category}
-                    </Text>
-                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                      {formatCurrency(c.yourShare, currency)}
-                    </Text>
-                  </View>
-                  <HBar
-                    value={c.yourShare}
-                    max={cats[0]?.yourShare ?? 0}
-                    color={theme.colors.chart[0]}
-                    height={5}
-                  />
-                </View>
-              ))}
-            </GlassView>
-          ))}
-
-          {budgetRows.length > 0 && (
+          {budgetRows.length > 0 ? (
+            <Button mode="text" accessibilityState={{ expanded: showBudgets }} onPress={() => setShowBudgets((value) => !value)}>
+              {showBudgets ? 'Hide monthly budgets' : 'Edit monthly budgets'}
+            </Button>
+          ) : null}
+          {showBudgets && budgetRows.length > 0 && (
             <GlassView style={styles.card}>
               <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
                 Personal budgets (your share, this month)
               </Text>
               <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 8 }}>
-                Private to you — nobody in your groups sees these.
+                Private to you. These budgets always cover this month, regardless of the period above.
               </Text>
               {budgetRows.map((b) => {
                 const pct = b.cap ? Math.round((b.spent / b.cap) * 100) : null;
                 return (
                   <View key={b.key} style={styles.budgetRow}>
                     <View style={styles.budgetInfo}>
-                      <Text variant="labelMedium" numberOfLines={1} style={{ color: theme.colors.onSurface }}>
+                      <Text variant="labelMedium" numberOfLines={theme.fontScale >= 1.5 ? undefined : 1} style={{ color: theme.colors.onSurface }}>
                         {b.category} · {b.currency}
                       </Text>
                       <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -343,7 +375,13 @@ export const PersonalStatsScreen = () => {
 
           {/* PCC disclosure + kill switch */}
           <GlassView style={styles.card}>
-            <View style={styles.pccRow}>
+            <Pressable
+              style={styles.pccRow}
+              onPress={() => togglePcc(!pccOn)}
+              accessibilityRole="switch"
+              accessibilityLabel="Deep analysis via Private Cloud Compute"
+              accessibilityState={{ checked: pccOn }}
+            >
               <View style={styles.pccCopy}>
                 <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
                   Deep analysis via Private Cloud Compute
@@ -354,14 +392,21 @@ export const PersonalStatsScreen = () => {
                   {pccStatus
                     ? pccStatus.available
                       ? 'Available on this device.'
-                      : `Currently unavailable (${pccStatus.reason}).`
+                      : 'Currently unavailable on this device.'
                     : ''}
                 </Text>
               </View>
-              <Switch value={pccOn} onValueChange={togglePcc} trackColor={{ true: theme.colors.primary }} />
-            </View>
+              <Switch
+                value={pccOn}
+                onValueChange={togglePcc}
+                trackColor={{ true: theme.colors.primary }}
+                pointerEvents="none"
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+              />
+            </Pressable>
           </GlassView>
-        </ScrollView>
+        </DetailScreenScaffold>
 
         {/* Personal insights chat — narrative-only (no per-group deterministic engine). */}
         {narrative && personalFacts && (
@@ -405,7 +450,6 @@ export const PersonalStatsScreen = () => {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 16,
     paddingBottom: 140,
     // Tightened 12 -> 8 (2026-08-07, compact density pass) - stacked cards
     // sit closer together.
@@ -418,6 +462,8 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   rangeChip: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingVertical: 7,
     paddingHorizontal: 14,
     borderRadius: 999,
@@ -488,6 +534,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    minHeight: 48,
   },
   pccCopy: {
     flex: 1,

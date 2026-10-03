@@ -1,0 +1,5 @@
+Welcome to ManaSplit.
+
+This first public release brings shared expenses, private group messaging, audio and video calls, receipt tools, offline queues, nearby delivery on compatible devices, and privacy controls into one iPhone app.
+
+ManaSplit is built with the iOS 27 SDK while continuing to support iOS 17 and later. Supported Apple Intelligence features run on device, and the app provides deterministic or native fallbacks when they are unavailable.

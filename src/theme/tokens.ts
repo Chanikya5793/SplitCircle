@@ -24,13 +24,16 @@ export const radius = {
 /**
  * Surface treatment for every bounded content surface in the app.
  *   'glass' — the liquid-glass DNA (blur/native material, floats over blobs)
- *   'flat'  — opaque fill, hairline edge, calmer radii, no blur or elevation
+ *   'flat'  - borderless sections; floating chrome keeps an opaque fill.
+ * Named glass accents retain material unless Reduce Transparency is enabled.
  * User-selectable and persisted alongside mode/accent (see ThemeContext).
  */
 export type SurfaceStyle = 'glass' | 'flat';
 
 /**
- * Corner radii used when surfaceStyle is 'flat'. Flattening pulls the scale in:
+ * Compact radii for bounded chrome under Flat or Reduce Transparency.
+ * Borderless sections have no radius; explicit numeric geometry is retained.
+ * The scale pulls bounded surfaces in:
  * a 20pt pill-ish card reads as decoration, a 12pt one reads as structure.
  * `pill` stays 999 — circular controls stay circular in both modes.
  */

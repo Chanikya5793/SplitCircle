@@ -136,9 +136,9 @@ export function assembleInsightsPrompt(args: AssembleArgs): AssembledPrompt {
   const head =
     `${instructions}\n\n` +
     (driftNote ? `NOTE: ${driftNote}\n\n` : '') +
-    `CURRENT FACTS (final numbers — quote, never recompute):\n${facts}\n\n` +
+    `CURRENT FACTS (final numbers. Quote, never recompute):\n${facts}\n\n` +
     (extraFacts?.trim()
-      ? `EXTRA FACTS FOR THIS QUESTION (same rules — quote, never recompute):\n${extraFacts.trim()}\n\n`
+      ? `EXTRA FACTS FOR THIS QUESTION (same rules. Quote, never recompute):\n${extraFacts.trim()}\n\n`
       : '') +
     (summary?.trim() ? `EARLIER IN THIS CONVERSATION (summary):\n${summary.trim()}\n\n` : '');
   const tail = `\nUser: ${userText}\nAssistant:`;

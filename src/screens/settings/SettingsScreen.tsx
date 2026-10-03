@@ -17,6 +17,7 @@ import { APP_NAME, APP_VERSION } from '@/constants/appInfo';
 import { ROUTES } from '@/constants/routes';
 import { SETTING_IDS } from '@/constants/settingsRegistry';
 import { useAuth } from '@/context/AuthContext';
+import { useMonetizationPurchases } from '@/context/MonetizationPurchaseContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useWallpaperSlot } from '@/hooks/useWallpaper';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
@@ -51,13 +52,14 @@ import { formatCurrency } from '@/utils/currency';
 import { needsDisplayName, resolveDisplayName } from '@/utils/identity';
 
 const errorMessage = (error: unknown, fallback: string): string => {
-  if (error instanceof Error && error.message.trim()) return error.message;
+  console.warn('[Settings] Operation failed:', error);
   return fallback;
 };
 
 export const SettingsScreen = () => {
   const navigation = useNavigation();
   const { user, signOutUser, deleteAccountAndSignOut } = useAuth();
+  const { snapshot: monetizationSnapshot } = useMonetizationPurchases();
   const { isDark, theme, mode, setMode, accent, setAccent, surfaceStyle, setSurfaceStyle } =
     useTheme();
   const isFlat = surfaceStyle === 'flat';
@@ -339,13 +341,29 @@ export const SettingsScreen = () => {
   };
 
   const confirmDeleteAccount = () => {
+    const paidPlanId = monetizationSnapshot?.account.planSource === 'server_projection'
+      && monetizationSnapshot.account.planId !== 'free'
+      ? monetizationSnapshot.account.planId
+      : null;
+    const paidPlanLabel = paidPlanId
+      ? monetizationSnapshot?.catalog.plans[paidPlanId]?.label ?? 'paid'
+      : null;
+    const subscriptionNotice = paidPlanLabel
+      ? ` Your ${paidPlanLabel} App Store subscription is billed by Apple and will not be cancelled by deleting this account. Review or cancel it first if you no longer want it.`
+      : ' Deleting your ManaSplit account does not cancel any subscription billed by Apple.';
     appAlert(
       'Delete account',
-      `Permanently delete your ${APP_NAME} account? Your groups, expenses, and chats will be gone for good. This cannot be undone.`,
+      `Permanently delete your ${APP_NAME} account? Your groups, expenses, and chats will be gone for good. This cannot be undone.${subscriptionNotice}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Review subscription',
+          onPress: () => (navigation as any).navigate(ROUTES.APP.PLANS_AND_CREDITS, {
+            backTitle: 'Settings',
+          }),
+        },
+        {
+          text: 'Delete anyway',
           style: 'destructive',
           onPress: async () => {
             setDeletingAccount(true);
@@ -477,18 +495,7 @@ export const SettingsScreen = () => {
               editing flow was built and then only wired up for first-time
               setting. Suppressed while the privacy guard is hiding the profile,
               for the same reason the chip is. */}
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel={hideOwnProfile ? 'Profile' : 'Edit your name'}
-            accessibilityHint={hideOwnProfile ? undefined : 'Opens your name for editing'}
-            activeOpacity={0.75}
-            disabled={hideOwnProfile}
-            onPress={() => {
-              lightHaptic();
-              (navigation as any).navigate(ROUTES.APP.EDIT_NAME);
-            }}
-            style={styles.profileRow}
-          >
+          <View style={styles.profileRow}>
           {hideOwnProfile ? (
             <View style={[styles.profileSilhouette, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
               <Ionicons name="person" size={30} color={theme.colors.onSurfaceVariant} />
@@ -496,6 +503,19 @@ export const SettingsScreen = () => {
           ) : (
             <ProfilePhotoUploader size={64} editable />
           )}
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={needsDisplayName(user) ? 'Add your name' : 'Edit your name'}
+            accessibilityHint="Opens your name for editing"
+            activeOpacity={0.75}
+            disabled={hideOwnProfile}
+            accessible={!hideOwnProfile}
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate(ROUTES.APP.EDIT_NAME);
+            }}
+            style={styles.profileIdentityAction}
+          >
           <View style={styles.profileText}>
             <View style={styles.profileNameRow}>
               <Text
@@ -516,20 +536,11 @@ export const SettingsScreen = () => {
                   : resolveDisplayName(user, 'Your profile')}
               </Text>
               {needsDisplayName(user) && !hideOwnProfile ? (
-                <TouchableOpacity
-                  accessibilityRole="button"
-                  accessibilityLabel="Add your name"
-                  activeOpacity={0.82}
-                  onPress={() => {
-                    lightHaptic();
-                    (navigation as any).navigate(ROUTES.APP.EDIT_NAME);
-                  }}
-                  style={[styles.addNameChip, { backgroundColor: theme.colors.primary }]}
-                >
+                <View style={[styles.addNameChip, { backgroundColor: theme.colors.primary }]}>
                   <Text variant="labelSmall" style={{ color: theme.colors.onPrimary, fontWeight: '700' }}>
                     Add your name
                   </Text>
-                </TouchableOpacity>
+                </View>
               ) : null}
             </View>
             <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
@@ -540,6 +551,62 @@ export const SettingsScreen = () => {
             <Ionicons name="chevron-forward" size={18} color={theme.colors.onSurfaceVariant} />
           ) : null}
           </TouchableOpacity>
+          </View>
+        </GlassCard>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.xs }}>
+          {[
+            ['Appearance', SETTING_IDS.appearance],
+            ['Privacy', SETTING_IDS.appLock],
+            ['Data & devices', SETTING_IDS.linkedDevices],
+            ['AI', SETTING_IDS.onDeviceAi],
+          ].map(([label, id]) => (
+            <Button key={id} mode="text" contentStyle={{ minHeight: 44 }} onPress={() => scrollToAnchor(id)}>
+              {label}
+            </Button>
+          ))}
+        </View>
+
+        <SectionLabel style={styles.sectionLabel}>Account & spending</SectionLabel>
+        <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
+          <ListRow inset={rowInset}
+            title="Plans & credits"
+            subtitle="Included uses, Mana Credits & account access"
+            icon="wallet-outline"
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate(ROUTES.APP.PLANS_AND_CREDITS, {
+                backTitle: ROOT_SCREEN_TITLES.settings,
+              });
+            }}
+          />
+          {divider}
+          <ListRow inset={rowInset}
+            title="Your spending"
+            subtitle="Spending across groups and monthly budgets"
+            icon="chart-arc"
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate(ROUTES.APP.PERSONAL_STATS, {
+                backTitle: ROOT_SCREEN_TITLES.settings,
+              });
+            }}
+          />
+        </GlassCard>
+
+        <SectionLabel style={styles.sectionLabel}>Notifications</SectionLabel>
+        <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
+          {wrapAnchor(SETTING_IDS.notifications, (
+          <ListRow inset={rowInset}
+            title="Notifications"
+            subtitle="Messages, expenses, sounds & more"
+            icon="bell-outline"
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate('NotificationSettings', { backTitle: ROOT_SCREEN_TITLES.settings });
+            }}
+          />
+          ))}
         </GlassCard>
 
         <SectionLabel style={styles.sectionLabel}>Appearance</SectionLabel>
@@ -633,65 +700,7 @@ export const SettingsScreen = () => {
           ))}
         </GlassCard>
 
-        <SectionLabel style={styles.sectionLabel}>Receipts & AI</SectionLabel>
-        <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
-          {wrapAnchor(SETTING_IDS.aiReceipts, (
-          <ListRow inset={rowInset}
-            title="AI receipt parsing"
-            subtitle="Cloud AI sharpens OCR accuracy"
-            icon="creation"
-            trailing={<Switch value={useAIForReceipts} onValueChange={handleToggleUseAI} />}
-          />
-          ))}
-          {divider}
-          {wrapAnchor(SETTING_IDS.receiptStrict, (
-          <ListRow inset={rowInset}
-            title="Strict receipt review"
-            subtitle="Review low-confidence rows before saving"
-            icon="shield-check-outline"
-            trailing={<Switch value={strictReviewMode} onValueChange={handleToggleStrictReviewMode} />}
-          />
-          ))}
-          {divider}
-          {wrapAnchor(SETTING_IDS.onDeviceAi, (
-          <ListRow inset={rowInset}
-            title="On-device AI"
-            subtitle="What's indexed on this device"
-            icon="chip"
-            onPress={() => {
-              lightHaptic();
-              (navigation as any).navigate('AiIndex', { backTitle: ROOT_SCREEN_TITLES.settings });
-            }}
-          />
-          ))}
-          {merchantLearning.length > 0 && (
-            <>
-              {divider}
-              <View style={[styles.learningBlock, { paddingHorizontal: rowInset }]}>
-                <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                  Receipt learning · on device
-                </Text>
-                {merchantLearning.map((merchant) => (
-                  <View key={merchant.key} style={styles.learningRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text variant="bodyMedium" numberOfLines={1} style={{ color: theme.colors.onSurface }}>
-                        {merchant.label}
-                      </Text>
-                      <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                        {merchant.correctionCount} corrections · {merchant.droppedCount} drops
-                      </Text>
-                    </View>
-                    <Button compact mode="text" onPress={() => handleResetMerchantLearning(merchant)}>
-                      Reset
-                    </Button>
-                  </View>
-                ))}
-              </View>
-            </>
-          )}
-        </GlassCard>
-
-        <SectionLabel style={styles.sectionLabel}>Security</SectionLabel>
+        <SectionLabel style={styles.sectionLabel}>Privacy & security</SectionLabel>
         <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           {wrapAnchor(SETTING_IDS.appLock, (
           <ListRow inset={rowInset}
@@ -749,7 +758,7 @@ export const SettingsScreen = () => {
           {wrapAnchor(SETTING_IDS.securityCenter, (
           <ListRow inset={rowInset}
             title="Security Center"
-            subtitle="Breach, infostealer & phishing protection"
+            subtitle="Monitoring coverage, alerts and next steps"
             icon="shield-search"
             onPress={() => {
               lightHaptic();
@@ -759,7 +768,10 @@ export const SettingsScreen = () => {
             }}
           />
           ))}
-          {divider}
+        </GlassCard>
+
+        <SectionLabel style={styles.sectionLabel}>Data & devices</SectionLabel>
+        <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           {wrapAnchor(SETTING_IDS.linkedDevices, (
           <ListRow inset={rowInset}
             title="Linked devices"
@@ -788,37 +800,10 @@ export const SettingsScreen = () => {
               });
             }}
           />
-        </GlassCard>
-
-        <SectionLabel style={styles.sectionLabel}>General</SectionLabel>
-        <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
-          <ListRow inset={rowInset}
-            title="Your spending"
-            subtitle="Cross-group stats, budgets & deep analysis"
-            icon="chart-arc"
-            onPress={() => {
-              lightHaptic();
-              (navigation as any).navigate(ROUTES.APP.PERSONAL_STATS, {
-                backTitle: ROOT_SCREEN_TITLES.settings,
-              });
-            }}
-          />
-          {divider}
-          {wrapAnchor(SETTING_IDS.notifications, (
-          <ListRow inset={rowInset}
-            title="Notifications"
-            subtitle="Messages, expenses, sounds & more"
-            icon="bell-outline"
-            onPress={() => {
-              lightHaptic();
-              (navigation as any).navigate('NotificationSettings', { backTitle: ROOT_SCREEN_TITLES.settings });
-            }}
-          />
-          ))}
           {divider}
           {wrapAnchor(SETTING_IDS.nearbyMesh, (
           <ListRow inset={rowInset}
-            title="Nearby mesh"
+            title="Nearby messaging"
             subtitle="Offline messaging and nearby devices"
             icon="access-point"
             onPress={() => {
@@ -845,6 +830,65 @@ export const SettingsScreen = () => {
           ))}
         </GlassCard>
 
+        <SectionLabel style={styles.sectionLabel}>Receipts & AI</SectionLabel>
+        <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
+          {wrapAnchor(SETTING_IDS.aiReceipts, (
+          <ListRow inset={rowInset}
+            title="Use on-device AI for receipts"
+            subtitle="Uses Apple Intelligence on compatible iPhones"
+            icon="creation"
+            trailing={<Switch value={useAIForReceipts} onValueChange={handleToggleUseAI} />}
+          />
+          ))}
+          {divider}
+          {wrapAnchor(SETTING_IDS.receiptStrict, (
+          <ListRow inset={rowInset}
+            title="Strict receipt review"
+            subtitle="Review low-confidence rows before saving"
+            icon="shield-check-outline"
+            trailing={<Switch value={strictReviewMode} onValueChange={handleToggleStrictReviewMode} />}
+          />
+          ))}
+          {divider}
+          {wrapAnchor(SETTING_IDS.onDeviceAi, (
+          <ListRow inset={rowInset}
+            title="On-device AI"
+            subtitle="Availability, privacy & memory"
+            icon="chip"
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate('AiIndex', { backTitle: ROOT_SCREEN_TITLES.settings });
+            }}
+          />
+          ))}
+          {merchantLearning.length > 0 && (
+            <>
+              {divider}
+              <View style={[styles.learningBlock, { paddingHorizontal: rowInset }]}>
+                <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                  Receipt learning · on device
+                </Text>
+                {merchantLearning.map((merchant) => (
+                  <View key={merchant.key} style={styles.learningRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text variant="bodyMedium" numberOfLines={1} style={{ color: theme.colors.onSurface }}>
+                        {merchant.label}
+                      </Text>
+                      <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                        {merchant.correctionCount} corrections · {merchant.droppedCount} drops
+                      </Text>
+                    </View>
+                    <Button compact mode="text" onPress={() => handleResetMerchantLearning(merchant)}>
+                      Reset
+                    </Button>
+                  </View>
+                ))}
+              </View>
+            </>
+          )}
+        </GlassCard>
+
+        <SectionLabel style={styles.sectionLabel}>Account actions</SectionLabel>
         <GlassCard style={[styles.card, styles.signOutCard, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           <ListRow inset={rowInset}
             title="Sign out"
@@ -975,6 +1019,13 @@ const styles = StyleSheet.create({
   profileText: {
     flex: 1,
     gap: 2,
+  },
+  profileIdentityAction: {
+    flex: 1,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   profileNameRow: {
     flexDirection: 'row',

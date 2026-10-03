@@ -11,10 +11,12 @@
 import { useTheme } from '@/context/ThemeContext';
 import { useWallpaper, useWallpaperChain } from '@/hooks/useWallpaper';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { useAmbientMotion } from '@/hooks/useAmbientMotion';
 import { ACCENTS, NEUTRALS } from '@/theme/palette';
-import React, { useEffect, useMemo, useState } from 'react';
-import { Image, InteractionManager, StyleSheet, useWindowDimensions, View, ViewStyle } from 'react-native';
+import React, { useEffect, useMemo } from 'react';
+import { Image, StyleSheet, useWindowDimensions, View, ViewStyle } from 'react-native';
 import Animated, {
+    cancelAnimation,
     Easing,
     interpolateColor,
     useAnimatedStyle,
@@ -100,7 +102,13 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, 
       -1,
       true
     );
-  }, [animate]);
+    return () => {
+      // Freeze in place instead of jumping back when motion is disabled.
+      cancelAnimation(scaleSv);
+      cancelAnimation(translateX);
+      cancelAnimation(translateY);
+    };
+  }, [animate, motion, scaleSv, translateX, translateY]);
 
   const animatedStyle = useAnimatedStyle(() => {
     const backgroundColor = interpolateColor(
@@ -146,7 +154,7 @@ export const LiquidBackground = ({
 }: LiquidBackgroundProps) => {
   const { themeProgress, theme, isDark } = useTheme();
   const { width, height } = useWindowDimensions();
-  const [animate, setAnimate] = useState(false);
+  const animate = useAmbientMotion(theme.reduceMotion);
   const chatWallpaper = useWallpaper(wallpaperChatId);
   const chainWallpaper = useWallpaperChain(wallpaperSlots ?? []);
   const resolvedWallpaper = wallpaperSlots ? chainWallpaper : chatWallpaper;
@@ -155,14 +163,6 @@ export const LiquidBackground = ({
   // at context (e.g. a partner's photo behind a chat).
   const { active: guardActive, settings: guardSettings } = usePrivacyGuard();
   const wallpaper = guardActive && guardSettings.hideWallpaper ? null : resolvedWallpaper;
-
-  // Defer blob animations until the navigation transition finishes.
-  useEffect(() => {
-    const task = InteractionManager.runAfterInteractions(() => {
-      setAnimate(true);
-    });
-    return () => task.cancel();
-  }, []);
 
   // The crossfade needs BOTH schemes' trios, so resolve them from the palette
   // by accent — this component is a design-system primitive like GlassCard.
@@ -242,7 +242,10 @@ export const LiquidBackground = ({
           zIndex alone breaks on the new architecture: the blobs' Reanimated
           transforms made them composite OVER foreground content, washing out
           anything without a glass/blur surface (dim chat bubbles on device). */}
-      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      <View
+        style={[StyleSheet.absoluteFill, wallpaper?.kind !== 'blob' && styles.ambientWash]}
+        pointerEvents="none"
+      >
         <Blob
           lightColor={lightBlobColors[0]}
           darkColor={darkBlobColors[0]}
@@ -288,11 +291,12 @@ const styles = StyleSheet.create({
     flex: 1,
     zIndex: 1,
   },
+  // Refined Glass: a quiet default wash behind balances and content. This
+  // layer contains no material views, so opacity cannot disable native glass.
+  ambientWash: { opacity: 0.4 },
   blob: {
     position: 'absolute',
-    // Bumped from 0.35 for a more vibrant, airy backdrop — the ambient accent
-    // blobs now read clearly against the brighter appBackground instead of
-    // fading into it. Still soft enough to keep foreground text legible.
+    // Explicit wallpaper presets retain their chosen intensity.
     opacity: 0.45,
   },
 });

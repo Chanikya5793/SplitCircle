@@ -72,7 +72,7 @@ export const assessBackupReadiness = async (userId: string): Promise<BackupReadi
       key: 'passphrase',
       label: 'Backup passphrase set',
       met: enrolled,
-      detail: 'Set a passphrase — without one nothing can be encrypted or restored.',
+      detail: 'Set a passphrase. Without one nothing can be encrypted or restored.',
     },
     {
       key: 'icloud',

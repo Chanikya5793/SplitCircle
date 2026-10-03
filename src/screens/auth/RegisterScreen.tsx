@@ -1,7 +1,8 @@
 import { GlassCard } from '@/components/ui';
 import { AppTextInput } from '@/components/ui/AppTextInput';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { MugguMark } from '@/components/brand';
+import { PrimaryButton } from '@/components/PrimaryButton';
+import { AuthEntrance, MugguLoader } from '@/components/brand';
 import { APP_NAME } from '@/constants/appInfo';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -50,6 +51,7 @@ export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
     !googleLoading &&
     !appleLoading &&
     !authBusy;
+  const creatingAccount = loading || googleLoading || appleLoading || authBusy;
 
   const clearError = () => {
     if (error) setError(null);
@@ -111,12 +113,15 @@ export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          <AuthEntrance>
           <GlassCard style={styles.card} contentStyle={styles.cardContent}>
             <View style={styles.brandMark}>
-              <MugguMark
+              <MugguLoader
                 size={68}
                 variant={isDark ? 'reversed' : 'primary'}
-                accessibilityLabel={`${APP_NAME} logo`}
+                loop={creatingAccount}
+                revealDurationMs={1100}
+                accessibilityLabel={creatingAccount ? `Continuing with ${APP_NAME}` : `${APP_NAME} logo`}
               />
             </View>
             <Text variant="headlineMedium" style={styles.title}>
@@ -181,18 +186,18 @@ export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
             ) : null}
             {!isOnline ? (
               <Text style={{ color: theme.colors.muted, textAlign: 'center' }}>
-                You're offline — creating an account needs an internet connection.
+                You're offline. Creating an account needs an internet connection.
               </Text>
             ) : null}
-            <Button
+            <PrimaryButton
               mode="contained"
               onPress={handleRegister}
               loading={loading}
               disabled={!canSubmit}
             >
               Create account
-            </Button>
-            <Button
+            </PrimaryButton>
+            <PrimaryButton
               mode="outlined"
               onPress={handleGoogle}
               loading={googleLoading}
@@ -200,7 +205,7 @@ export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
               icon="google"
             >
               Continue with Google
-            </Button>
+            </PrimaryButton>
             {Platform.OS === 'ios' && appleAvailable && (
               <View
                 pointerEvents={!isOnline || loading || googleLoading || appleLoading || authBusy ? 'none' : 'auto'}
@@ -223,6 +228,7 @@ export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
               Already joined? Sign in
             </Button>
           </GlassCard>
+          </AuthEntrance>
         </ScrollView>
       </KeyboardAvoidingView>
     </LiquidBackground>

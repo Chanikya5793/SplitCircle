@@ -18,7 +18,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
-import { Avatar, Button, IconButton, List, Text } from 'react-native-paper';
+import { Avatar, Button, Icon, IconButton, List, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface FriendInfoParams {
@@ -165,7 +165,7 @@ export const FriendInfoScreen = () => {
       console.error('FriendInfoScreen placeCall failed', error);
       appAlert(
         'Could not place call',
-        error instanceof Error ? error.message : 'Something went wrong starting this call.',
+        'The call could not start. Check your connection and try again.',
       );
     }
   };
@@ -192,7 +192,7 @@ export const FriendInfoScreen = () => {
       console.error('FriendInfoScreen openDirectChat failed', error);
       appAlert(
         'Could not open chat',
-        error instanceof Error ? error.message : 'Something went wrong opening this chat.',
+        'The conversation could not be prepared. Try again from this screen.',
       );
     }
   };
@@ -324,7 +324,9 @@ export const FriendInfoScreen = () => {
                   >
                     {note || 'Tap to add a private note…'}
                   </Text>
-                  <IconButton icon="pencil-outline" size={16} iconColor={theme.colors.onSurfaceVariant} style={styles.noteEditIcon} />
+                  <View style={styles.noteEditIcon} pointerEvents="none">
+                    <Icon source="pencil-outline" size={16} color={theme.colors.onSurfaceVariant} />
+                  </View>
                 </TouchableOpacity>
               )}
               <Text style={[styles.noteHint, { color: theme.colors.onSurfaceVariant }]}>
@@ -362,7 +364,7 @@ export const FriendInfoScreen = () => {
                 console.error('FriendInfoScreen starred-open failed', error);
                 appAlert(
                   'Could not open starred messages',
-                  error instanceof Error ? error.message : 'Something went wrong.',
+                  'Starred messages are unavailable right now. Try again from this screen.',
                 );
               }
             }}

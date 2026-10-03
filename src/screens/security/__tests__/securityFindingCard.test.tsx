@@ -55,9 +55,9 @@ describe('SecurityFindingCard', () => {
     const onStateChange = vi.fn(async () => undefined);
     render(<SecurityFindingCard finding={finding} onStateChange={onStateChange} onDelete={vi.fn()} />);
 
-    expect(screen.queryByText('Safe evidence')).toBeNull();
+    expect(screen.queryByText('Evidence')).toBeNull();
     fireEvent.click(screen.getByLabelText('high severity: Example breach'));
-    expect(screen.getByText('Safe evidence')).toBeTruthy();
+    expect(screen.getByText('Evidence')).toBeTruthy();
     expect(screen.getByText('Password data exposed')).toBeTruthy();
     expect(screen.getByText('Open official security page')).toBeTruthy();
 

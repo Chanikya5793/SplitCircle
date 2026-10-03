@@ -38,9 +38,18 @@ export type MessageAction =
   | 'delete'
   | 'deleteForEveryone'
   | 'info'
+  | 'report'
   | 'select';
 
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+const REACTION_LABELS: Record<string, string> = {
+  '👍': 'Thumbs up',
+  '❤️': 'Heart',
+  '😂': 'Laughing',
+  '😮': 'Surprised',
+  '😢': 'Sad',
+  '🙏': 'Thank you',
+};
 
 interface MessageActionSheetProps {
   visible: boolean;
@@ -230,6 +239,7 @@ export const MessageActionSheet = ({
       show: true,
     },
     { key: 'edit', icon: 'create-outline', label: 'Edit', show: canEdit },
+    { key: 'report', icon: 'flag-outline', label: 'Report message', destructive: true, show: !isMine },
     {
       key: isPinned ? 'unpin' : 'pin',
       icon: isPinned ? 'pin' : 'pin-outline',
@@ -244,7 +254,7 @@ export const MessageActionSheet = ({
       show: canDeleteForEveryone,
     },
     { key: 'delete', icon: 'trash-outline', label: 'Delete', destructive: true, show: true },
-    { key: 'select', icon: 'ellipsis-horizontal', label: 'More...', show: true },
+    { key: 'select', icon: 'checkmark-circle-outline', label: 'Select messages', show: true },
   ];
 
   const visibleItems = items.filter((i) => i.show);
@@ -264,15 +274,19 @@ export const MessageActionSheet = ({
       animationType="none"
       onRequestClose={handleClose}
     >
-      <View style={styles.root}>
+      <View style={styles.root} accessibilityViewIsModal>
         {/* Blur visual layer */}
         <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
           <ScrimBackdrop intensity={60} tint={isDark ? 'dark' : 'default'} />
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} />
         </Animated.View>
 
         {/* Dismiss layer — receives taps that pass through content */}
-        <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={handleClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close message actions"
+        />
 
         {/* Content: reactions → bubble → actions (passes through empty-area taps) */}
         <Animated.View
@@ -298,7 +312,9 @@ export const MessageActionSheet = ({
                         },
                       ]}
                       activeOpacity={0.7}
-                      hitSlop={4}
+                      accessibilityRole="checkbox"
+                      accessibilityLabel={`${REACTION_LABELS[emoji]} reaction`}
+                      accessibilityState={{ checked: active }}
                     >
                       <Text style={styles.reactionEmoji}>{emoji}</Text>
                     </TouchableOpacity>
@@ -308,6 +324,8 @@ export const MessageActionSheet = ({
                   onPress={() => handleReact('+')}
                   style={[styles.reactionButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="More reactions"
                 >
                   <Ionicons name="add" size={20} color={isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)'} />
                 </TouchableOpacity>
@@ -365,6 +383,8 @@ export const MessageActionSheet = ({
                     ]}
                     onPress={() => handleAction(item.key)}
                     activeOpacity={0.55}
+                    accessibilityRole="button"
+                    accessibilityLabel={item.label}
                   >
                     <Text
                       style={[
@@ -422,9 +442,9 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   reactionButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },

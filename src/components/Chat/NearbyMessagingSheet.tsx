@@ -1,4 +1,4 @@
-import { GlassCard } from '@/components/ui';
+import { GlassCard, ScrimBackdrop } from '@/components/ui';
 import { APP_NAME } from '@/constants/appInfo';
 import { useTheme } from '@/context/ThemeContext';
 import { useNearbyMessaging } from '@/hooks/useNearbyMessaging';
@@ -207,9 +207,8 @@ export const NearbyMessagingSheet = ({
     try {
       await action();
     } catch (error) {
-      setPairingUiError(
-        error instanceof Error ? error.message : 'Pairing could not start.',
-      );
+      console.warn('[NearbyMessaging] Pairing failed:', error);
+      setPairingUiError('Pairing could not start. Keep both phones nearby and try again.');
     } finally {
       setPairingBusy(false);
     }
@@ -229,7 +228,9 @@ export const NearbyMessagingSheet = ({
           onPress={dismiss}
           accessibilityRole="button"
           accessibilityLabel="Close nearby messaging"
-        />
+        >
+          <ScrimBackdrop pointerEvents="none" />
+        </Pressable>
         <Animated.View
           onLayout={(event) => setSheetHeight(event.nativeEvent.layout.height)}
           style={[
@@ -258,7 +259,7 @@ export const NearbyMessagingSheet = ({
                   Nearby messaging
                 </Text>
                 <Text style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
-                  Connect privately to known conversation members. No hotspot, router, or internet is required.
+                  Message people in this conversation when internet is unavailable. Keep both apps open.
                 </Text>
               </View>
               <Pressable
@@ -267,7 +268,7 @@ export const NearbyMessagingSheet = ({
                 accessibilityLabel="Close"
                 style={styles.closeButton}
               >
-                <GlassCard role="floating" radius={17} contentStyle={styles.closeButtonContent}>
+                <GlassCard role="floating" radius={22} contentStyle={styles.closeButtonContent}>
                   <Ionicons name="close" size={20} color={theme.colors.onSurfaceVariant} />
                 </GlassCard>
               </Pressable>
@@ -308,8 +309,8 @@ export const NearbyMessagingSheet = ({
                     </Text>
                     <Text style={[styles.pairingDetail, { color: theme.colors.onSurfaceVariant }]}>
                       {pairing.phase === 'paired'
-                        ? 'Both phones now remember the signed device identity for 30 days.'
-                        : 'Use a one-time code when a friend is shown as unknown. Names stay hidden until the code and signed identities match.'}
+                        ? 'Both phones will recognize each other for 30 days.'
+                        : 'Use a one-time code when a friend’s phone is not recognized. Names stay hidden until pairing succeeds.'}
                     </Text>
                   </View>
                 </View>
@@ -460,7 +461,7 @@ export const NearbyMessagingSheet = ({
                     >
                       {pairing.errorMessage
                         ?? (pairing.phase === 'verifying'
-                          ? 'Phone found. Verifying the code and both signed identities…'
+                          ? 'Phone found. Checking the code…'
                           : 'Looking for the other phone. Keep this screen open on both devices.')}
                     </Text>
                   </View>
@@ -500,14 +501,14 @@ export const NearbyMessagingSheet = ({
                     Names stay private
                   </Text>
                   <Text style={[styles.directCalloutDetail, { color: theme.colors.onSuccessContainer }]}>
-                    {APP_NAME} never broadcasts your profile name while scanning. A name appears only after a cached conversation match or a pairing code succeeds. Unknown installations stay blocked outside the five-minute pairing window.
+                    {APP_NAME} does not share your profile name while looking for phones. A name appears only when the phone belongs to someone in this conversation or pairing succeeds.
                   </Text>
                 </View>
               </View>
 
               <GlassCard radius="md" contentStyle={styles.requirementsCard}>
                 <Text style={[styles.requirementsTitle, { color: theme.colors.onSurface }]}>
-                  Routes
+                  Connection methods
                 </Text>
                 {/* REAL per-route state, replacing a static "Wi-Fi on / Bluetooth
                     on / Apps open" checklist that was user-verified and only
@@ -554,7 +555,7 @@ export const NearbyMessagingSheet = ({
                 <Text style={[styles.requirementsHint, { color: theme.colors.onSurfaceVariant }]}>
                   {isConnected
                     ? 'Messages in this chat go straight to the other phone. Nothing touches the internet.'
-                    : 'A route has to be On here AND on the other phone. Both apps need to be open.'}
+                    : 'At least one connection method must be ready on both phones. Keep both apps open.'}
                 </Text>
               </GlassCard>
 
@@ -597,7 +598,7 @@ export const NearbyMessagingSheet = ({
                   <Step
                     number={3}
                     title="Connect automatically or pair once"
-                    detail="Cached conversation identities connect automatically. If one phone lacks the cache, open Pair a phone on both and verify the one-time code."
+                    detail="Phones from an existing conversation can connect automatically. If a phone is not recognized, pair it once with a one-time code."
                   />
                 </GlassCard>
               )}
@@ -609,7 +610,7 @@ export const NearbyMessagingSheet = ({
                     Private local-network access
                   </Text>
                   <Text style={[styles.infoDetail, { color: theme.colors.onSurfaceVariant }]}>
-                    iOS asks the first time {APP_NAME} searches nearby. Discovery exposes no profile name; only cached conversation devices are invited.
+                    iOS asks the first time {APP_NAME} looks for nearby phones. Your profile name stays hidden until a recognized phone connects.
                   </Text>
                   {Platform.OS === 'ios' && (
                     <TouchableOpacity
@@ -657,10 +658,10 @@ export const NearbyMessagingSheet = ({
             >
               <View style={styles.footerCopy}>
                 <Text style={[styles.footerTitle, { color: theme.colors.onSurface }]}>
-                  {isConnected ? 'Phone link ready' : hasError ? 'Discovery paused' : 'Discovery runs automatically'}
+                  {isConnected ? 'Phone connection ready' : hasError ? 'Finding phones paused' : 'Finding phones automatically'}
                 </Text>
                 <Text style={[styles.footerDetail, { color: theme.colors.onSurfaceVariant }]}>
-                  {messageEvent?.detail ?? 'Link tests transport only. Messages are separately signed and decrypted.'}
+                  {messageEvent?.detail ?? 'This test checks the connection only. Messages remain encrypted between phones.'}
                 </Text>
               </View>
               {snapshot.status !== 'unavailable' && (
@@ -703,7 +704,6 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.44)',
   },
   sheetWrap: {
     maxHeight: '91%',
@@ -751,13 +751,13 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   closeButton: {
-    width: 34,
-    height: 34,
+    width: 44,
+    height: 44,
   },
   closeButtonContent: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -896,6 +896,8 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   pairingCancel: {
+    minHeight: 44,
+    justifyContent: 'center',
     alignSelf: 'center',
     paddingHorizontal: 14,
     paddingTop: 13,
@@ -1081,6 +1083,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   settingsButton: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
@@ -1138,8 +1141,8 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   retryButton: {
-    minHeight: 40,
-    borderRadius: 20,
+    minHeight: 44,
+    borderRadius: 22,
     paddingHorizontal: 15,
     flexDirection: 'row',
     alignItems: 'center',

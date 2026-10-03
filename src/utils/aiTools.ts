@@ -354,7 +354,7 @@ const TOOLS: Record<
   range_totals: {
     tier: 'graph',
     needs: 'group',
-    doc: "range_totals(month?) — totals, count, your share, and per-member paid/share for a period ('april 2026', 'last month', '2025'; omit for all time).",
+    doc: "range_totals(month?). Totals, count, your share, and per-member paid/share for a period ('april 2026', 'last month', '2025'; omit for all time).",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('range_totals', 'totals', 'no group in scope');
@@ -376,13 +376,13 @@ const TOOLS: Record<
   month_summary: {
     tier: 'graph',
     needs: 'group',
-    doc: "month_summary(month) — one month in depth: total, top categories, biggest expenses, and the change vs the month before it.",
+    doc: "month_summary(month). One month in depth: total, top categories, biggest expenses, and the change vs the month before it.",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('month_summary', 'month summary', 'no group in scope');
       const p = resolvePeriod(req.month, ctx.now);
       if (!p || p.kind !== 'month') {
-        return err('month_summary', 'month summary', `could not resolve month "${req.month ?? ''}" — say e.g. 'april 2026'`);
+        return err('month_summary', 'month summary', `could not resolve month "${req.month ?? ''}". Say e.g. 'april 2026'`);
       }
       const agg = aggregateRange(g.expenses, p.tf, ctx.currentUserId);
       const prevTf = calendarWindow(p.tf.startMs, 'month', -1);
@@ -412,7 +412,7 @@ const TOOLS: Record<
   compare_ranges: {
     tier: 'graph',
     needs: 'group',
-    doc: "compare_ranges(month, monthB) — side-by-side totals and the biggest per-category movers between two periods. The 'why did spending change' workhorse.",
+    doc: "compare_ranges(month, monthB). Side-by-side totals and the biggest per-category movers between two periods. The 'why did spending change' workhorse.",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('compare_ranges', 'comparison', 'no group in scope');
@@ -447,7 +447,7 @@ const TOOLS: Record<
   category_breakdown: {
     tier: 'graph',
     needs: 'group',
-    doc: "category_breakdown(month?) — every category's total, count, and your share for a period (omit for all time).",
+    doc: "category_breakdown(month?). Every category's total, count, and your share for a period (omit for all time).",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('category_breakdown', 'categories', 'no group in scope');
@@ -466,7 +466,7 @@ const TOOLS: Record<
   category_trail: {
     tier: 'graph',
     needs: 'group',
-    doc: "category_trail(category, months?) — one category's monthly totals over recent months (default 6). Use to explain a category's history.",
+    doc: "category_trail(category, months?). One category's monthly totals over recent months (default 6). Use to explain a category's history.",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('category_trail', 'category trail', 'no group in scope');
@@ -493,7 +493,7 @@ const TOOLS: Record<
   member_stats: {
     tier: 'graph',
     needs: 'group',
-    doc: "member_stats(member, month?) — one member's paid vs consumed, their balance, what they owe you / you owe them, and their top categories.",
+    doc: "member_stats(member, month?). One member's paid vs consumed, their balance, what they owe you / you owe them, and their top categories.",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('member_stats', 'member stats', 'no group in scope');
@@ -501,7 +501,7 @@ const TOOLS: Record<
       if (!m.matched) {
         return m.candidates.length
           ? ok('member_stats', 'member stats', { ambiguous: m.candidates })
-          : err('member_stats', 'member stats', `no member matching "${req.member ?? ''}" — members: ${g.members.map((x) => resolveDisplayName(x)).join(', ')}`);
+          : err('member_stats', 'member stats', `no member matching "${req.member ?? ''}". Members: ${g.members.map((x) => resolveDisplayName(x)).join(', ')}`);
       }
       const p = resolvePeriod(req.month, ctx.now);
       const tf = p?.tf ?? null;
@@ -541,7 +541,7 @@ const TOOLS: Record<
   merchant_stats: {
     tier: 'graph',
     needs: 'group',
-    doc: "merchant_stats(merchant, month?) — fuzzy merchant match: visits, total, average, receipt savings, and recent purchases there.",
+    doc: "merchant_stats(merchant, month?). Fuzzy merchant match: visits, total, average, receipt savings, and recent purchases there.",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('merchant_stats', 'merchant stats', 'no group in scope');
@@ -574,7 +574,7 @@ const TOOLS: Record<
   top_expenses: {
     tier: 'graph',
     needs: 'group',
-    doc: "top_expenses(month?, n?, category?) — the biggest expenses in a period, optionally within one category.",
+    doc: "top_expenses(month?, n?, category?). The biggest expenses in a period, optionally within one category.",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('top_expenses', 'top expenses', 'no group in scope');
@@ -596,7 +596,7 @@ const TOOLS: Record<
   search_expenses: {
     tier: 'graph',
     needs: 'group',
-    doc: "search_expenses(query, month?) — fuzzy search of expense titles for a word or phrase; returns matching rows and their sum.",
+    doc: "search_expenses(query, month?). Fuzzy search of expense titles for a word or phrase; returns matching rows and their sum.",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('search_expenses', 'expense search', 'no group in scope');
@@ -624,7 +624,7 @@ const TOOLS: Record<
   balances: {
     tier: 'graph',
     needs: 'group',
-    doc: "balances() — every member's current net balance (positive = owed money) and yours.",
+    doc: "balances(). Every member's current net balance (positive = owed money) and yours.",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('balances', 'balances', 'no group in scope');
@@ -646,7 +646,7 @@ const TOOLS: Record<
   settle_plan: {
     tier: 'graph',
     needs: 'group',
-    doc: "settle_plan() — the minimal set of payments that settles the whole group.",
+    doc: "settle_plan(). The minimal set of payments that settles the whole group.",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('settle_plan', 'settle-up plan', 'no group in scope');
@@ -669,7 +669,7 @@ const TOOLS: Record<
   budgets: {
     tier: 'graph',
     needs: 'group',
-    doc: "budgets() — this month's spend vs every category budget the group has set.",
+    doc: "budgets(). This month's spend vs every category budget the group has set.",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('budgets', 'budgets', 'no group in scope');
@@ -686,7 +686,7 @@ const TOOLS: Record<
   budget_status: {
     tier: 'graph',
     needs: 'group',
-    doc: "budget_status(category) — one category's budget vs spend this month plus its recent monthly trail.",
+    doc: "budget_status(category). One category's budget vs spend this month plus its recent monthly trail.",
     run: async (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('budget_status', 'budget status', 'no group in scope');
@@ -695,7 +695,7 @@ const TOOLS: Record<
       const row = rows.find((r) => norm(r.category) === norm(cat ?? req.category ?? ''));
       if (!row) {
         return rows.length
-          ? err('budget_status', 'budget status', `no budget for "${req.category ?? ''}" — budgeted: ${rows.map((r) => r.category).join(', ')}`)
+          ? err('budget_status', 'budget status', `no budget for "${req.category ?? ''}". Budgeted: ${rows.map((r) => r.category).join(', ')}`)
           : ok('budget_status', 'budget status', { note: 'this group has no budgets set' });
       }
       const trailReq: ToolRequest = { tool: 'category_trail', category: row.category, months: 4 };
@@ -711,7 +711,7 @@ const TOOLS: Record<
   recurring: {
     tier: 'graph',
     needs: 'group',
-    doc: "recurring() — the group's recurring bills and their approximate monthly commitment.",
+    doc: "recurring(). The group's recurring bills and their approximate monthly commitment.",
     run: (req, ctx) => {
       const bills = ctx.recurringBills ?? [];
       if (bills.length === 0 && !ctx.recurringMonthly) {
@@ -728,7 +728,7 @@ const TOOLS: Record<
   forecast: {
     tier: 'graph',
     needs: 'group',
-    doc: "forecast() — month-to-date spend, the straight-line month-end projection, and last month's anchor.",
+    doc: "forecast(). Month-to-date spend, the straight-line month-end projection, and last month's anchor.",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('forecast', 'forecast', 'no group in scope');
@@ -740,7 +740,7 @@ const TOOLS: Record<
   anomalies: {
     tier: 'graph',
     needs: 'group',
-    doc: "anomalies() — recent expenses that run far above their category's usual level.",
+    doc: "anomalies(). Recent expenses that run far above their category's usual level.",
     run: (req, ctx) => {
       const g = needGroup(ctx);
       if (!g) return err('anomalies', 'anomalies', 'no group in scope');
@@ -754,7 +754,7 @@ const TOOLS: Record<
   personal_overview: {
     tier: 'graph',
     needs: 'personal',
-    doc: "personal_overview(month?) — YOUR share across all groups for a period, per group and per category (per currency — never summed across currencies).",
+    doc: "personal_overview(month?). YOUR share across all groups for a period, per group and per category (per currency. Never summed across currencies).",
     run: (req, ctx) => {
       if (!ctx.personalGroups?.length) return err('personal_overview', 'personal overview', 'no groups');
       const p = resolvePeriod(req.month, ctx.now);
@@ -770,7 +770,7 @@ const TOOLS: Record<
   entity_lookup: {
     tier: 'graph',
     needs: 'any',
-    doc: "entity_lookup(query) — fuzzy-resolve a name you're unsure about: members, groups, and merchants that match. Use BEFORE guessing when a name doesn't resolve.",
+    doc: "entity_lookup(query). Fuzzy-resolve a name you're unsure about: members, groups, and merchants that match. Use BEFORE guessing when a name doesn't resolve.",
     run: (req, ctx) => {
       const q = norm(req.query ?? req.member ?? req.merchant ?? '');
       if (!q) return err('entity_lookup', 'entity lookup', 'empty query');
@@ -799,7 +799,7 @@ const TOOLS: Record<
   chat_search: {
     tier: 'local',
     needs: 'group',
-    doc: 'chat_search(query, month?) — search this group\'s chat messages for what people SAID about something ("what did we decide about the hotel?"). On-device only.',
+    doc: 'chat_search(query, month?). Search this group\'s chat messages for what people SAID about something ("what did we decide about the hotel?"). On-device only.',
     run: async (req, ctx) => {
       if (!ctx.chatSearch) return err('chat_search', 'chat search', 'chat search is not available here');
       const q = (req.query ?? '').trim();
@@ -818,7 +818,7 @@ const TOOLS: Record<
   call_stats: {
     tier: 'local',
     needs: 'any',
-    doc: 'call_stats(member?, month?) — call counts, total minutes, missed calls, and the last call. On-device only.',
+    doc: 'call_stats(member?, month?). Call counts, total minutes, missed calls, and the last call. On-device only.',
     run: async (req, ctx) => {
       if (!ctx.callStats) return err('call_stats', 'call stats', 'call history is not available here');
       const p = resolvePeriod(req.month, ctx.now);
@@ -834,7 +834,7 @@ const TOOLS: Record<
   group_compare: {
     tier: 'graph',
     needs: 'personal',
-    doc: "group_compare(month?) — which groups cost YOU the most in a period (each in its own currency).",
+    doc: "group_compare(month?). Which groups cost YOU the most in a period (each in its own currency).",
     run: (req, ctx) => {
       if (!ctx.personalGroups?.length) return err('group_compare', 'group comparison', 'no groups');
       const p = resolvePeriod(req.month, ctx.now);

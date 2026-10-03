@@ -7,6 +7,8 @@
 // presents (same modal-dismissal rule as HeaderMenu).
 
 import { useTheme } from '@/context/ThemeContext';
+import { GlassCard } from '@/components/ui/GlassCard';
+import { ScrimBackdrop } from '@/components/ui/ScrimBackdrop';
 import { appAlert } from '@/utils/appAlert';
 import { WALLPAPER_CATALOG, type CatalogWallpaper } from '@/constants/wallpaperCatalog';
 import {
@@ -85,7 +87,6 @@ export const WallpaperPickerSheet = ({
 
   if (!slot) return null;
   const hasCurrent = Boolean(getWallpaperSync(slot));
-  const surface = isDark ? '#1c1c20' : '#ffffff';
 
   const applyCatalog = async (item: CatalogWallpaper) => {
     lightHaptic();
@@ -98,7 +99,8 @@ export const WallpaperPickerSheet = ({
       onChanged?.(slot);
       onClose();
     } catch (error) {
-      appAlert('Wallpaper', error instanceof Error ? error.message : 'Could not set the wallpaper.');
+      console.warn('[WallpaperPicker] Catalog wallpaper failed:', error);
+      appAlert('Could not set wallpaper', 'Your current wallpaper is unchanged. Try again.');
     } finally {
       setBusyId(null);
     }
@@ -113,9 +115,10 @@ export const WallpaperPickerSheet = ({
         .then((entry) => {
           if (entry) onChanged?.(slot);
         })
-        .catch((error) =>
-          appAlert('Wallpaper', error instanceof Error ? error.message : 'Could not set the wallpaper.'),
-        );
+        .catch((error) => {
+          console.warn('[WallpaperPicker] Photo wallpaper failed:', error);
+          appAlert('Could not set wallpaper', 'Your current wallpaper is unchanged. Try another photo.');
+        });
     }, 350);
   };
 
@@ -135,7 +138,8 @@ export const WallpaperPickerSheet = ({
       onChanged?.(slot);
       onClose();
     } catch (error) {
-      appAlert('Wallpaper', error instanceof Error ? error.message : 'Could not match the wallpaper.');
+      console.warn('[WallpaperPicker] Match failed:', error);
+      appAlert('Could not match wallpaper', 'The current chat wallpaper is unchanged. Try again.');
     } finally {
       setBusyId(null);
     }
@@ -151,7 +155,8 @@ export const WallpaperPickerSheet = ({
       onChanged?.(copyToSlot);
       onClose();
     } catch (error) {
-      appAlert('Wallpaper', error instanceof Error ? error.message : 'Could not share the wallpaper.');
+      console.warn('[WallpaperPicker] Copy failed:', error);
+      appAlert('Could not copy wallpaper', 'The other chat wallpaper is unchanged. Try again.');
     } finally {
       setBusyId(null);
     }
@@ -162,14 +167,19 @@ export const WallpaperPickerSheet = ({
 
   return (
     <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close wallpaper picker" />
+      <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close wallpaper picker">
+        <ScrimBackdrop />
+      </Pressable>
       <Animated.View
         onLayout={(e) => setSheetH(e.nativeEvent.layout.height)}
-        style={[
-          styles.sheet,
-          { backgroundColor: surface, paddingBottom: insets.bottom + 12, transform: [{ translateY }] },
-        ]}
+        style={[styles.sheetAnchor, { transform: [{ translateY }] }]}
       >
+        <GlassCard
+          role="floating"
+          radius={24}
+          style={styles.sheet}
+          contentStyle={[styles.sheetContent, { paddingBottom: insets.bottom + 12 }]}
+        >
         <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }]} />
         <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
           {title}
@@ -292,6 +302,7 @@ export const WallpaperPickerSheet = ({
             <Text style={{ color: theme.colors.error, fontWeight: '600' }}>Remove wallpaper</Text>
           </TouchableOpacity>
         )}
+        </GlassCard>
       </Animated.View>
     </Modal>
   );
@@ -303,15 +314,18 @@ const THUMB_H = 164;
 const styles = StyleSheet.create({
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.45)',  // full-screen scrim, fades with the Modal
   },
-  sheet: {
+  sheetAnchor: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+  },
+  sheet: {
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+  },
+  sheetContent: {
     paddingTop: 8,
   },
   grabber: {

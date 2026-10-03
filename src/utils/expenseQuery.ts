@@ -58,7 +58,12 @@ export interface QueryResult {
   confidence: number;
 }
 
-const NOT_HANDLED: QueryResult = { handled: false, answer: '', sources: [], confidence: 0 };
+const NOT_HANDLED: QueryResult = {
+  handled: false,
+  answer: '',
+  sources: [],
+  confidence: 0,
+};
 
 /** What the deterministic assistant can answer — shown for help/unknown questions. */
 export const ASSISTANT_CAPABILITIES = [
@@ -77,14 +82,31 @@ export const ASSISTANT_CAPABILITIES = [
   '• "Delete the gas expense"',
   '• "Open stats"',
   '',
-  'If I\'m missing something, I\'ll ask — just tap an option or type your answer.',
+  "If I'm missing something, I'll ask. Just tap an option or type your answer.",
 ].join('\n');
 
 const MAX_SOURCES = 8;
 
 // Canonical category → words that imply it (improves recall for "food", "gas"…).
 const CATEGORY_SYNONYMS: Record<string, string[]> = {
-  Food: ['food', 'dinner', 'lunch', 'breakfast', 'restaurant', 'restaurants', 'eat', 'eating', 'groceries', 'grocery', 'meal', 'meals', 'snack', 'snacks', 'dining', 'coffee'],
+  Food: [
+    'food',
+    'dinner',
+    'lunch',
+    'breakfast',
+    'restaurant',
+    'restaurants',
+    'eat',
+    'eating',
+    'groceries',
+    'grocery',
+    'meal',
+    'meals',
+    'snack',
+    'snacks',
+    'dining',
+    'coffee',
+  ],
   Transport: ['transport', 'transportation', 'gas', 'fuel', 'uber', 'lyft', 'taxi', 'cab', 'commute', 'train', 'bus', 'parking'],
   Utilities: ['utilities', 'utility', 'electric', 'electricity', 'water', 'internet', 'wifi'],
   Entertainment: ['entertainment', 'movie', 'movies', 'cinema', 'concert', 'netflix', 'spotify', 'game', 'games'],
@@ -103,7 +125,10 @@ const wordIn = (haystack: string, word: string): boolean =>
 /** Resolve a member's display name (first name kept) or a friendly fallback. */
 const nameOf = (members: readonly QueryMember[], userId: string, selfId: string): string => {
   if (userId === selfId) return 'You';
-  return resolveDisplayName(members.find((m) => m.userId === userId), 'Someone');
+  return resolveDisplayName(
+    members.find((m) => m.userId === userId),
+    'Someone',
+  );
 };
 
 /** True when the question is scoped to the current user ("I", "my", "me"). */
@@ -169,7 +194,10 @@ const toSource = (e: Expense, ctx: QueryContext): QuerySource => ({
 });
 
 const topSources = (expenses: readonly Expense[], ctx: QueryContext): QuerySource[] =>
-  [...expenses].sort((a, b) => (b.amount || 0) - (a.amount || 0)).slice(0, MAX_SOURCES).map((e) => toSource(e, ctx));
+  [...expenses]
+    .sort((a, b) => (b.amount || 0) - (a.amount || 0))
+    .slice(0, MAX_SOURCES)
+    .map((e) => toSource(e, ctx));
 
 const tfSuffix = (tf: Timeframe | null): string => (tf ? ` ${tf.label}` : '');
 
@@ -181,8 +209,17 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
   const q = (question ?? '').trim();
   if (!q) return NOT_HANDLED;
   // ── Help / capabilities ──
-  if (/\b(help|what (all )?can (you|u|i) (do|ask|help)|what (do|are) you (do|capable|able)|what can you answer|how (do|does) (this|you|it) work|commands?|capabilities|who are you|what are you)\b/i.test(q)) {
-    return { handled: true, answer: ASSISTANT_CAPABILITIES, sources: [], confidence: 1 };
+  if (
+    /\b(help|what (all )?can (you|u|i) (do|ask|help)|what (do|are) you (do|capable|able)|what can you answer|how (do|does) (this|you|it) work|commands?|capabilities|who are you|what are you)\b/i.test(
+      q,
+    )
+  ) {
+    return {
+      handled: true,
+      answer: ASSISTANT_CAPABILITIES,
+      sources: [],
+      confidence: 1,
+    };
   }
 
   const tf = parseTimeframe(q, ctx.now);
@@ -221,7 +258,7 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
     }
     return {
       handled: true,
-      answer: `${subject} spent ${money(cur, currency)}${scopeLabel} ${current.label} vs ${money(prev, currency)} ${previous.label} — ${trend}.`,
+      answer: `${subject} spent ${money(cur, currency)}${scopeLabel} ${current.label} vs ${money(prev, currency)} ${previous.label}. ${trend}.`,
       sources: [],
       confidence: 1,
     };
@@ -232,7 +269,12 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
     const a = buildExpenseAnalytics(ctx.expenses, ctx.settlements, ctx.currentUserId);
     const months = Object.keys(a.byMonth).sort().slice(-6);
     if (months.length === 0) {
-      return { handled: true, answer: 'No expenses yet.', sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: 'No expenses yet.',
+        sources: [],
+        confidence: 1,
+      };
     }
     const lines = months.map((mk) => `• ${mk}: ${money(a.byMonth[mk].total, currency)}`);
     return {
@@ -247,10 +289,16 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
   if (/\bsettle( ?up)?\b|\bsettlements?\b|who owes who/i.test(q)) {
     const analytics = buildExpenseAnalytics(ctx.expenses, ctx.settlements, ctx.currentUserId);
     if (analytics.debts.length === 0) {
-      return { handled: true, answer: "Everyone's settled up — no payments needed. 🎉", sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: "Everyone's settled up. No payments needed. 🎉",
+        sources: [],
+        confidence: 1,
+      };
     }
     const lines = analytics.debts.map(
-      (d) => `• ${nameOf(ctx.members, d.from, ctx.currentUserId)} → ${nameOf(ctx.members, d.to, ctx.currentUserId)}: ${money(d.amount, currency)}`,
+      (d) =>
+        `• ${nameOf(ctx.members, d.from, ctx.currentUserId)} → ${nameOf(ctx.members, d.to, ctx.currentUserId)}: ${money(d.amount, currency)}`,
     );
     return {
       handled: true,
@@ -271,7 +319,12 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
         .filter((r) => Math.abs(r.bal) >= 0.01)
         .sort((a, b) => b.bal - a.bal);
       if (rows.length === 0) {
-        return { handled: true, answer: "Everyone's settled up.", sources: [], confidence: 1 };
+        return {
+          handled: true,
+          answer: "Everyone's settled up.",
+          sources: [],
+          confidence: 1,
+        };
       }
       const lines = rows.map((r) => {
         const name = nameOf(ctx.members, r.m.userId, ctx.currentUserId);
@@ -280,15 +333,28 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
           ? `• ${name} ${isYou ? 'are' : 'is'} owed ${money(r.bal, currency)}`
           : `• ${name} owe${isYou ? '' : 's'} ${money(Math.abs(r.bal), currency)}`;
       });
-      return { handled: true, answer: `Balances:\n${lines.join('\n')}`, sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: `Balances:\n${lines.join('\n')}`,
+        sources: [],
+        confidence: 1,
+      };
     }
 
     // Pairwise: "how much do I owe Bob" / "does Bob owe me" → exact bilateral net.
-    const other = detectMember(q, ctx.members.filter((m) => m.userId !== ctx.currentUserId));
+    const other = detectMember(
+      q,
+      ctx.members.filter((m) => m.userId !== ctx.currentUserId),
+    );
     if (other) {
       const net = pairwiseNet(ctx.expenses, ctx.settlements, ctx.currentUserId, other.userId);
       if (Math.abs(net) < 0.01) {
-        return { handled: true, answer: `You and ${other.displayName} are settled up.`, sources: [], confidence: 1 };
+        return {
+          handled: true,
+          answer: `You and ${other.displayName} are settled up.`,
+          sources: [],
+          confidence: 1,
+        };
       }
       return {
         handled: true,
@@ -302,7 +368,12 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
     }
     const bal = analytics.userBalance;
     if (Math.abs(bal) < 0.01) {
-      return { handled: true, answer: "You're all settled up — you don't owe anything and nothing's owed to you.", sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: "You're all settled up. You don't owe anything and nothing's owed to you.",
+        sources: [],
+        confidence: 1,
+      };
     }
     if (bal < 0) {
       const yourDebts = analytics.debts.filter((d) => d.from === ctx.currentUserId);
@@ -329,9 +400,16 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
     const pool = ctx.expenses.filter((e) => inTf(e));
     const top = [...pool].sort((a, b) => (b.amount || 0) - (a.amount || 0)).slice(0, 5);
     if (top.length === 0) {
-      return { handled: true, answer: `No expenses found${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: `No expenses found${tfSuffix(tf)}.`,
+        sources: [],
+        confidence: 1,
+      };
     }
-    const lines = top.map((e, i) => `${i + 1}. ${e.title || 'Untitled'} — ${money(e.amount, currency)}${e.category ? ` (${e.category})` : ''}`);
+    const lines = top.map(
+      (e, i) => `${i + 1}. ${e.title || 'Untitled'} · ${money(e.amount, currency)}${e.category ? ` (${e.category})` : ''}`,
+    );
     return {
       handled: true,
       answer: `Biggest expenses${tfSuffix(tf)}:\n${lines.join('\n')}`,
@@ -342,15 +420,23 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
 
   // ── What did I pay for (list a user's paid expenses) ──
   if (/\b(paid for|pay for|did i pay|i paid|i bought|did i buy|what.* i pay)\b/i.test(q)) {
-    const target = resolveTarget(q, ctx) ?? { userId: ctx.currentUserId, subject: 'You' };
+    const target = resolveTarget(q, ctx) ?? {
+      userId: ctx.currentUserId,
+      subject: 'You',
+    };
     const paid = ctx.expenses
       .filter((e) => inTf(e) && e.paidBy === target.userId && lc(e.category ?? '') !== 'settlement')
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     if (paid.length === 0) {
-      return { handled: true, answer: `${target.subject === 'You' ? "You haven't" : `${target.subject} hasn't`} paid for anything${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: `${target.subject === 'You' ? "You haven't" : `${target.subject} hasn't`} paid for anything${tfSuffix(tf)}.`,
+        sources: [],
+        confidence: 1,
+      };
     }
     const total = sumTotal(paid);
-    const lines = paid.slice(0, MAX_SOURCES).map((e) => `• ${e.title || 'Untitled'} — ${money(e.amount, currency)}`);
+    const lines = paid.slice(0, MAX_SOURCES).map((e) => `• ${e.title || 'Untitled'} · ${money(e.amount, currency)}`);
     const subj = target.subject === 'You' ? 'You paid for' : `${target.subject} paid for`;
     return {
       handled: true,
@@ -367,9 +453,14 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
       .slice(0, 5);
     if (recent.length === 0) {
-      return { handled: true, answer: 'No expenses yet.', sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: 'No expenses yet.',
+        sources: [],
+        confidence: 1,
+      };
     }
-    const lines = recent.map((e) => `• ${e.title || 'Untitled'} — ${money(e.amount, currency)}${e.category ? ` (${e.category})` : ''}`);
+    const lines = recent.map((e) => `• ${e.title || 'Untitled'} · ${money(e.amount, currency)}${e.category ? ` (${e.category})` : ''}`);
     return {
       handled: true,
       answer: `Most recent expenses:\n${lines.join('\n')}`,
@@ -379,7 +470,9 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
   }
 
   // ── Per-member spending leaderboard ("how much has each person spent") ──
-  if (/\b(each (person|member|one)|everyone'?s? (spending|share|spend)|per person|how much has each|breakdown by (person|member))\b/i.test(q)) {
+  if (
+    /\b(each (person|member|one)|everyone'?s? (spending|share|spend)|per person|how much has each|breakdown by (person|member))\b/i.test(q)
+  ) {
     const pool = ctx.expenses.filter((e) => inTf(e) && lc(e.category ?? '') !== 'settlement');
     const byPaid = lc(q).includes('paid');
     const totals = new Map<string, number>();
@@ -388,11 +481,19 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
       else for (const p of e.participants ?? []) totals.set(p.userId, (totals.get(p.userId) ?? 0) + (Number(p.share) || 0));
     }
     const rows = ctx.members
-      .map((m) => ({ m, amt: Math.round((totals.get(m.userId) ?? 0) * 100) / 100 }))
+      .map((m) => ({
+        m,
+        amt: Math.round((totals.get(m.userId) ?? 0) * 100) / 100,
+      }))
       .filter((r) => r.amt > 0)
       .sort((a, b) => b.amt - a.amt);
     if (rows.length === 0) {
-      return { handled: true, answer: `No expenses found${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: `No expenses found${tfSuffix(tf)}.`,
+        sources: [],
+        confidence: 1,
+      };
     }
     const verb = byPaid ? 'paid' : 'spent';
     const lines = rows.map((r) => `• ${nameOf(ctx.members, r.m.userId, ctx.currentUserId)}: ${money(r.amt, currency)}`);
@@ -405,19 +506,30 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
   }
 
   // ── Spending by category breakdown ("where did the money go", "by category") ──
-  if (/\b(by category|per category|category breakdown|breakdown by category)\b/i.test(q) || /\bwhere did (the |our |my )?money go\b/i.test(q)) {
+  if (
+    /\b(by category|per category|category breakdown|breakdown by category)\b/i.test(q) ||
+    /\bwhere did (the |our |my )?money go\b/i.test(q)
+  ) {
     const pool = ctx.expenses.filter((e) => inTf(e) && lc(e.category ?? '') !== 'settlement');
     if (pool.length === 0) {
-      return { handled: true, answer: `No expenses found${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: `No expenses found${tfSuffix(tf)}.`,
+        sources: [],
+        confidence: 1,
+      };
     }
     const target = resolveTarget(q, ctx);
     const totals = new Map<string, number>();
     for (const e of pool) {
       const c = (e.category ?? 'General').trim() || 'General';
-      const v = target ? userShareOf(e, target.userId) : (e.amount || 0);
+      const v = target ? userShareOf(e, target.userId) : e.amount || 0;
       if (v > 0) totals.set(c, (totals.get(c) ?? 0) + v);
     }
-    const rows = [...totals.entries()].map(([c, t]) => [c, Math.round(t * 100) / 100] as const).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    const rows = [...totals.entries()]
+      .map(([c, t]) => [c, Math.round(t * 100) / 100] as const)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8);
     const subj = target ? `${target.subject === 'You' ? 'Your' : `${target.subject}'s`} spending` : 'Spending';
     const lines = rows.map(([c, t]) => `• ${c}: ${money(t, currency)}`);
     return {
@@ -432,7 +544,12 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
   if (/\bwho\b.*\b(paid|spent|spend|owes? the most|biggest spender)\b|biggest spender/i.test(q)) {
     const pool = ctx.expenses.filter((e) => inTf(e) && lc(e.category ?? '') !== 'settlement');
     if (pool.length === 0) {
-      return { handled: true, answer: `No expenses found${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: `No expenses found${tfSuffix(tf)}.`,
+        sources: [],
+        confidence: 1,
+      };
     }
     const byPaid = lc(q).includes('paid');
     const totals = new Map<string, number>();
@@ -445,7 +562,12 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
     }
     const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
     if (ranked.length === 0) {
-      return { handled: true, answer: `No expenses found${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: `No expenses found${tfSuffix(tf)}.`,
+        sources: [],
+        confidence: 1,
+      };
     }
     const [topId, topAmt] = ranked[0];
     const verb = byPaid ? 'paid' : 'spent';
@@ -461,7 +583,12 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
   if (/\baverage\b|\bavg\b|\bon average\b|\btypical (expense|amount)\b/i.test(q)) {
     const pool = ctx.expenses.filter((e) => inTf(e) && lc(e.category ?? '') !== 'settlement');
     if (pool.length === 0) {
-      return { handled: true, answer: `No expenses found${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: `No expenses found${tfSuffix(tf)}.`,
+        sources: [],
+        confidence: 1,
+      };
     }
     const avg = sumTotal(pool) / pool.length;
     return {
@@ -488,7 +615,12 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
   if (/\b(summar(y|ize|ise)|overview|recap|review|breakdown)\b/i.test(q)) {
     const pool = ctx.expenses.filter((e) => inTf(e) && lc(e.category ?? '') !== 'settlement');
     if (pool.length === 0) {
-      return { handled: true, answer: `No expenses to summarize${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: `No expenses to summarize${tfSuffix(tf)}.`,
+        sources: [],
+        confidence: 1,
+      };
     }
     const total = sumTotal(pool);
     const userShare = sumUserShare(pool, ctx.currentUserId);
@@ -540,13 +672,16 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
   if (/\b(spen[dt]|spending|total)\b/i.test(q)) {
     const pool = ctx.expenses.filter((e) => inTf(e));
     if (pool.length === 0) {
-      return { handled: true, answer: `No expenses found${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+      return {
+        handled: true,
+        answer: `No expenses found${tfSuffix(tf)}.`,
+        sources: [],
+        confidence: 1,
+      };
     }
     const target = resolveTarget(q, ctx);
     const amount = target ? sumUserShare(pool, target.userId) : sumTotal(pool);
-    const who = target
-      ? `${target.subject === 'You' ? 'Your' : `${target.subject}'s`} share of spending`
-      : 'Total spending';
+    const who = target ? `${target.subject === 'You' ? 'Your' : `${target.subject}'s`} share of spending` : 'Total spending';
     return {
       handled: true,
       answer: `${who}${tfSuffix(tf)} is ${money(amount, currency)} across ${pool.length} expense${pool.length === 1 ? '' : 's'}.`,

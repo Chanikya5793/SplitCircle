@@ -89,6 +89,27 @@ const modalRanges = (src: string): [number, number][] => {
   return ranges;
 };
 
+const EXEMPTION_MARKER = 'surface-role-exempt:';
+
+/**
+ * Modals need a floating/glass material surface somewhere in their subtree.
+ * Full-screen feature hosts may opt out with a reasoned marker inside the
+ * Modal block when the mounted child owns the complete screen chrome.
+ */
+const zeroGlassModals = (src: string): number[] => {
+  const tags = glassTags(src);
+  return modalRanges(src)
+    .filter(([start, end]) => {
+      const block = src.slice(start, end);
+      const exempt = block.includes(EXEMPTION_MARKER);
+      const hasMaterial = tags.some(
+        (tag) => tag.start >= start && tag.start <= end && tag.floating,
+      );
+      return !exempt && !hasMaterial;
+    })
+    .map(([start]) => src.slice(0, start).split('\n').length);
+};
+
 /**
  * Glass tags inside a Modal that are neither floating themselves nor enclosed
  * by a floating glass ancestor. Walks a real open/close stack so nesting is
@@ -169,6 +190,15 @@ describe('surface role coverage', () => {
     // A failure here means: you added a sheet/menu/dialog that will render with
     // NO background in flat mode. Add role="floating" to it (see
     // src/components/ui/surfaceRole.ts).
+    expect(offenders).toEqual([]);
+  });
+
+  it('every Modal contains material chrome or a reasoned full-screen exemption', () => {
+    const offenders: string[] = [];
+    for (const f of files) {
+      const lines = zeroGlassModals(readFileSync(f, 'utf8'));
+      for (const l of lines) offenders.push(`${f.replace(SRC, 'src')}:${l}`);
+    }
     expect(offenders).toEqual([]);
   });
 });

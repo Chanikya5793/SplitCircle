@@ -24,7 +24,7 @@ import {
 import { DEFAULT_TOGGLES, type MemoryItem, type MemoryKind, type MemoryToggles } from '@/utils/aiMemory';
 import { lightHaptic, mediumHaptic } from '@/utils/haptics';
 import { useCallback, useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Icon, IconButton, Switch, Text } from 'react-native-paper';
 
 interface LedgerRow extends MemoryItem {
@@ -42,7 +42,7 @@ const KIND_META: Record<MemoryKind, { title: string; icon: string; hint: string 
   preference: { title: 'Preferences', icon: 'tune', hint: 'Standing asks that steer every answer.' },
   entityFix: { title: 'Name fixes', icon: 'account-check-outline', hint: 'Learned from your clarification picks.' },
   fact: { title: 'Facts & nicknames', icon: 'lightbulb-outline', hint: 'Things you told it to remember.' },
-  pattern: { title: 'Observed patterns', icon: 'chart-timeline-variant', hint: 'Computed from usage — never written by the model.' },
+  pattern: { title: 'Observed patterns', icon: 'chart-timeline-variant', hint: 'Computed from usage and never written by the model.' },
 };
 
 /** Human label for a memory scope key. */
@@ -105,7 +105,13 @@ export const AiMemoryScreen = () => {
     const sectionRows = rows.filter((r) => r.kind === kind);
     return (
       <GlassView key={kind} style={styles.card}>
-        <View style={styles.sectionHeader}>
+        <Pressable
+          style={styles.sectionHeader}
+          onPress={() => void flip(kind)}
+          accessibilityRole="switch"
+          accessibilityLabel={meta.title}
+          accessibilityState={{ checked: toggles[kind] }}
+        >
           <Icon source={meta.icon} size={18} color={theme.colors.primary} />
           <View style={styles.sectionTitle}>
             <Text variant="titleSmall" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
@@ -115,8 +121,15 @@ export const AiMemoryScreen = () => {
               {meta.hint}
             </Text>
           </View>
-          <Switch value={toggles[kind]} onValueChange={() => void flip(kind)} trackColor={{ true: theme.colors.primary }} />
-        </View>
+          <Switch
+            value={toggles[kind]}
+            onValueChange={() => void flip(kind)}
+            trackColor={{ true: theme.colors.primary }}
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          />
+        </Pressable>
         {kind === 'pattern' ? (
           patterns.length === 0 ? (
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -137,7 +150,7 @@ export const AiMemoryScreen = () => {
           )
         ) : sectionRows.length === 0 ? (
           <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-            {kind === 'entityFix' ? 'Nothing learned yet.' : 'Nothing remembered yet — say "remember that …" in a chat.'}
+            {kind === 'entityFix' ? 'Nothing learned yet.' : 'Nothing remembered yet. Say "remember that …" in a chat.'}
           </Text>
         ) : (
           sectionRows.map((r) => (
@@ -188,7 +201,7 @@ const styles = StyleSheet.create({
   // Tightened 12 -> 8 (2026-08-07, compact density pass).
   content: { padding: 16, paddingBottom: 48, gap: 8 },
   card: { borderRadius: 16, padding: 14 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48, marginBottom: 8 },
   sectionTitle: { flex: 1 },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
   rowBody: { flex: 1 },

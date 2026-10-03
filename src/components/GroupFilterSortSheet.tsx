@@ -1,7 +1,7 @@
 import React from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { IconButton, Text } from 'react-native-paper';
-import { GlassCard } from '@/components/ui';
+import { GlassCard, ScrimBackdrop, SelectableChip } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import Animated, {
     SlideInDown,
@@ -71,58 +71,19 @@ export const GroupFilterSortSheet: React.FC<GroupFilterSortSheetProps> = ({
         }
     }, [visible]);
 
-    const Chip = ({
-        label,
-        selected,
-        onPress,
-        icon,
-        disabled = false
-    }: {
-        label: string;
-        selected: boolean;
-        onPress: () => void;
-        icon?: string;
-        disabled?: boolean;
-    }) => (
-        <Pressable
-            onPress={disabled ? undefined : onPress}
-            style={[
-                styles.chip,
-                {
-                    backgroundColor: selected
-                        ? theme.colors.primary
-                        : isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
-                    borderColor: selected ? theme.colors.primary : 'transparent',
-                    opacity: disabled ? 0.4 : 1,
-                },
-            ]}
-        >
-            {icon && (
-                <IconButton
-                    icon={icon}
-                    size={16}
-                    iconColor={selected ? '#fff' : theme.colors.onSurface}
-                    style={{ margin: 0, marginRight: -4 }}
-                />
-            )}
-            <Text
-                variant="labelMedium"
-                style={{
-                    color: selected ? '#fff' : theme.colors.onSurface,
-                    fontWeight: selected ? '600' : '500',
-                }}
-            >
-                {label}
-            </Text>
-        </Pressable>
-    );
-
     if (!visible) return null;
 
     return (
-        <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+        <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose} statusBarTranslucent>
             <View style={styles.overlay}>
-                <Pressable style={styles.backdrop} onPress={onClose} />
+                <Pressable
+                    style={styles.backdrop}
+                    onPress={onClose}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close group filters"
+                >
+                    <ScrimBackdrop pointerEvents="none" />
+                </Pressable>
 
                 <GestureDetector gesture={gesture}>
                     <Animated.View
@@ -145,6 +106,7 @@ export const GroupFilterSortSheet: React.FC<GroupFilterSortSheetProps> = ({
                                     size={22}
                                     onPress={onClose}
                                     iconColor={theme.colors.onSurfaceVariant}
+                                    accessibilityLabel="Close group filters"
                                 />
                             </View>
 
@@ -155,10 +117,10 @@ export const GroupFilterSortSheet: React.FC<GroupFilterSortSheetProps> = ({
                                         Sort by
                                     </Text>
                                     <View style={styles.chipWrap}>
-                                        <Chip label="Activity" selected={sortField === 'updatedAt'} onPress={() => onSortFieldChange('updatedAt')} icon="clock-outline" />
-                                        <Chip label="Name" selected={sortField === 'name'} onPress={() => onSortFieldChange('name')} icon="alphabetical" />
-                                        <Chip label="Created" selected={sortField === 'createdAt'} onPress={() => onSortFieldChange('createdAt')} icon="calendar" />
-                                        <Chip label="Total Spent" selected={sortField === 'totalSpent'} onPress={() => onSortFieldChange('totalSpent')} icon="currency-usd" />
+                                        <SelectableChip label="Activity" selected={sortField === 'updatedAt'} onPress={() => onSortFieldChange('updatedAt')} icon="clock-outline" />
+                                        <SelectableChip label="Name" selected={sortField === 'name'} onPress={() => onSortFieldChange('name')} icon="alphabetical" />
+                                        <SelectableChip label="Created" selected={sortField === 'createdAt'} onPress={() => onSortFieldChange('createdAt')} icon="calendar" />
+                                        <SelectableChip label="Total Spent" selected={sortField === 'totalSpent'} onPress={() => onSortFieldChange('totalSpent')} icon="currency-usd" />
                                     </View>
                                 </View>
 
@@ -168,7 +130,7 @@ export const GroupFilterSortSheet: React.FC<GroupFilterSortSheetProps> = ({
                                         Order
                                     </Text>
                                     <View style={styles.chipWrap}>
-                                        <Chip
+                                        <SelectableChip
                                             label={
                                                 (sortField === 'createdAt' || sortField === 'updatedAt') ? 'Newest first' :
                                                     sortField === 'totalSpent' ? 'Highest first' :
@@ -178,7 +140,7 @@ export const GroupFilterSortSheet: React.FC<GroupFilterSortSheetProps> = ({
                                             onPress={() => onSortOrderChange('desc')}
                                             icon="arrow-down"
                                         />
-                                        <Chip
+                                        <SelectableChip
                                             label={
                                                 (sortField === 'createdAt' || sortField === 'updatedAt') ? 'Oldest first' :
                                                     sortField === 'totalSpent' ? 'Lowest first' :
@@ -199,7 +161,7 @@ export const GroupFilterSortSheet: React.FC<GroupFilterSortSheetProps> = ({
                                         </Text>
                                         <View style={styles.chipWrap}>
                                             {availableCurrencies.map(currency => (
-                                                <Chip
+                                                <SelectableChip
                                                     key={currency}
                                                     label={currency}
                                                     selected={selectedCurrencies.includes(currency)}
@@ -225,7 +187,6 @@ const styles = StyleSheet.create({
     },
     backdrop: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.4)',
     },
     sheetContainer: {
         maxHeight: '70%',
@@ -275,13 +236,5 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: 10,
-    },
-    chip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 8,
-        paddingHorizontal: 14,
-        borderRadius: 50,
-        borderWidth: 1,
     },
 });

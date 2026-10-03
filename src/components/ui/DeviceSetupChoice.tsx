@@ -55,19 +55,15 @@ const relative = (timestamp: number): string => {
   return `${Math.floor(hours / 24)} day${Math.floor(hours / 24) === 1 ? '' : 's'} ago`;
 };
 
-export const DeviceSetupChoice = ({
-  confirmationCode,
-  waitingForApproval,
-  onCancel,
-  onBecameMain,
-}: Props) => {
+export const DeviceSetupChoice = ({ confirmationCode, waitingForApproval, onCancel, onBecameMain }: Props) => {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
 
   const [step, setStep] = useState<Step>('choose');
-  const [backup, setBackup] = useState<{ hasBackup: boolean; summary: BackupSummary | null } | null>(
-    null,
-  );
+  const [backup, setBackup] = useState<{
+    hasBackup: boolean;
+    summary: BackupSummary | null;
+  } | null>(null);
   const [passphrase, setPassphrase] = useState('');
   const [reveal, setReveal] = useState(false);
   const [phrase, setPhrase] = useState('');
@@ -132,18 +128,16 @@ export const DeviceSetupChoice = ({
           disabled={busy}
           onPress={() => setKeepOld(false)}
         >
-          No — lost or sold
+          No. Lost or sold
         </Button>
       </View>
       {keepOld === true ? (
         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-          It stays signed in as a companion — it keeps your chats and still receives messages, it
-          just stops being the device that backs up.
+          It stays signed in as a companion. It keeps your chats and still receives messages, it just stops being the device that backs up.
         </Text>
       ) : keepOld === false ? (
         <Text variant="bodySmall" style={{ color: theme.colors.danger }}>
-          It will be signed out immediately and lose access to your account. Do this if it was
-          lost, stolen or sold.
+          It will be signed out immediately and lose access to your account. Do this if it was lost, stolen or sold.
         </Text>
       ) : null}
     </GlassCard>
@@ -151,10 +145,7 @@ export const DeviceSetupChoice = ({
 
   return (
     <ScrollView
-      contentContainerStyle={[
-        styles.scroll,
-        { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 32 },
-      ]}
+      contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 32 }]}
       keyboardShouldPersistTaps="handled"
     >
       <GlassCard style={styles.card} contentStyle={styles.cardContent}>
@@ -185,8 +176,8 @@ export const DeviceSetupChoice = ({
           </>
         ) : (
           <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-            No backup found for this account. Your groups, expenses and balances are safe on our
-            servers either way — only chat history depends on a backup.
+            No backup found for this account. Your groups, expenses and balances are safe on our servers either way. Only chat history
+            depends on a backup.
           </Text>
         )}
       </GlassCard>
@@ -198,8 +189,7 @@ export const DeviceSetupChoice = ({
               This is my new phone
             </Text>
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              Restore your chats here and make this the device that backs up. You&apos;ll need your
-              backup passphrase.
+              Restore your chats here and make this the device that backs up. You&apos;ll need your backup passphrase.
             </Text>
             <Button mode="contained" onPress={() => setStep(summary ? 'restore' : 'no_backup')}>
               Restore onto this phone
@@ -211,8 +201,7 @@ export const DeviceSetupChoice = ({
               This is an extra device
             </Text>
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              Use it alongside your main phone. Approve it from a device you already use, and
-              recent chat history syncs over automatically.
+              Use it alongside your main phone. Approve it from a device you already use, and recent chat history syncs over automatically.
             </Text>
             {waitingForApproval ? (
               <>
@@ -256,12 +245,7 @@ export const DeviceSetupChoice = ({
               autoCapitalize="none"
               autoCorrect={false}
               disabled={busy}
-              right={
-                <TextInput.Icon
-                  icon={reveal ? 'eye-off' : 'eye'}
-                  onPress={() => setReveal((value) => !value)}
-                />
-              }
+              right={<TextInput.Icon icon={reveal ? 'eye-off' : 'eye'} onPress={() => setReveal((value) => !value)} />}
             />
             <Button mode="text" disabled={busy} onPress={() => setStep('no_backup')}>
               I don&apos;t have my passphrase
@@ -293,8 +277,8 @@ export const DeviceSetupChoice = ({
                 would only strand a real user out of their own account. */}
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
               {summary
-                ? 'Without the passphrase your backup cannot be opened — not by you, not by us. You can still use this device, but those messages will not come back.'
-                : 'There is no backup to restore. You can still use this device — your groups, expenses and balances are safe on our servers — but past chat messages will not come back.'}
+                ? 'Without the passphrase your backup cannot be opened by you or by us. You can still use this device, but those messages will not come back.'
+                : 'There is no backup to restore. You can still use this device. Your groups, expenses, and balances are saved, but past chat messages will not come back.'}
             </Text>
             <Text variant="bodySmall" style={{ color: theme.colors.danger }}>
               Type {NO_BACKUP_PHRASE} to confirm.
@@ -330,11 +314,7 @@ export const DeviceSetupChoice = ({
         </Text>
       ) : null}
 
-      <Button
-        mode="text"
-        disabled={busy}
-        onPress={() => (step === 'choose' ? onCancel() : setStep('choose'))}
-      >
+      <Button mode="text" disabled={busy} onPress={() => (step === 'choose' ? onCancel() : setStep('choose'))}>
         {step === 'choose' ? 'Sign out' : 'Back'}
       </Button>
     </ScrollView>

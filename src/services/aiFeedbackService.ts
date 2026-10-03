@@ -162,11 +162,8 @@ export async function deleteFixture(id: string): Promise<void> {
 }
 
 export async function clearFixtures(): Promise<void> {
-  try {
-    await AsyncStorage.removeItem(FIXTURES_KEY);
-  } catch {
-    // best-effort
-  }
+  // Explicit user deletion must report storage failures to its caller.
+  await AsyncStorage.removeItem(FIXTURES_KEY);
 }
 
 // ── Replay + eval status ─────────────────────────────────────────────────────

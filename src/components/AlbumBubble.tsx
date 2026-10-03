@@ -7,6 +7,7 @@ import { formatRelativeTime } from '@/utils/format';
 import { useResolvedMediaUri } from '@/utils/useResolvedMediaUri';
 import { useCachedVideoThumbnail } from '@/utils/videoThumbnail';
 import { buildStamp } from '@/services/messageRenderCache';
+import { avatarColorsForKey } from '@/utils/avatarColors';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo } from 'react';
 import {
@@ -23,17 +24,6 @@ import { Text } from 'react-native-paper';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ALBUM_WIDTH = Math.min(280, Math.round(SCREEN_WIDTH * 0.72));
 const GAP = 2;
-
-const AVATAR_COLORS = [
-  '#E57373', '#F06292', '#BA68C8', '#9575CD', '#7986CB',
-  '#64B5F6', '#4FC3F7', '#4DD0E1', '#4DB6AC', '#81C784',
-  '#AED581', '#FF8A65', '#D4E157', '#FFD54F', '#FFB74D',
-];
-const senderColor = (id: string) => {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = id.charCodeAt(i) + ((hash << 5) - hash);
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-};
 
 interface AlbumBubbleProps {
   /** Album members ordered oldest → newest (i.e. pick order). */
@@ -66,6 +56,8 @@ interface AlbumCellProps {
   selected?: boolean;
   selectionMode?: boolean;
   primaryColor: string;
+  onPrimaryColor: string;
+  position: number;
 }
 
 const AlbumCell = ({
@@ -78,6 +70,8 @@ const AlbumCell = ({
   selected,
   selectionMode,
   primaryColor,
+  onPrimaryColor,
+  position,
 }: AlbumCellProps) => {
   const isVideo = message.type === 'video';
   const isUploading = message.status === 'sending';
@@ -130,6 +124,9 @@ const AlbumCell = ({
       onPress={onPress}
       onLongPress={onLongPress}
       activeOpacity={0.85}
+      accessibilityRole={selectionMode ? 'checkbox' : 'button'}
+      accessibilityLabel={`${isVideo ? 'Video' : 'Photo'} ${position}${isUploading ? ', uploading' : ''}${resolved.errored ? ', unavailable' : ''}`}
+      accessibilityState={selectionMode ? { checked: Boolean(selected) } : undefined}
       style={[
         styles.cell,
         style,
@@ -190,7 +187,7 @@ const AlbumCell = ({
             { borderColor: selected ? primaryColor : 'rgba(255,255,255,0.85)', backgroundColor: selected ? primaryColor : 'rgba(0,0,0,0.4)' },
           ]}
         >
-          {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
+          {selected && <Ionicons name="checkmark" size={14} color={onPrimaryColor} />}
         </View>
       )}
     </TouchableOpacity>
@@ -252,10 +249,11 @@ export const AlbumBubble = ({
   const anchor = visible[visible.length - 1];
   const isMine = user?.userId === anchor.senderId;
   const reply = visible[0]?.replyTo;
+  const senderColor = (id: string) => avatarColorsForKey(id, isDark).background;
 
   const bubbleBg = isMine ? theme.colors.primary : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)');
-  const captionColor = isMine ? '#fff' : theme.colors.onSurface;
-  const timeColor = isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant;
+  const captionColor = isMine ? theme.colors.onPrimary : theme.colors.onSurface;
+  const timeColor = isMine ? theme.colors.onPrimary : theme.colors.onSurfaceVariant;
 
   return (
     <View style={[styles.row, isMine ? styles.rowMine : styles.rowTheirs]}>
@@ -285,7 +283,7 @@ export const AlbumBubble = ({
             ]}
           >
             <Text style={[styles.replyName, { color: senderColor(reply.senderId) }]}>{reply.senderName}</Text>
-            <Text numberOfLines={1} style={[styles.replyContent, { color: isMine ? 'rgba(255,255,255,0.85)' : theme.colors.onSurfaceVariant }]}>
+            <Text numberOfLines={1} style={[styles.replyContent, { color: isMine ? theme.colors.onPrimary : theme.colors.onSurfaceVariant }]}>
               {reply.content}
             </Text>
           </TouchableOpacity>
@@ -327,6 +325,8 @@ export const AlbumBubble = ({
                     selected={isSelected(tiles[0])}
                     selectionMode={selectionMode}
                     primaryColor={theme.colors.primary}
+                    onPrimaryColor={theme.colors.onPrimary}
+                    position={1}
                   />
                   <View style={{ gap: GAP }}>
                     <AlbumCell
@@ -339,6 +339,8 @@ export const AlbumBubble = ({
                       selected={isSelected(tiles[1])}
                       selectionMode={selectionMode}
                       primaryColor={theme.colors.primary}
+                      onPrimaryColor={theme.colors.onPrimary}
+                      position={2}
                     />
                     <AlbumCell
                       message={tiles[2]}
@@ -350,6 +352,8 @@ export const AlbumBubble = ({
                       selected={isSelected(tiles[2])}
                       selectionMode={selectionMode}
                       primaryColor={theme.colors.primary}
+                      onPrimaryColor={theme.colors.onPrimary}
+                      position={3}
                     />
                   </View>
                 </>
@@ -367,6 +371,8 @@ export const AlbumBubble = ({
                 selected={isSelected(m)}
                 selectionMode={selectionMode}
                 primaryColor={theme.colors.primary}
+                onPrimaryColor={theme.colors.onPrimary}
+                position={idx + 1}
               />
             ));
           })()}

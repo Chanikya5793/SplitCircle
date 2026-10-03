@@ -1,7 +1,7 @@
 import React from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { IconButton, Text } from 'react-native-paper';
-import { GlassCard } from '@/components/ui';
+import { GlassCard, ScrimBackdrop, SelectableChip } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutDown, useSharedValue, useAnimatedStyle, withSpring, withTiming, runOnJS } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -99,58 +99,19 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
         }
     }, [visible]);
 
-    const Chip = ({
-        label,
-        selected,
-        onPress,
-        icon,
-        disabled = false
-    }: {
-        label: string;
-        selected: boolean;
-        onPress: () => void;
-        icon?: string;
-        disabled?: boolean;
-    }) => (
-        <Pressable
-            onPress={disabled ? undefined : onPress}
-            style={[
-                styles.chip,
-                {
-                    backgroundColor: selected
-                        ? theme.colors.primary
-                        : isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
-                    borderColor: selected ? theme.colors.primary : 'transparent',
-                    opacity: disabled ? 0.4 : 1,
-                },
-            ]}
-        >
-            {icon && (
-                <IconButton
-                    icon={icon}
-                    size={16}
-                    iconColor={selected ? '#fff' : theme.colors.onSurface}
-                    style={{ margin: 0, marginRight: -4 }}
-                />
-            )}
-            <Text
-                variant="labelMedium"
-                style={{
-                    color: selected ? '#fff' : theme.colors.onSurface,
-                    fontWeight: selected ? '600' : '500',
-                }}
-            >
-                {label}
-            </Text>
-        </Pressable>
-    );
-
     if (!visible) return null;
 
     return (
         <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
             <View style={styles.overlay}>
-                <Pressable style={styles.backdrop} onPress={onClose} />
+                <Pressable
+                    style={styles.backdrop}
+                    onPress={onClose}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close filters"
+                >
+                    <ScrimBackdrop pointerEvents="none" />
+                </Pressable>
 
                 <GestureDetector gesture={gesture}>
                     <Animated.View
@@ -173,6 +134,7 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                                     size={22}
                                     onPress={onClose}
                                     iconColor={theme.colors.onSurfaceVariant}
+                                    accessibilityLabel="Close filters"
                                 />
                             </View>
 
@@ -183,9 +145,9 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                                         Sort by
                                     </Text>
                                     <View style={styles.chipRow}>
-                                        <Chip label="Date" selected={sortField === 'date'} onPress={() => onSortFieldChange('date')} icon="calendar" />
-                                        <Chip label="Amount" selected={sortField === 'amount'} onPress={() => onSortFieldChange('amount')} icon="currency-usd" />
-                                        <Chip
+                                        <SelectableChip label="Date" selected={sortField === 'date'} onPress={() => onSortFieldChange('date')} icon="calendar" />
+                                        <SelectableChip label="Amount" selected={sortField === 'amount'} onPress={() => onSortFieldChange('amount')} icon="currency-usd" />
+                                        <SelectableChip
                                             label="A-Z"
                                             selected={sortField === 'title'}
                                             onPress={() => onSortFieldChange('title')}
@@ -201,7 +163,7 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                                         Order
                                     </Text>
                                     <View style={styles.chipRow}>
-                                        <Chip
+                                        <SelectableChip
                                             label={
                                                 sortField === 'date' ? 'Newest first' :
                                                     sortField === 'amount' ? 'Highest first' :
@@ -211,7 +173,7 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                                             onPress={() => onSortOrderChange('desc')}
                                             icon="arrow-down"
                                         />
-                                        <Chip
+                                        <SelectableChip
                                             label={
                                                 sortField === 'date' ? 'Oldest first' :
                                                     sortField === 'amount' ? 'Lowest first' :
@@ -230,10 +192,10 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                                         Timeframe
                                     </Text>
                                     <View style={styles.chipWrap}>
-                                        <Chip label="All Time" selected={dateRange === 'all'} onPress={() => onDateRangeChange('all')} />
-                                        <Chip label="This Month" selected={dateRange === 'this-month'} onPress={() => onDateRangeChange('this-month')} />
-                                        <Chip label="Last Month" selected={dateRange === 'last-month'} onPress={() => onDateRangeChange('last-month')} />
-                                        <Chip label="Last 3 Months" selected={dateRange === 'last-3-months'} onPress={() => onDateRangeChange('last-3-months')} />
+                                        <SelectableChip label="All Time" selected={dateRange === 'all'} onPress={() => onDateRangeChange('all')} />
+                                        <SelectableChip label="This Month" selected={dateRange === 'this-month'} onPress={() => onDateRangeChange('this-month')} />
+                                        <SelectableChip label="Last Month" selected={dateRange === 'last-month'} onPress={() => onDateRangeChange('last-month')} />
+                                        <SelectableChip label="Last 3 Months" selected={dateRange === 'last-3-months'} onPress={() => onDateRangeChange('last-3-months')} />
                                     </View>
                                 </View>
 
@@ -244,11 +206,12 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                                     </Text>
                                     <View style={styles.chipWrap} pointerEvents={activityType === 'settlements' ? 'none' : 'auto'}>
                                         {CATEGORIES.map((cat) => (
-                                            <Chip
+                                            <SelectableChip
                                                 key={cat.id}
                                                 label={cat.label}
                                                 icon={cat.icon}
                                                 selected={cat.id === 'all' ? selectedCategories.length === 0 : selectedCategories.includes(cat.id)}
+                                                disabled={activityType === 'settlements'}
                                                 onPress={() => onCategoryToggle(cat.id)}
                                             />
                                         ))}
@@ -261,9 +224,9 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                                         Show
                                     </Text>
                                     <View style={styles.chipRow}>
-                                        <Chip label="All" selected={activityType === 'all'} onPress={() => onActivityTypeChange('all')} icon="view-list" />
-                                        <Chip label="Expenses" selected={activityType === 'expenses'} onPress={() => onActivityTypeChange('expenses')} icon="receipt" />
-                                        <Chip label="Settlements" selected={activityType === 'settlements'} onPress={() => onActivityTypeChange('settlements')} icon="handshake" />
+                                        <SelectableChip label="All" selected={activityType === 'all'} onPress={() => onActivityTypeChange('all')} icon="view-list" />
+                                        <SelectableChip label="Expenses" selected={activityType === 'expenses'} onPress={() => onActivityTypeChange('expenses')} icon="receipt" />
+                                        <SelectableChip label="Settlements" selected={activityType === 'settlements'} onPress={() => onActivityTypeChange('settlements')} icon="handshake" />
                                     </View>
                                 </View>
                             </ScrollView>
@@ -282,7 +245,6 @@ const styles = StyleSheet.create({
     },
     backdrop: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.4)',
     },
     sheetContainer: {
         maxHeight: '70%',
@@ -332,13 +294,5 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: 10,
-    },
-    chip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 8,
-        paddingHorizontal: 14,
-        borderRadius: 50,
-        borderWidth: 1,
     },
 });

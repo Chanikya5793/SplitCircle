@@ -32,20 +32,30 @@ export const ReactionsRow = ({
   const border = minePresent
     ? theme.colors.primary
     : (isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.08)');
+  const reactionSummary = entries
+    .slice(0, 3)
+    .map(([emoji, users]) => `${emoji} ${users.length}`)
+    .join(', ');
 
   return (
     <View style={[styles.row, align === 'right' ? styles.alignRight : styles.alignLeft]}>
       <TouchableOpacity
         activeOpacity={0.7}
         onPress={onPress}
-        style={[styles.chip, { backgroundColor: bg, borderColor: border }]}
+        disabled={!onPress}
+        style={styles.target}
+        accessibilityRole="button"
+        accessibilityLabel={`${total} reaction${total === 1 ? '' : 's'}: ${reactionSummary}. Show reaction details`}
+        accessibilityState={{ selected: Boolean(minePresent), disabled: !onPress }}
       >
-        {entries.slice(0, 3).map(([emoji]) => (
-          <Text key={emoji} style={styles.emoji}>{emoji}</Text>
-        ))}
-        {total > 1 && (
-          <Text style={[styles.count, { color: theme.colors.onSurface }]}>{total}</Text>
-        )}
+        <View style={[styles.chip, { backgroundColor: bg, borderColor: border }]}>
+          {entries.slice(0, 3).map(([emoji]) => (
+            <Text key={emoji} style={styles.emoji}>{emoji}</Text>
+          ))}
+          {total > 1 && (
+            <Text style={[styles.count, { color: theme.colors.onSurface }]}>{total}</Text>
+          )}
+        </View>
       </TouchableOpacity>
     </View>
   );
@@ -54,11 +64,15 @@ export const ReactionsRow = ({
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    marginTop: -10,
+    marginTop: -22,
     zIndex: 1,
   },
   alignLeft: { justifyContent: 'flex-start', paddingLeft: 4 },
   alignRight: { justifyContent: 'flex-end', paddingRight: 4 },
+  target: {
+    minHeight: 44,
+    justifyContent: 'center',
+  },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',

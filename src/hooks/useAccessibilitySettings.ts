@@ -37,24 +37,32 @@ export const useAccessibilitySettings = (): AccessibilitySettings => {
   // subscriptions below.
   const [fontScale, setFontScale] = useState(() => PixelRatio.getFontScale());
   const [reduceTransparency, setReduceTransparency] = useState(false);
-  const [reduceMotion, setReduceMotion] = useState(false);
+  // Stay still until the OS preference arrives, including on a slow cold start.
+  const [reduceMotion, setReduceMotion] = useState(true);
   const [screenReader, setScreenReader] = useState(false);
 
   useEffect(() => {
     let alive = true;
+    let motionChanged = false;
     const set = <T,>(fn: (v: T) => void) => (v: T) => {
       if (alive) fn(v);
     };
 
     void AccessibilityInfo.isReduceTransparencyEnabled?.().then(set(setReduceTransparency)).catch(() => undefined);
-    void AccessibilityInfo.isReduceMotionEnabled().then(set(setReduceMotion)).catch(() => undefined);
     void AccessibilityInfo.isScreenReaderEnabled().then(set(setScreenReader)).catch(() => undefined);
 
     const subs = [
       AccessibilityInfo.addEventListener('reduceTransparencyChanged', set(setReduceTransparency)),
-      AccessibilityInfo.addEventListener('reduceMotionChanged', set(setReduceMotion)),
+      AccessibilityInfo.addEventListener('reduceMotionChanged', (enabled) => {
+        motionChanged = true;
+        if (alive) setReduceMotion(enabled);
+      }),
       AccessibilityInfo.addEventListener('screenReaderChanged', set(setScreenReader)),
     ];
+
+    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (alive && !motionChanged) setReduceMotion(enabled);
+    }).catch(() => undefined);
 
     // There is no "fontScaleChanged" event on either platform. Re-reading on
     // every app foreground is what actually catches a text-size change made

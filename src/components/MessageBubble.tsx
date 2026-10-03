@@ -1,5 +1,6 @@
 import { FONT_CAP } from '@/utils/a11yText';
 import { ExpenseCardBubble } from '@/components/Chat/ExpenseCardBubble';
+import { GlassCard } from '@/components/ui/GlassCard';
 import { LinkPreview } from '@/components/Chat/LinkPreview';
 import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
 import { MessageStatusIndicator } from '@/components/Chat/MessageStatusIndicator';
@@ -16,13 +17,15 @@ import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { formatRelativeTime } from '@/utils/format';
 import { hasGoogleMapsApiKey } from '@/utils/hasGoogleMapsApiKey';
 import { resolveDisplayName } from '@/utils/identity';
+import { avatarColorsForKey } from '@/utils/avatarColors';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer, type AudioStatus } from 'expo-audio';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, Animated, Dimensions, Easing, Image, Linking, Modal, PanResponder, Platform, Pressable, StyleSheet, TouchableOpacity, View, ViewStyle, type AccessibilityActionEvent } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
-import { Avatar, IconButton, Text } from 'react-native-paper';
+import { Avatar, Icon, Text } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Lazy load MapView to prevent crashes in production builds
 const MapView = React.lazy(() => import('react-native-maps').then(mod => ({ default: mod.default })));
@@ -72,24 +75,10 @@ interface MessageBubbleProps {
   dimmed?: boolean;
 }
 
-const AVATAR_COLORS = [
-  '#E57373', '#F06292', '#BA68C8', '#9575CD', '#7986CB',
-  '#64B5F6', '#4FC3F7', '#4DD0E1', '#4DB6AC', '#81C784',
-  '#AED581', '#FF8A65', '#D4E157', '#FFD54F', '#FFB74D'
-];
-
 // Pre-compute stable waveform heights so Math.random() doesn't run on every render
 const WAVEFORM_HEIGHTS = Array.from({ length: 16 }, () => Math.random() * 16 + 4);
 
-const getSenderColor = (id: string) => {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = id.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-};
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MAX_IMAGE_WIDTH = SCREEN_WIDTH * 0.65;
 const MAX_IMAGE_HEIGHT = 300;
 
@@ -307,9 +296,65 @@ const VideoPlayerComponent = ({ uri, style, showControls = true, showOverlay = f
 const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, onReplyPress, onMediaPress, onLongPress, onReactionsPress, onFilePress, onDoubleTap, selectionMode, selected, onToggleSelect, onMentionPress, searchQuery, mentionLabels, memberNames, isGroupChat, totalRecipients, highlighted, dimmed }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const swipeableRef = useRef<Swipeable>(null);
   const [imageLoading, setImageLoading] = useState(true);
   const [fullScreenVisible, setFullScreenVisible] = useState(false);
+  const fullScreenTranslateX = useRef(new Animated.Value(0)).current;
+  const fullScreenTranslateY = useRef(new Animated.Value(0)).current;
+  const resetFullScreenPosition = useCallback(() => {
+    Animated.parallel([
+      Animated.spring(fullScreenTranslateX, { toValue: 0, damping: 20, stiffness: 240, useNativeDriver: true }),
+      Animated.spring(fullScreenTranslateY, { toValue: 0, damping: 20, stiffness: 240, useNativeDriver: true }),
+    ]).start();
+  }, [fullScreenTranslateX, fullScreenTranslateY]);
+  const dismissFullScreen = useCallback((axis?: 'down' | 'back') => {
+    if (!axis) {
+      setFullScreenVisible(false);
+      fullScreenTranslateX.setValue(0);
+      fullScreenTranslateY.setValue(0);
+      return;
+    }
+    const value = axis === 'down' ? fullScreenTranslateY : fullScreenTranslateX;
+    Animated.timing(value, {
+      toValue: axis === 'down' ? SCREEN_HEIGHT : SCREEN_WIDTH,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(() => {
+      setFullScreenVisible(false);
+      fullScreenTranslateX.setValue(0);
+      fullScreenTranslateY.setValue(0);
+    });
+  }, [fullScreenTranslateX, fullScreenTranslateY]);
+  const fullScreenPanResponder = useMemo(
+    () => PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        fullScreenVisible && (
+          (gesture.dy > 12 && Math.abs(gesture.dy) > Math.abs(gesture.dx))
+          || (gesture.x0 <= 28 && gesture.dx > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy))
+        ),
+      onPanResponderMove: (_event, gesture) => {
+        const movingBack = gesture.x0 <= 28 && gesture.dx > 0 && Math.abs(gesture.dx) > Math.abs(gesture.dy);
+        if (movingBack) {
+          fullScreenTranslateX.setValue(gesture.dx);
+          fullScreenTranslateY.setValue(0);
+          return;
+        }
+        fullScreenTranslateX.setValue(0);
+        fullScreenTranslateY.setValue(gesture.dy >= 0 ? gesture.dy : gesture.dy * 0.18);
+      },
+      onPanResponderRelease: (_event, gesture) => {
+        const dismissDown = gesture.dy > 80 || gesture.vy > 0.8;
+        const dismissBack = gesture.x0 <= 28 && (gesture.dx > 80 || gesture.vx > 0.8);
+        if (dismissDown) dismissFullScreen('down');
+        else if (dismissBack) dismissFullScreen('back');
+        else resetFullScreenPosition();
+      },
+      onPanResponderTerminate: resetFullScreenPosition,
+    }),
+    [dismissFullScreen, fullScreenTranslateX, fullScreenTranslateY, fullScreenVisible, resetFullScreenPosition],
+  );
   const highlightAnim = useRef(new Animated.Value(0)).current;
 
   // ── All hook declarations MUST come before any conditional return ──────────
@@ -534,14 +579,17 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
       }
     } catch (error) {
       console.error('Error playing audio:', error);
-      appAlert('Error', 'Could not play audio message.');
+      appAlert('Could not play audio', 'This message may be unavailable on this device. Try again.');
     }
   };
 
   // ── Derived values (safe after hooks) ──────────────────────────────────────
 
   const isMine = user?.userId === message.senderId;
-  const senderColor = !isMine && message.senderId ? getSenderColor(message.senderId) : theme.colors.primary;
+  const senderAvatar = !isMine && message.senderId
+    ? avatarColorsForKey(message.senderId, isDark)
+    : { background: theme.colors.primary, foreground: theme.colors.onPrimary };
+  const senderColor = senderAvatar.background;
   const initials = senderName ? senderName.slice(0, 2).toUpperCase() : '??';
 
   // ── Early returns for tombstone / system messages ──────────────────────────
@@ -568,9 +616,9 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
   if (message.type === 'expense') {
     return (
       <View style={styles.systemContainer}>
-        <View style={[styles.systemBubble, { backgroundColor: isDark ? 'rgba(28, 31, 38, 0.8)' : 'rgba(255, 255, 255, 0.85)' }]}>
+        <GlassCard role="floating" radius={12} style={styles.systemBubble} contentStyle={styles.systemBubbleContent}>
           <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>{buildSystemMessageText(message, memberNames)}</Text>
-        </View>
+        </GlassCard>
       </View>
     );
   }
@@ -580,9 +628,9 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
       <View style={styles.systemContainer}>
         {/* Call events land here too ("📞 Outgoing call · 00:39") — the chip
             needs a real surface to stay legible over loud wallpapers. */}
-        <View style={[styles.systemBubble, { backgroundColor: isDark ? 'rgba(28, 31, 38, 0.8)' : 'rgba(255, 255, 255, 0.85)' }]}>
+        <GlassCard role="floating" radius={12} style={styles.systemBubble} contentStyle={styles.systemBubbleContent}>
           <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>{buildSystemMessageText(message, memberNames)}</Text>
-        </View>
+        </GlassCard>
       </View>
     );
   }
@@ -590,10 +638,10 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
   if (user && message.deletedFor?.includes(user.userId)) {
     return (
       <View style={styles.systemContainer}>
-        <View style={[styles.systemBubble, styles.tombstoneBubble, { backgroundColor: isDark ? 'rgba(28, 31, 38, 0.65)' : 'rgba(255, 255, 255, 0.7)' }]}>
+        <GlassCard role="floating" radius={12} style={styles.systemBubble} contentStyle={[styles.systemBubbleContent, styles.tombstoneBubble]}>
           <Ionicons name="trash-outline" size={11} color={theme.colors.onSurfaceVariant} />
           <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>You deleted this message</Text>
-        </View>
+        </GlassCard>
       </View>
     );
   }
@@ -602,12 +650,12 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
     const youDeleted = user?.userId === message.senderId;
     return (
       <View style={styles.systemContainer}>
-        <View style={[styles.systemBubble, styles.tombstoneBubble, { backgroundColor: isDark ? 'rgba(28, 31, 38, 0.65)' : 'rgba(255, 255, 255, 0.7)' }]}>
+        <GlassCard role="floating" radius={12} style={styles.systemBubble} contentStyle={[styles.systemBubbleContent, styles.tombstoneBubble]}>
           <Ionicons name="ban-outline" size={11} color={theme.colors.onSurfaceVariant} />
           <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>
             {youDeleted ? 'You deleted this message' : 'This message was deleted'}
           </Text>
-        </View>
+        </GlassCard>
       </View>
     );
   }
@@ -622,7 +670,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
     return (
       <View style={styles.replyActionContainer}>
         <Animated.View style={{ transform: [{ scale }] }}>
-          <IconButton icon="reply" iconColor={theme.colors.onSurface} size={20} />
+          <Icon source="reply" color={theme.colors.onSurface} size={20} />
         </Animated.View>
       </View>
     );
@@ -656,7 +704,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
   // Reply preview component
   const renderReplyContent = () => {
     if (!message.replyTo) return null;
-    const replyColor = getSenderColor(message.replyTo.senderId);
+    const replyColor = avatarColorsForKey(message.replyTo.senderId, isDark).background;
     const isMediaReply = message.replyTo.type && message.replyTo.type !== 'text';
 
     return (
@@ -664,22 +712,24 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
         activeOpacity={0.7}
         onPress={() => onReplyPress?.(message.replyTo!.messageId)}
         style={[styles.replyContainer, {
-          borderLeftColor: replyColor,
-          backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
+          borderLeftColor: isMine ? theme.colors.onOutgoingInset : replyColor,
+          backgroundColor: isMine ? theme.colors.outgoingInset : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
         }]}
+        accessibilityRole="button"
+        accessibilityLabel={`Open replied message from ${message.replyTo.senderName}`}
       >
-        <Text style={[styles.replySender, { color: isMine ? 'rgba(255,255,255,0.9)' : replyColor }]}>{message.replyTo.senderName}</Text>
+        <Text style={[styles.replySender, { color: isMine ? theme.colors.onOutgoingInset : replyColor }]}>{message.replyTo.senderName}</Text>
         <View style={styles.replyContentRow}>
           {isMediaReply && (
             <Ionicons
               name={getMediaIcon(message.replyTo.type)}
               size={14}
-              color={isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant}
+              color={isMine ? theme.colors.onOutgoingInset : theme.colors.onSurfaceVariant}
               style={{ marginRight: 4 }}
             />
           )}
           <Text numberOfLines={1} style={[styles.replyText, {
-            color: isMine ? 'rgba(255,255,255,0.8)' : theme.colors.onSurfaceVariant
+            color: isMine ? theme.colors.onOutgoingInset : theme.colors.onSurfaceVariant
           }]}>
             {message.replyTo.content}
           </Text>
@@ -767,6 +817,8 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
           }
         }}
         style={[styles.mediaContainer, imageDimensions]}
+        accessibilityRole="button"
+        accessibilityLabel="Open image"
       >
         {imageLoading && (
           <View style={[styles.imagePlaceholder, imageDimensions]}>
@@ -855,7 +907,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
 
   const handleOpenDocument = () => {
     if (!mediaUri) {
-      appAlert('File Not Available', 'The file has not been downloaded yet.');
+      appAlert('File not available', 'The file has not been downloaded yet.');
       return;
     }
     onFilePress?.(message);
@@ -873,27 +925,30 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
         style={[
           styles.documentContainer,
           isMine && styles.documentContainerSender,
-          { backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)') },
+          { backgroundColor: isMine ? theme.colors.outgoingInset : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)') },
         ]}
         activeOpacity={0.7}
         onPress={handleOpenDocument}
         disabled={isDownloading}
+        accessibilityRole="button"
+        accessibilityLabel={`Open document ${metadata?.fileName ?? ''}`.trim()}
+        accessibilityState={{ disabled: isDownloading }}
       >
         <View style={[styles.documentIconContainer, { backgroundColor: theme.colors.primary }]}>
           {isDownloading || isSending ? (
-            <ActivityIndicator color="#fff" size="small" />
+            <ActivityIndicator color={theme.colors.onPrimary} size="small" />
           ) : (
             <Ionicons
               name={getDocumentIcon(metadata?.mimeType)}
               size={24}
-              color="#fff"
+              color={theme.colors.onPrimary}
             />
           )}
         </View>
         <View style={styles.documentInfo}>
           <Text
             numberOfLines={isMine ? 2 : 1}
-            style={[styles.documentName, { color: isMine ? '#fff' : theme.colors.onSurface }]}
+            style={[styles.documentName, { color: isMine ? theme.colors.onOutgoingInset : theme.colors.onSurface }]}
           >
             {metadata?.fileName || 'Document'}
           </Text>
@@ -906,7 +961,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
         <Ionicons
           name={isDownloaded ? "open-outline" : "cloud-download-outline"}
           size={20}
-          color={isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant}
+          color={isMine ? theme.colors.onOutgoingInset : theme.colors.onSurfaceVariant}
         />
       </TouchableOpacity>
     );
@@ -917,10 +972,10 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
     if (!mediaUri && message.status === 'sending') {
       return (
         <View style={[styles.audioContainer, {
-          backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'),
+          backgroundColor: isMine ? theme.colors.outgoingInset : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'),
         }]}>
           <ActivityIndicator color={theme.colors.primary} size="small" />
-          <Text style={[styles.audioDuration, { color: isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant }]}>
+          <Text style={[styles.audioDuration, { color: isMine ? theme.colors.onOutgoingInset : theme.colors.onSurfaceVariant }]}>
             Receiving nearby…
           </Text>
         </View>
@@ -931,14 +986,16 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
 
     return (
       <View style={[styles.audioContainer, {
-        backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
+        backgroundColor: isMine ? theme.colors.outgoingInset : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
       }]}>
         <TouchableOpacity
           style={[styles.audioPlayButton, { backgroundColor: theme.colors.primary }]}
           activeOpacity={0.8}
           onPress={handlePlayPause}
+          accessibilityRole="button"
+          accessibilityLabel={isPlaying ? 'Pause voice message' : 'Play voice message'}
         >
-          <Ionicons name={isPlaying ? "pause" : "play"} size={20} color="#fff" />
+          <Ionicons name={isPlaying ? "pause" : "play"} size={20} color={theme.colors.onPrimary} />
         </TouchableOpacity>
         <View style={styles.audioWaveform}>
           {/* Simple waveform visualization placeholder */}
@@ -949,13 +1006,13 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
                 styles.audioBar,
                 {
                   height: isPlaying ? WAVEFORM_HEIGHTS[i] : 4,
-                  backgroundColor: isMine ? 'rgba(255,255,255,0.5)' : theme.colors.primary
+                  backgroundColor: isMine ? theme.colors.onOutgoingInset : theme.colors.primary
                 }
               ]}
             />
           ))}
         </View>
-        <Text style={[styles.audioDuration, { color: isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant }]}>
+        <Text style={[styles.audioDuration, { color: isMine ? theme.colors.onOutgoingInset : theme.colors.onSurfaceVariant }]}>
           {formatDuration(metadata?.duration) || '0:00'}
         </Text>
       </View>
@@ -1000,6 +1057,8 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
         activeOpacity={0.9}
         onPress={openLocation}
         style={styles.locationContainer}
+        accessibilityRole="button"
+        accessibilityLabel={`Open shared location${message.location.address ? `, ${message.location.address}` : ''}`}
       >
         <View style={styles.locationPreview}>
           {mapsAvailable ? (
@@ -1046,7 +1105,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
           <View style={{ padding: 8, backgroundColor: isMine ? 'transparent' : (isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.5)') }}>
             <Text
               numberOfLines={2}
-              style={[styles.locationAddress, { color: isMine ? '#fff' : theme.colors.onSurface }]}
+              style={[styles.locationAddress, { color: isMine ? theme.colors.onPrimary : theme.colors.onSurface }]}
             >
               {message.location.address}
             </Text>
@@ -1062,22 +1121,36 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
       visible={fullScreenVisible}
       transparent
       animationType="fade"
-      onRequestClose={() => setFullScreenVisible(false)}
+      onRequestClose={() => dismissFullScreen()}
     >
-      <View style={styles.fullScreenContainer}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={() => setFullScreenVisible(false)}>
+      <View style={styles.fullScreenContainer} {...fullScreenPanResponder.panHandlers}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => dismissFullScreen()}>
           <View style={styles.fullScreenBackdrop} />
         </Pressable>
-        <Image
-          source={{ uri: mediaUri }}
-          style={styles.fullScreenImage}
-          resizeMode="contain"
-        />
-        <TouchableOpacity
-          style={styles.fullScreenClose}
-          onPress={() => setFullScreenVisible(false)}
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            styles.fullScreenImageFrame,
+            { transform: [{ translateX: fullScreenTranslateX }, { translateY: fullScreenTranslateY }] },
+          ]}
         >
-          <Ionicons name="close" size={28} color="#fff" />
+          <Image
+            source={{ uri: mediaUri }}
+            style={styles.fullScreenImage}
+            resizeMode="contain"
+          />
+          <View style={[styles.fullScreenGrabber, { top: insets.top + 10 }]} />
+        </Animated.View>
+        <TouchableOpacity
+          style={[styles.fullScreenClose, { top: insets.top + 8 }]}
+          onPress={() => dismissFullScreen()}
+          accessibilityRole="button"
+          accessibilityLabel="Close image"
+        >
+          <GlassCard role="floating" radius={22} style={styles.fullScreenCloseGlass}>
+            <Ionicons name="close" size={28} color={theme.colors.onSurface} />
+          </GlassCard>
         </TouchableOpacity>
       </View>
     </Modal>
@@ -1122,6 +1195,41 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
   const isStarredByMe = !!user && !!message.starredBy?.includes(user.userId);
   const dimStyle = dimmed ? { opacity: 0.35 } : undefined;
   const isMentioned = !!user && !!message.mentions?.includes(user.userId);
+  const selectionPreview = message.content?.trim().replace(/\s+/g, ' ').slice(0, 80)
+    || `${message.type} message`;
+  const selectionAccessibilityLabel = isMine
+    ? `Your message: ${selectionPreview}`
+    : `Message from ${senderName ?? 'Unknown sender'}: ${selectionPreview}`;
+
+  const messageAccessibilityActions = [
+    { name: 'showMenu', label: 'Message actions' },
+    ...(onSwipeReply ? [{ name: 'reply', label: 'Reply' }] : []),
+    ...(isGroupChat && onSwipeInfo ? [{ name: 'info', label: 'Message info' }] : []),
+    ...(message.replyTo && onReplyPress ? [{ name: 'openReply', label: 'Open replied message' }] : []),
+    ...(['image', 'video', 'camera'].includes(message.type) ? [{ name: 'openMedia', label: 'Open media' }] : []),
+    ...(message.type === 'file' ? [{ name: 'openFile', label: 'Open document' }] : []),
+    ...(message.type === 'location' ? [{ name: 'openLocation', label: 'Open shared location' }] : []),
+    ...(message.type === 'audio' ? [{ name: 'playAudio', label: isPlaying ? 'Pause voice message' : 'Play voice message' }] : []),
+  ];
+
+  const handleMessageAccessibilityAction = (event: AccessibilityActionEvent) => {
+    switch (event.nativeEvent.actionName) {
+      case 'showMenu': onLongPress?.(message); break;
+      case 'reply': onSwipeReply?.(message); break;
+      case 'info': onSwipeInfo?.(message); break;
+      case 'openReply':
+        if (message.replyTo) onReplyPress?.(message.replyTo.messageId);
+        break;
+      case 'openMedia':
+        if (onMediaPress) onMediaPress(message);
+        else setFullScreenVisible(true);
+        break;
+      case 'openFile': handleOpenDocument(); break;
+      case 'openLocation': openLocation(); break;
+      case 'playAudio': void handlePlayPause(); break;
+      default: break;
+    }
+  };
 
   // Double-tap detection (lastTapRef declared at top with other hooks)
   const handlePress = () => {
@@ -1150,7 +1258,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
                 key={i}
                 onPress={() => onMentionPress?.(span.userId)}
                 style={{
-                  color: mineLink ? '#ffffff' : theme.colors.primary,
+                  color: mineLink ? theme.colors.onPrimary : theme.colors.primary,
                   fontWeight: '600',
                   textDecorationLine: 'underline',
                 }}
@@ -1165,7 +1273,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
                 key={i}
                 onPress={() => Linking.openURL(span.url).catch(() => undefined)}
                 style={{
-                  color: mineLink ? '#ffffff' : theme.colors.primary,
+                  color: mineLink ? theme.colors.onPrimary : theme.colors.primary,
                   textDecorationLine: 'underline',
                 }}
               >
@@ -1201,12 +1309,12 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
         <Ionicons
           name={manyTimes ? 'arrow-redo' : 'arrow-redo-outline'}
           size={11}
-          color={isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant}
+          color={isMine ? theme.colors.outgoingMetadata : theme.colors.onSurfaceVariant}
         />
         <Text
           style={[
             styles.forwardedText,
-            { color: isMine ? 'rgba(255,255,255,0.75)' : theme.colors.onSurfaceVariant },
+            { color: isMine ? theme.colors.outgoingMetadata : theme.colors.onSurfaceVariant },
           ]}
         >
           {manyTimes ? 'Forwarded many times' : 'Forwarded'}
@@ -1234,7 +1342,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
     return (
       <View style={styles.selectionCheckboxColumn}>
         <View style={[styles.selectionCheckbox, { borderColor: color, backgroundColor: selected ? color : 'transparent' }]}>
-          {selected && <Ionicons name="checkmark" size={12} color="#fff" />}
+          {selected && <Ionicons name="checkmark" size={12} color={theme.colors.onPrimary} />}
         </View>
       </View>
     );
@@ -1270,6 +1378,12 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
                 onPress={handlePress}
                 onLongPress={handleLongPress}
                 delayLongPress={280}
+                accessibilityRole="button"
+                accessibilityLabel={selectionAccessibilityLabel}
+                accessibilityHint="Swipe up or down for message actions"
+                accessibilityActions={messageAccessibilityActions}
+                onAccessibilityAction={handleMessageAccessibilityAction}
+                onAccessibilityTap={() => onLongPress?.(message)}
                 android_ripple={undefined}
                 style={({ pressed }) => [
                   styles.container,
@@ -1291,15 +1405,16 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
                     <Ionicons
                       name="star"
                       size={11}
-                      color="rgba(255,255,255,0.85)"
+                      color={theme.colors.outgoingMetadata}
                       style={{ marginRight: 4 }}
                     />
                   )}
                   {message.editedAt && (
-                    <Text style={[styles.editedTag, { color: 'rgba(255,255,255,0.65)' }]}>edited</Text>
+                    <Text style={[styles.editedTag, { color: theme.colors.outgoingMetadata }]}>edited</Text>
                   )}
-                  <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
+                  <Text style={[styles.timestamp, { color: theme.colors.outgoingMetadata }]}>{formatRelativeTime(message.createdAt)}</Text>
                   <MessageStatusIndicator
+                    foregroundColor={theme.colors.outgoingMetadata}
                     status={message.status}
                     deliveredCount={message.deliveredTo?.length || 0}
                     readCount={message.readBy?.length || 0}
@@ -1318,6 +1433,10 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
             <Pressable
               style={StyleSheet.absoluteFill}
               onPress={() => onToggleSelect?.(message)}
+              accessibilityRole="checkbox"
+              accessibilityLabel={selectionAccessibilityLabel}
+              accessibilityHint="Double tap to toggle selection"
+              accessibilityState={{ checked: Boolean(selected) }}
             />
           )}
         </Animated.View>
@@ -1357,7 +1476,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
                     size={28}
                     label={initials}
                     style={{ backgroundColor: senderColor }}
-                    color="#FFF"
+                    color={senderAvatar.foreground}
                     labelStyle={{ fontSize: 12, lineHeight: 28 }}
         maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
       />
@@ -1369,6 +1488,12 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
                 onPress={handlePress}
                 onLongPress={handleLongPress}
                 delayLongPress={280}
+                accessibilityRole="button"
+                accessibilityLabel={selectionAccessibilityLabel}
+                accessibilityHint="Swipe up or down for message actions"
+                accessibilityActions={messageAccessibilityActions}
+                onAccessibilityAction={handleMessageAccessibilityAction}
+                onAccessibilityTap={() => onLongPress?.(message)}
                 style={({ pressed }) => [
                   styles.container,
                   styles.other,
@@ -1418,6 +1543,10 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
             <Pressable
               style={StyleSheet.absoluteFill}
               onPress={() => onToggleSelect?.(message)}
+              accessibilityRole="checkbox"
+              accessibilityLabel={selectionAccessibilityLabel}
+              accessibilityHint="Double tap to toggle selection"
+              accessibilityState={{ checked: Boolean(selected) }}
             />
           )}
       </Animated.View>
@@ -1479,9 +1608,11 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   systemBubble: {
+    overflow: 'hidden',
+  },
+  systemBubbleContent: {
     paddingHorizontal: 12,
     paddingVertical: 4,
-    borderRadius: 12,
   },
   tombstoneBubble: {
     flexDirection: 'row',
@@ -1571,6 +1702,7 @@ const styles = StyleSheet.create({
   },
   timestampRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'flex-end',
     marginTop: 4,
@@ -1732,9 +1864,9 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   audioPlayButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1792,14 +1924,29 @@ const styles = StyleSheet.create({
     width: SCREEN_WIDTH,
     height: '80%',
   },
+  fullScreenImageFrame: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fullScreenGrabber: {
+    position: 'absolute',
+    alignSelf: 'center',
+    width: 38,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.72)',
+  },
   fullScreenClose: {
     position: 'absolute',
-    top: 50,
     right: 20,
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  fullScreenCloseGlass: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
   },

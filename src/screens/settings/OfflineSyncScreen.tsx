@@ -127,7 +127,7 @@ export const OfflineSyncScreen = () => {
                 </Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
                   {isOnline
-                    ? 'Connected — changes sync as you make them.'
+                    ? 'Connected. Changes sync as you make them.'
                     : lastOnlineAt
                       ? `No connection. Last online at ${new Date(lastOnlineAt).toLocaleTimeString()}.`
                       : 'No connection. Changes are saved on this device.'}

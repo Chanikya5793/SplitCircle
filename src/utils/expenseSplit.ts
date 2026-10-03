@@ -32,7 +32,7 @@ const METHOD_LABELS: Record<ExpenseSplitMethod, string> = {
   shares: 'Shares',
   adjustment: 'Adjustments',
   itemized: 'Itemized receipt',
-  income: 'By income',
+  income: 'Weighted split',
   consumption: 'Consumption',
   timeBased: 'Time-based',
   gamified: 'Fun mode',
@@ -41,7 +41,7 @@ const METHOD_LABELS: Record<ExpenseSplitMethod, string> = {
 
 const GAMIFIED_LABELS = {
   roulette: 'Credit card roulette',
-  weightedRoulette: 'Weighted roulette',
+  weightedRoulette: 'Double Wheel',
   scrooge: 'Karma split',
 } as const;
 
@@ -115,7 +115,7 @@ function getMethodNote(metadata: ExpenseSplitMetadata): string {
     case 'itemized':
       return 'Receipt items, tax, and tip were used to build the final shares.';
     case 'income':
-      return 'Shares were weighted using saved income inputs.';
+      return 'Shares were calculated from saved relative weights.';
     case 'consumption':
       return 'Shares were weighted using saved consumption amounts.';
     case 'timeBased':
@@ -250,7 +250,22 @@ export function computeParticipantsFromSplitMetadata(
         : computeTimeBased(amount, participants);
     case 'gamified':
       if (metadata.gamifiedMode === 'weightedRoulette') {
-        return computePercentage(amount, participants);
+        // Current records store the completed Double Wheel result explicitly.
+        // Older records may only have participantConfig.percentage, so retain
+        // that fallback rather than requiring a data migration.
+        if (!metadata.weightedAssignments?.length) {
+          return computePercentage(amount, participants);
+        }
+        const percentageByUserId = new Map(
+          metadata.weightedAssignments.map((assignment) => [assignment.userId, assignment.percentage]),
+        );
+        return computePercentage(
+          amount,
+          participants.map((participant) => ({
+            ...participant,
+            percentage: percentageByUserId.get(participant.id) ?? 0,
+          })),
+        );
       }
 
       if (metadata.gamifiedMode === 'scrooge') {
@@ -336,14 +351,20 @@ export function getExpenseSplitDetails(
         value: fmt(metadata.tipAmount ?? 0, currency),
       });
       break;
-    case 'income':
+    case 'income': {
+      const totalWeight = included.reduce(
+        (sum, participant) => sum + Math.max(0, participant.incomeWeight ?? 0),
+        0,
+      );
       included.forEach((participant) => {
+        const weight = Math.max(0, participant.incomeWeight ?? 0);
         rows.push({
           label: memberMap[participant.userId] || 'Unknown',
-          value: fmt(participant.incomeWeight ?? 0, currency),
+          value: totalWeight > 0 ? `${((weight / totalWeight) * 100).toFixed(1)}% weight` : '0% weight',
         });
       });
       break;
+    }
     case 'consumption':
       rows.push({
         label: 'Total parts',

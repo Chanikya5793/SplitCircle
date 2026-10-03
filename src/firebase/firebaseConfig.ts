@@ -73,6 +73,12 @@ if (Platform.OS === 'web') {
       persistence: getReactNativePersistence(AsyncStorage),
     });
   } catch (error) {
+    // Only reuse a Firebase Auth instance that was already initialized (for
+    // example during Fast Refresh). Falling back for any other error can create
+    // a memory-only session that appears to sign in and then vanishes on boot.
+    if ((error as { code?: string })?.code !== 'auth/already-initialized') {
+      throw error;
+    }
     auth = getAuth(app);
   }
 }

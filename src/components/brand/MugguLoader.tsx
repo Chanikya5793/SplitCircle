@@ -256,6 +256,8 @@ export interface MugguLoaderProps {
   showPen?: boolean;
   loop?: boolean;
   initialState?: 'blank' | 'complete';
+  /** Duration of a single brand reveal; looping loaders use the brand cycle. */
+  revealDurationMs?: number;
   startDelayMs?: number;
   accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
@@ -268,6 +270,7 @@ export const MugguLoader = ({
   showPen = size >= 72,
   loop = true,
   initialState = 'blank',
+  revealDurationMs,
   startDelayMs = 0,
   accessibilityLabel = 'Loading',
   style,
@@ -291,7 +294,7 @@ export const MugguLoader = ({
       if (!loop) {
         progress.value = 0;
         progress.value = withTiming(mugguMotion.completeProgress, {
-          duration: Math.round(mugguMotion.cycleMs * mugguMotion.completeProgress),
+          duration: revealDurationMs ?? Math.round(mugguMotion.cycleMs * mugguMotion.completeProgress),
           easing: Easing.linear,
         });
         return;
@@ -323,7 +326,7 @@ export const MugguLoader = ({
       clearTimeout(timer);
       cancelAnimation(progress);
     };
-  }, [initialState, loop, progress, reduceMotion, startDelayMs]);
+  }, [initialState, loop, progress, reduceMotion, revealDurationMs, startDelayMs]);
 
   const groupProps = useAnimatedProps(() => ({
     opacity: interpolate(
@@ -338,9 +341,9 @@ export const MugguLoader = ({
     return (
       <View
         accessible
-        accessibilityRole="progressbar"
+        accessibilityRole={loop ? 'progressbar' : 'image'}
         accessibilityLabel={accessibilityLabel}
-        accessibilityState={{ busy: true }}
+        accessibilityState={loop ? { busy: true } : undefined}
         style={style}
         testID={testID}
       >
@@ -352,9 +355,9 @@ export const MugguLoader = ({
   return (
     <View
       accessible
-      accessibilityRole="progressbar"
+      accessibilityRole={loop ? 'progressbar' : 'image'}
       accessibilityLabel={accessibilityLabel}
-      accessibilityState={{ busy: true }}
+      accessibilityState={loop ? { busy: true } : undefined}
       style={[{ width: size, height: size }, style]}
       testID={testID}
     >

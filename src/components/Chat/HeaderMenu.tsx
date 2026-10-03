@@ -1,4 +1,4 @@
-import { GlassCard } from '@/components/ui';
+import { GlassCard, ScrimBackdrop } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { lightHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -86,8 +86,15 @@ export const HeaderMenu = ({ visible, topInset, items, onClose }: HeaderMenuProp
   return (
     <Modal visible={visible} transparent statusBarTranslucent animationType="none" onRequestClose={handleClose}>
       <View style={StyleSheet.absoluteFill}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={handleClose}>
-          <Animated.View style={[styles.backdrop, backdropStyle]} />
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={handleClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close menu"
+        >
+          <Animated.View style={[styles.backdrop, backdropStyle]}>
+            <ScrimBackdrop pointerEvents="none" />
+          </Animated.View>
         </Pressable>
         <Animated.View style={[styles.menuWrap, { top: topInset + 56 }, sheetStyle]}>
           <GlassCard role="floating" radius={14} contentStyle={styles.menuContent}>
@@ -114,6 +121,8 @@ export const HeaderMenu = ({ visible, topInset, items, onClose }: HeaderMenuProp
                     borderBottomWidth: StyleSheet.hairlineWidth,
                   },
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel={item.label}
               >
                 <Ionicons
                   name={item.icon}
@@ -139,7 +148,7 @@ export const HeaderMenu = ({ visible, topInset, items, onClose }: HeaderMenuProp
 };
 
 const styles = StyleSheet.create({
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
+  backdrop: { ...StyleSheet.absoluteFillObject },
   menuWrap: {
     position: 'absolute',
     right: 12,

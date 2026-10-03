@@ -95,8 +95,8 @@ export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
     return (
       <GlassView style={[styles.container, styles.settledContainer]}>
         <View style={styles.settledContent}>
-          <View style={[styles.iconContainer, { backgroundColor: theme.colors.primaryContainer }]}>
-            <MaterialCommunityIcons name="check-decagram" size={32} color={theme.colors.primary} />
+          <View style={[styles.iconContainer, { backgroundColor: theme.colors.successContainer }]}>
+            <MaterialCommunityIcons name="check-decagram" size={32} color={theme.colors.onSuccessContainer} />
           </View>
           <View>
             <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
@@ -220,7 +220,6 @@ const styles = StyleSheet.create({
   settledContainer: {
     paddingVertical: 16,
     paddingHorizontal: 20,
-    backgroundColor: 'rgba(0, 255, 0, 0.05)',
   },
   settledContent: {
     flexDirection: 'row',

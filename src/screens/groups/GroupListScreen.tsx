@@ -1,8 +1,9 @@
+import { EmptyState, OfflineState } from '@/components/ui/EmptyState';
 import { FONT_CAP, shouldStackRow } from '@/utils/a11yText';
 import { BalanceHeadline } from '@/components/BalanceHeadline';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
-import { GlassCard, ListSeparator, SCREEN_GUTTER, StickyHeaderPill } from '@/components/ui';
+import { fullBleed, GlassCard, ListSeparator, SCREEN_GUTTER, ScrimBackdrop, StickyHeaderPill } from '@/components/ui';
 import { TopEdgeFade } from '@/components/ui/TopEdgeFade';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { PrimaryButton } from '@/components/PrimaryButton';
@@ -45,11 +46,6 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const { isOnline } = useOfflineSync();
   const { theme, isDark } = useTheme();
   const { width: windowWidth } = useWindowDimensions();
-  // Flat rows are FULL-BLEED: the list drops its horizontal gutter so a row's
-  // press highlight and its divider reach both screen edges, like a native
-  // list. The gutter moves onto the header/empty-state instead, and each
-  // row's own padding insets its text. Glass keeps the gutter — floating
-  // cards are meant to be inset from the edge.
   const isFlat = theme?.surfaceStyle === 'flat';
   // The list ALWAYS keeps its gutter; the rows cancel it themselves via
   // fullBleed (see components/ui/layout). Dropping the gutter here instead is
@@ -92,10 +88,8 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     extrapolate: 'clamp',
   });
   const tabBarEnvelopeHeight = getFloatingTabBarEnvelopeHeight(insets.bottom);
-  // The action buttons float ABOVE the list, so the list has to reserve room for
-  // however tall they actually are. Measured, not assumed: at large text sizes
-  // they restack from one row into three, roughly tripling in height, and a
-  // fixed 56pt guess left them sitting on top of the last group rows.
+  // Reserve the measured creation control height while it floats above the
+  // tab bar; large text puts that control in the list footer instead.
   const [actionsHeight, setActionsHeight] = useState(0);
   const listBottomPadding =
     getFloatingTabBarContentPadding(insets.bottom, 56) + (bigText ? 0 : actionsHeight);
@@ -131,9 +125,9 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
 
   // Derived state: Available currencies in existing groups
   const availableCurrencies = useMemo(() => {
-    const currencies = new Set(groups.map(g => g.currency));
+    const currencies = new Set(groups.filter(g => !g.hidden && !guardIsShielded('expenses', g.groupId)).map(g => g.currency));
     return Array.from(currencies).sort();
-  }, [groups]);
+  }, [groups, guardIsShielded]);
 
   // Filter and Sort Logic
   const processedGroups = useMemo(() => {
@@ -194,7 +188,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     const selectedCurrency = CURRENCIES.find(c => c.code === currencyInput.toUpperCase());
 
     if (!selectedCurrency) {
-      appAlert('Invalid Currency', 'Please select a valid currency from the list.');
+      appAlert('Choose a currency', 'Select a valid currency from the list.');
       return;
     }
 
@@ -212,7 +206,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       setShowCurrencyList(false);
     } catch (error) {
       console.error('Failed to create group', error);
-      appAlert('Error', 'Failed to create group');
+      appAlert('Could not create group', 'Check your connection and try again.');
     }
   };
 
@@ -228,7 +222,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       setInviteCode('');
     } catch (error) {
       console.error('Failed to join group', error);
-      appAlert('Error', 'Failed to join group');
+      appAlert('Could not join group', 'Check the invite code and your connection, then try again.');
     }
   };
 
@@ -264,7 +258,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       return;
     }
     appAlert(
-      'Archive Group',
+      'Archive group',
       `"${group.name}" will move to your Archived section. Balances and expenses are unaffected, and only you see it as archived.`,
       [
         { text: 'Cancel', style: 'cancel' },
@@ -276,7 +270,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
               successHaptic();
             } catch (error) {
               console.error('Failed to archive group', error);
-              appAlert('Error', 'Failed to archive group. Please try again.');
+              appAlert('Could not archive group', 'The group is still in your active list. Try again.');
             }
           },
         },
@@ -305,16 +299,8 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     });
   };
 
-  // The action bar is rendered in ONE of two places depending on text size.
-  //
-  // Normally it FLOATS over the list, which is the intended look. At large text
-  // sizes the three pills restack into three full-width rows and the block
-  // roughly triples in height — at that point a floating bar permanently covers
-  // the bottom third of the list, and when the list is short enough not to
-  // scroll those rows can never be moved out from under it. Verified on an
-  // iPhone 17 Pro simulator at XXL: three group rows sat behind the buttons
-  // with no way to reach them. So past the threshold it becomes the list's
-  // FOOTER and scrolls with the content instead of covering it.
+  // Keep creation available above the tab bar. At large text sizes it joins
+  // the scroll content so no group can be trapped behind a tall control.
   const actionsBlock = (
     <View
       onLayout={(e) => setActionsHeight(e.nativeEvent.layout.height)}
@@ -333,29 +319,6 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           New group
         </Button>
 
-        <TouchableOpacity
-          onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.FRIENDS, { backTitle: 'Expenses' }); }}
-          activeOpacity={0.8}
-          style={[styles.glassAction, bigText && styles.actionStacked]}
-        >
-          {/* radius={50}: GlassView paints the fill, so the pill shape has to be
-              set on IT — the wrapper's overflow:'hidden' clips the corners but
-              leaves a squared-off fill underneath on Android. */}
-          <GlassView role="floating" radius={50} style={styles.glassActionInner}>
-            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Friends</Text>
-          </GlassView>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => { lightHaptic(); setDialog('join'); }}
-          activeOpacity={0.8}
-          style={[styles.glassAction, bigText && styles.actionStacked]}
-        >
-          {/* GlassView provides the blurred/frosted fill inside the button */}
-          <GlassView role="floating" radius={50} style={styles.glassActionInner}>
-            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Join via code</Text>
-          </GlassView>
-        </TouchableOpacity>
     </View>
   );
 
@@ -444,8 +407,21 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
               {/* Overall position across every group — computed on-device from
                   data already in GroupContext (utils/myBalance.ts), not read
                   back from Firebase. */}
-              {!groupsShielded && <BalanceHeadline style={{ marginTop: 8 }} />}
+              {!groupsShielded && <BalanceHeadline prominent style={{ marginTop: theme.spacing.lg }} />}
             </View>
+
+            {!groupsShielded && (
+              <View style={[styles.secondaryActions, bigText && { flexDirection: 'column', alignItems: 'stretch' }]}>
+                <Button mode="text" icon="account-multiple-outline" contentStyle={{ minHeight: 48 }}
+                  onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.FRIENDS, { backTitle: 'Expenses' }); }}>
+                  Friends
+                </Button>
+                <Button mode="text" icon="link-variant" contentStyle={{ minHeight: 48 }}
+                  onPress={() => { lightHaptic(); setDialog('join'); }}>
+                  Join via code
+                </Button>
+              </View>
+            )}
 
             {archivedGroups.length > 0 && (
               <View style={styles.archivedSection}>
@@ -473,8 +449,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         initialNumToRender={10}
         maxToRenderPerBatch={10}
         windowSize={5}
-        // Inline (scrolls with the list) only at large text sizes; otherwise it
-        // floats below and this stays empty. See actionsBlock.
+        // Creation joins the scroll content at large text sizes.
         ListFooterComponent={!groupsShielded && bigText ? actionsBlock : null}
         ListEmptyComponent={
           loading ? (
@@ -484,13 +459,15 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
               <GroupCardSkeleton />
             </View>
           ) : (
-            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
-              {archivedGroups.length > 0
-                ? 'All your groups are archived.'
-                : groups.length > 0
-                  ? 'No expense groups match your filters.'
-                  : 'No expenses yet. Create a group to start splitting.'}
-            </Text>
+            groupsShielded ? null : selectedCurrencies.length > 0 ? (
+              <EmptyState icon="filter-outline" title="No matching groups" hint="Try another currency or show all your groups."
+                actionLabel="Clear filters" onAction={() => setSelectedCurrencies([])} />
+            ) : archivedGroups.length > 0 ? (
+              <EmptyState icon="archive-outline" title="Your groups are archived" hint="Open your archive to view or restore them."
+                actionLabel="Open archive" onAction={() => navigation.navigate(ROUTES.APP.ARCHIVED_GROUPS)} />
+            ) : !isOnline && processedGroups.length === 0 ? <OfflineState subject="groups" /> : (
+              <EmptyState icon="account-group-outline" title="Start sharing expenses" hint="Create a group for a trip, a home or everyday expenses. Have an invite? Use Join via code above." />
+            )
           )
         }
       />
@@ -524,7 +501,9 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         animationType="fade"
         onRequestClose={() => setDialog(null)}
       >
-        <Pressable style={styles.modalBackdrop} onPress={() => setDialog(null)} accessibilityLabel="Close create group" />
+        <Pressable style={styles.modalBackdrop} onPress={() => setDialog(null)} accessibilityRole="button" accessibilityLabel="Close create group">
+          <ScrimBackdrop pointerEvents="none" />
+        </Pressable>
         <View
           style={[styles.modalContainer, keyboardVisible && { marginBottom: 300 }]}
           pointerEvents="box-none"
@@ -597,7 +576,9 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         animationType="fade"
         onRequestClose={() => setDialog(null)}
       >
-        <Pressable style={styles.modalBackdrop} onPress={() => setDialog(null)} accessibilityLabel="Close join group" />
+        <Pressable style={styles.modalBackdrop} onPress={() => setDialog(null)} accessibilityRole="button" accessibilityLabel="Close join group">
+          <ScrimBackdrop pointerEvents="none" />
+        </Pressable>
         <View
           style={[styles.modalContainer, keyboardVisible && { marginBottom: 150 }]}
           pointerEvents="box-none"
@@ -632,34 +613,29 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
 
 const styles = StyleSheet.create({
   separatorBleed: {
-    marginHorizontal: -SCREEN_GUTTER,
+    ...fullBleed,
   },
   container: {
     flex: 1,
   },
   actions: {
     position: 'absolute',
-    left: 20,
     right: 20,
+    left: 20,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     gap: 10,
     zIndex: 10,
   },
   primaryAction: {
-    flex: 1,
+    flex: 0,
     minWidth: 0,
     // Measured 142x37dp on a Pixel 7 — under the 44pt HIG / 48dp Material
     // minimum. Paper's `compact` Button shrinks its own height, so the floor
     // has to be set here.
     minHeight: 48,
     justifyContent: 'center',
-  },
-  /** Accessibility sizes: full width, natural height, no flex competition. */
-  actionsStacked: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
   },
   /** Footer placement: same stacked layout, but in normal flow so it pushes the
    *  list instead of floating over it. */
@@ -673,29 +649,14 @@ const styles = StyleSheet.create({
     flex: 0,
     width: '100%',
   },
-  /** Pill, to match the "New group" Button sitting right beside it — Paper
-   *  rounds a contained Button to a full pill, so a 15pt radius here read as
-   *  two different button shapes in one row. A radius larger than half the
-   *  height is clamped to a pill, so this tracks any future height change. */
-  glassAction: {
-    flex: 1,
-    minWidth: 0,
-    borderRadius: 50,
-    overflow: 'hidden',
-    borderWidth: 0,
-    borderColor: 'rgba(0,0,0,0.08)',
-  },
-  glassActionInner: {
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    // Measured 142x42dp — just under the minimum. See primaryAction.
-    minHeight: 48,
+  secondaryActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
   },
   emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
+    flexGrow: 1,
   },
   empty: {
     textAlign: 'center',
@@ -717,7 +678,6 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.45)',
   },
   modalContainer: {
     flex: 1,

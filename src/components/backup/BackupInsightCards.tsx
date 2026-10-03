@@ -50,8 +50,7 @@ const relative = (timestamp: number): string => {
   return `${Math.floor(hours / 24)}d ago`;
 };
 
-const categoryLabel = (key: BackupCategory): string =>
-  BACKUP_CATEGORIES.find((category) => category.key === key)?.label ?? key;
+const categoryLabel = (key: BackupCategory): string => BACKUP_CATEGORIES.find((category) => category.key === key)?.label ?? key;
 
 /**
  * What's in the backup, by category and size.
@@ -83,7 +82,7 @@ export const BackupSizeCard = ({ manifest }: { manifest: BackupManifest | null }
 
       {entries.length === 0 ? (
         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-          Nothing backed up yet — run a backup to see what it uses.
+          Nothing backed up yet. Run a backup to see what it uses.
         </Text>
       ) : (
         entries.map((entry) => (
@@ -119,8 +118,7 @@ export const BackupSizeCard = ({ manifest }: { manifest: BackupManifest | null }
           API, so we cannot show the user's overall iCloud quota — Apple's own
           screen can, and pointing at it beats inventing a figure. */}
       <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-        This is what ManaSplit stores. To see your whole iCloud account, open Apple&apos;s
-        storage screen.
+        This is what ManaSplit stores. To see your whole iCloud account, open Apple&apos;s storage screen.
       </Text>
       <Button
         mode="outlined"
@@ -174,13 +172,11 @@ export const RestorePreviewCard = ({ manifest }: { manifest: BackupManifest | nu
       {manifest.mediaSkippedTooLarge ? (
         <Text variant="bodySmall" style={{ color: theme.colors.danger }}>
           {manifest.mediaSkippedTooLarge} large file
-          {manifest.mediaSkippedTooLarge === 1 ? '' : 's'} could not be included and would NOT come
-          back.
+          {manifest.mediaSkippedTooLarge === 1 ? '' : 's'} could not be included and would NOT come back.
         </Text>
       ) : null}
       <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-        Your groups, expenses and balances live on our servers and come back automatically — they
-        don&apos;t depend on this backup.
+        Your groups, expenses and balances live on our servers and come back automatically. They don&apos;t depend on this backup.
       </Text>
     </GlassCard>
   );
@@ -203,8 +199,8 @@ export const NextBackupCard = ({ readiness }: { readiness: BackupReadiness | nul
         Next backup
       </Text>
       <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-        {readiness.frequencyLabel}. iOS chooses the exact moment — usually while charging on
-        Wi-Fi — so we don&apos;t show a countdown we can&apos;t keep.
+        {readiness.frequencyLabel}. iOS chooses the exact moment. Usually while charging on Wi-Fi. So we don&apos;t show a countdown we
+        can&apos;t keep.
       </Text>
       <Divider />
       {readiness.conditions.map((condition) => (
@@ -212,7 +208,9 @@ export const NextBackupCard = ({ readiness }: { readiness: BackupReadiness | nul
           <View style={styles.headerRow}>
             <Text
               variant="bodyMedium"
-              style={{ color: condition.met ? theme.colors.onSurface : theme.colors.danger }}
+              style={{
+                color: condition.met ? theme.colors.onSurface : theme.colors.danger,
+              }}
             >
               {condition.met ? '✓' : '✕'} {condition.label}
             </Text>
@@ -240,8 +238,7 @@ export const BackupHistoryCard = ({ history }: { history: BackupRunEntry[] }) =>
   const { theme } = useTheme();
   if (history.length === 0) return null;
 
-  const color = (outcome: BackupRunEntry['outcome']) =>
-    outcome === 'success' ? theme.colors.onSurface : theme.colors.danger;
+  const color = (outcome: BackupRunEntry['outcome']) => (outcome === 'success' ? theme.colors.onSurface : theme.colors.danger);
 
   return (
     <GlassCard style={styles.card} contentStyle={styles.cardContent}>
@@ -265,7 +262,9 @@ export const BackupHistoryCard = ({ history }: { history: BackupRunEntry[] }) =>
           <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
             {entry.outcome === 'success'
               ? `${formatBytes(entry.bytes ?? 0)} · ${formatDuration(entry.durationMs)} · ${entry.trigger === 'manual' ? 'you started it' : 'automatic'}`
-              : (entry.message ?? 'No reason recorded.')}
+              : entry.outcome === 'blocked'
+                ? (entry.message ?? 'Backup is not ready yet.')
+                : 'Backup could not finish. Try again.'}
           </Text>
           {index < Math.min(history.length, 10) - 1 ? <Divider /> : null}
         </View>
@@ -281,13 +280,7 @@ export const BackupHistoryCard = ({ history }: { history: BackupRunEntry[] }) =>
  * already thinking about their backup — §3.5 requires that sentence to exist
  * at creation time, and it is just as true afterwards.
  */
-export const EncryptionCard = ({
-  enrolled,
-  enrolledAt,
-}: {
-  enrolled: boolean;
-  enrolledAt: number | null;
-}) => {
+export const EncryptionCard = ({ enrolled, enrolledAt }: { enrolled: boolean; enrolledAt: number | null }) => {
   const { theme } = useTheme();
   return (
     <GlassCard style={styles.card} contentStyle={styles.cardContent}>
@@ -297,7 +290,7 @@ export const EncryptionCard = ({
       <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
         {enrolled
           ? 'Your backup is end-to-end encrypted with your passphrase before it leaves this device.'
-          : 'No passphrase set yet — nothing can be backed up until there is one.'}
+          : 'No passphrase is set yet. Set one before backing up.'}
       </Text>
       {enrolled && enrolledAt ? (
         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -306,8 +299,7 @@ export const EncryptionCard = ({
       ) : null}
       {enrolled ? (
         <Text variant="bodySmall" style={{ color: theme.colors.danger }}>
-          We cannot reset it. If you forget your passphrase, this backup can never be opened — by
-          you or by us.
+          We cannot reset it. If you forget your passphrase, this backup can never be opened. By you or by us.
         </Text>
       ) : null}
     </GlassCard>

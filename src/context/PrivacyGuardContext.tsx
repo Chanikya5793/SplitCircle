@@ -304,7 +304,7 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
       <GuardCodePad
         visible={revealPadVisible}
         title="Enter code"
-        subtitle="Shake detected — enter your code to reveal."
+        subtitle="Shake detected. Enter your code to reveal."
         mode="unlock"
         onClose={() => {
           promptingRef.current = false;

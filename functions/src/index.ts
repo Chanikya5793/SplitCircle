@@ -9,7 +9,11 @@ import { onValueCreated } from "firebase-functions/v2/database";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onDocumentDeleted, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { AccessToken } from "livekit-server-sdk";
-import { processAllDueRecurringBills, processGroupDueRecurringBills } from "./recurringBills";
+import {
+    confirmRecurringBillOccurrence as confirmRecurringBillOccurrenceImpl,
+    processAllDueRecurringBills,
+    processGroupDueRecurringBills,
+} from "./recurringBills";
 import {
     processPendingNotificationReceipts,
     sendNativeAndroidTestPush,
@@ -53,6 +57,15 @@ import {
 } from "./accountRecovery";
 import { backfillMissingDisplayNames } from "./displayNameBackfill";
 import { prepareSecurityMonitoringAccountDeletion, securityMonitoringSecrets } from "./securityMonitoring";
+import {
+    authorizeChatAccessImpl,
+    createAuthorizedCallImpl,
+    mutateAuthorizedCallImpl,
+    mutateGroupMemberImpl,
+    queueChatMessageImpl,
+    reportSafetyIssueImpl,
+    setBlockedUserImpl,
+} from "./safety";
 export { cleanupOldRtdbData, reapStaleRingingCalls } from "./cleanup";
 // Consolidated AI-layer ingestion fan-out (gated by AI_LAYER_ENABLED; no-op until
 // activated — see aiLayer.ts and ai_layer/docs/08_self_review.md).
@@ -64,6 +77,25 @@ export { askExpenseAi } from "./askExpenseAi";
 // from the verified Firebase token; clients never read the backing collections.
 export * from "./securityMonitoring";
 export * from "./securityUrlAnalysis";
+export { cleanupMonetizationOnUserDeleted } from "./monetizationAccountCleanup";
+export { getMonetizationSnapshot, recordMonetizationUsage } from "./monetization";
+export {
+    authorizeMonetizedOperation,
+    finalizeMonetizedOperation,
+    reapExpiredMonetizationReservations,
+} from "./monetizationEnforcement";
+export {
+    appStoreServerNotificationsV2,
+    verifyAppleTransaction,
+} from "./appleCommerce";
+export {
+    getMonetizationSupportAccount,
+    grantMonetizationCourtesyCredits,
+    releaseMonetizationReservationForSupport,
+    setMonetizationTestAccess,
+} from "./monetizationSupport";
+export { convertGroupCurrency, mutateExpense } from "./expenseMutation";
+export { mutateRecurringBill, mutateSettlement } from "./financialMutations";
 
 initializeApp();
 
@@ -1088,6 +1120,39 @@ export const triggerRecurringBillsForGroup = onCall(
     }
 );
 
+export const confirmRecurringBillOccurrence = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Authentication required.");
+    const groupId = getStringValue(request.data?.groupId);
+    const billId = getStringValue(request.data?.billId);
+    const occurrenceAt = request.data?.occurrenceAt;
+    const amount = request.data?.amount;
+    const expectedCurrency = getStringValue(request.data?.expectedCurrency).toUpperCase();
+    if (!groupId || !billId || typeof occurrenceAt !== "number" || typeof amount !== "number" ||
+        !/^[A-Z]{3}$/.test(expectedCurrency)) {
+        throw new HttpsError("invalid-argument", "Missing recurring occurrence fields.");
+    }
+    try {
+        return await confirmRecurringBillOccurrenceImpl({
+            uid,
+            groupId,
+            billId,
+            occurrenceAt,
+            amount,
+            expectedCurrency,
+        });
+    } catch (error) {
+        if (error instanceof HttpsError) throw error;
+        logger.error("confirmRecurringBillOccurrence failed", {
+            uid,
+            groupId,
+            billId,
+            ...toSafeError(error),
+        });
+        throw new HttpsError("internal", "Could not confirm this recurring occurrence.");
+    }
+});
+
 // ─────────────────────────────────────────────────────────────
 // LiveKit Token Generation
 // ─────────────────────────────────────────────────────────────
@@ -1699,3 +1764,49 @@ export const authorizeScannedDevice = onCall(async (request) => {
         throw new HttpsError("internal", "Couldn't link that device. Please try again.");
     }
 });
+
+const safetyCallable = (
+    operation: string,
+    handler: (uid: string, data: Record<string, unknown>) => Promise<unknown>,
+) => onCall({ cors: true, maxInstances: 20 }, async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Authentication required.");
+    try {
+        return await handler(uid, (request.data ?? {}) as Record<string, unknown>);
+    } catch (error) {
+        const code = error instanceof Error ? error.message : "UNKNOWN";
+        logger.warn(`${operation} rejected`, { uid, code });
+        if (code === "RATE_LIMITED") throw new HttpsError("resource-exhausted", "Please slow down and try again.");
+        if (code === "USER_BLOCKED") throw new HttpsError("permission-denied", "This interaction is blocked.");
+        if (code.includes("REQUIRED") || code.startsWith("NOT_") || code.includes("PROTECTED")) {
+            throw new HttpsError("permission-denied", "You do not have permission to do that.");
+        }
+        if (code.startsWith("INVALID") || code === "CANNOT_BLOCK_SELF" || code === "USE_LEAVE_GROUP") {
+            throw new HttpsError("invalid-argument", "The request is invalid.");
+        }
+        if (code.endsWith("NOT_FOUND")) throw new HttpsError("not-found", "The requested item was not found.");
+        logger.error(`${operation} failed`, { uid, ...toSafeError(error) });
+        throw new HttpsError("internal", "The request could not be completed.");
+    }
+});
+
+/** Server-authorized message fan-out with membership, block, size and rate checks. */
+export const queueChatMessage = safetyCallable("queueChatMessage", queueChatMessageImpl);
+
+/** Server-authorized call creation. Clients cannot choose an arbitrary audience. */
+export const createAuthorizedCall = safetyCallable("createAuthorizedCall", createAuthorizedCallImpl);
+
+/** Server-owned updates keep call audiences immutable after creation. */
+export const mutateAuthorizedCall = safetyCallable("mutateAuthorizedCall", mutateAuthorizedCallImpl);
+
+/** Materializes server-verified RTDB membership for receipts and typing. */
+export const authorizeChatAccess = safetyCallable("authorizeChatAccess", authorizeChatAccessImpl);
+
+/** Persists a user block in both Firestore and RTDB for immediate enforcement. */
+export const setBlockedUser = safetyCallable("setBlockedUser", setBlockedUserImpl);
+
+/** Creates an immutable moderation report for the support response queue. */
+export const reportSafetyIssue = safetyCallable("reportSafetyIssue", reportSafetyIssueImpl);
+
+/** Owner/admin group changes are decided from server-read roles. */
+export const mutateGroupMember = safetyCallable("mutateGroupMember", mutateGroupMemberImpl);

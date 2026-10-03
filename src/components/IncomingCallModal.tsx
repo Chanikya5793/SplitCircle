@@ -2,7 +2,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { Icon, Text } from 'react-native-paper';
-import { GlassCard, UserAvatar } from './ui';
+import { GlassCard, ScrimBackdrop, UserAvatar } from './ui';
 
 interface IncomingCallModalProps {
   visible: boolean;
@@ -26,6 +26,7 @@ export const IncomingCallModal = ({
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onDecline}>
       <View style={styles.overlay}>
+        <ScrimBackdrop pointerEvents="none" />
         <GlassCard role="floating" style={styles.container} contentStyle={styles.content} radius="xl">
           <View style={[styles.avatarHalo, { borderColor: theme.colors.primary }]}>
             <UserAvatar photoURL={callerPhotoURL} displayName={callerName} size={104} />
@@ -79,7 +80,6 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
     padding: 24,
   },
   container: {

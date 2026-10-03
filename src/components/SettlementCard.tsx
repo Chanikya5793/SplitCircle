@@ -13,7 +13,7 @@ import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import { IconButton, Text, TouchableRipple } from 'react-native-paper';
+import { Icon, Text, TouchableRipple } from 'react-native-paper';
 import Animated from 'react-native-reanimated';
 
 interface SettlementCardProps {
@@ -71,15 +71,17 @@ export const SettlementCard = ({
             <RNAnimated.View style={[styles.rightAction, { transform: [{ translateX }, { scale }] }]}>
                 <RectButton
                     style={styles.rightActionPressable}
+                    accessibilityRole="button"
+                    accessibilityLabel="Delete settlement"
                     onPress={() => {
                         errorHaptic();
                         swipeableRef.current?.close();
                         onDelete?.(settlement);
                     }}
                 >
-                    <View style={styles.deleteButtonPill}>
-                        <IconButton icon="delete" iconColor="#fff" size={24} style={{ margin: 0 }} />
-                        <Text style={styles.actionText}>Delete</Text>
+                    <View style={[styles.deleteButtonPill, { backgroundColor: theme.colors.danger }]}>
+                        <Icon source="delete" color={theme.colors.onDanger} size={24} />
+                        <Text style={[styles.actionText, { color: theme.colors.onDanger }]}>Delete</Text>
                     </View>
                 </RectButton>
             </RNAnimated.View>
@@ -102,16 +104,26 @@ export const SettlementCard = ({
             >
                 <Animated.View style={pressScaleStyle}>
                 <GlassView style={styles.container}>
-                    <TouchableRipple onPress={handlePress} style={{ flex: 1 }} {...touchableProps}>
+                    <TouchableRipple
+                        onPress={handlePress}
+                        style={{ flex: 1 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Settlement, ${fromName} to ${toName}, ${fmtMoney(settlement.amount, currency)}`}
+                        accessibilityHint="Opens settlement details"
+                        accessibilityActions={onDelete ? [{ name: 'delete', label: 'Delete settlement' }] : undefined}
+                        onAccessibilityAction={({ nativeEvent: { actionName } }) => {
+                            if (actionName === 'delete') onDelete?.(settlement);
+                        }}
+                        {...touchableProps}
+                    >
                         <Animated.View style={[styles.content, isFlat && styles.contentFlat, pressHighlightStyle]}>
                             <View style={styles.header}>
                                 <View style={styles.titleRow}>
                                     <View style={styles.iconContainer}>
-                                        <IconButton
-                                            icon="handshake"
+                                        <Icon
+                                            source="handshake"
                                             size={20}
-                                            iconColor={theme.colors.primary}
-                                            style={styles.icon}
+                                            color={theme.colors.primary}
                                         />
                                     </View>
                                     <View style={{ flex: 1 }}>
@@ -184,9 +196,6 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
-    icon: {
-        margin: 0,
-    },
     amountContainer: {
         alignItems: 'flex-end',
     },
@@ -204,7 +213,6 @@ const styles = StyleSheet.create({
     deleteButtonPill: {
         width: 100,
         height: 56, // Horizontal pill shape
-        backgroundColor: '#ff6b6b',
         borderRadius: 100,
         flexDirection: 'row', // Horizontal layout for icon + text
         justifyContent: 'center',
@@ -217,7 +225,6 @@ const styles = StyleSheet.create({
         elevation: 3,
     },
     actionText: {
-        color: '#fff',
         fontSize: 13,
         fontWeight: 'bold',
         marginRight: 8,

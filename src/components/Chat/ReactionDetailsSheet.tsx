@@ -92,15 +92,23 @@ export const ReactionDetailsSheet = ({
         {/* Blur backdrop */}
         <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
           <ScrimBackdrop intensity={40} tint={isDark ? 'dark' : 'default'} />
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} />
         </Animated.View>
 
         {/* Dismiss layer */}
-        <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={handleClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close reaction details"
+        />
 
         {/* Sheet — anchored to bottom, passes through touches above */}
         <View style={styles.sheetContainer} pointerEvents="box-none">
-          <Animated.View style={[styles.sheetWrap, sheetStyle]}>
+          <Animated.View
+            style={[styles.sheetWrap, sheetStyle]}
+            accessibilityViewIsModal
+            accessibilityLabel="Reaction details"
+          >
             <GlassCard role="floating"
               style={styles.sheetGlass}
               contentStyle={[styles.sheetContent, { paddingBottom: insets.bottom + 16 }]}
@@ -127,21 +135,8 @@ export const ReactionDetailsSheet = ({
                   </View>
                   {users.map((userId) => {
                     const isMe = userId === currentUserId;
-                    return (
-                      <TouchableOpacity
-                        key={userId}
-                        style={[
-                          styles.reactorRow,
-                          {
-                            backgroundColor: isMe
-                              ? (isDark ? 'rgba(53,198,255,0.1)' : 'rgba(31,111,235,0.06)')
-                              : 'transparent',
-                          },
-                        ]}
-                        activeOpacity={isMe ? 0.6 : 1}
-                        onPress={isMe ? () => handleRemove(emoji) : undefined}
-                        disabled={!isMe}
-                      >
+                    const rowContent = (
+                      <>
                         <View style={styles.reactorInfo}>
                           <View style={[styles.reactorAvatar, { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)' }]}>
                             <Text style={styles.reactorInitial}>
@@ -157,7 +152,31 @@ export const ReactionDetailsSheet = ({
                             Tap to remove
                           </Text>
                         )}
+                      </>
+                    );
+                    const rowStyle = [
+                      styles.reactorRow,
+                      {
+                        backgroundColor: isMe
+                          ? (isDark ? 'rgba(53,198,255,0.1)' : 'rgba(31,111,235,0.06)')
+                          : 'transparent',
+                      },
+                    ];
+                    return isMe ? (
+                      <TouchableOpacity
+                        key={userId}
+                        style={rowStyle}
+                        activeOpacity={0.6}
+                        onPress={() => handleRemove(emoji)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove ${emoji} reaction from your message`}
+                      >
+                        {rowContent}
                       </TouchableOpacity>
+                    ) : (
+                      <View key={userId} style={rowStyle}>
+                        {rowContent}
+                      </View>
                     );
                   })}
                 </View>

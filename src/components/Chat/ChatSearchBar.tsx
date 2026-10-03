@@ -41,7 +41,12 @@ export const ChatSearchBar = ({
   return (
     <View style={[styles.wrap, { paddingTop: topInset + 6 }]}>
       <View style={styles.row}>
-        <TouchableOpacity onPress={onClose} style={styles.button} hitSlop={8}>
+        <TouchableOpacity
+          onPress={onClose}
+          style={styles.button}
+          accessibilityRole="button"
+          accessibilityLabel="Close chat search"
+        >
           <GlassView role="floating" style={styles.buttonGlass} intensity={40}>
             <Ionicons name="close" size={22} color={theme.colors.primary} />
           </GlassView>
@@ -59,6 +64,7 @@ export const ChatSearchBar = ({
               returnKeyType="search"
               autoCorrect={false}
               autoCapitalize="none"
+              accessibilityLabel="Search this chat"
             />
             {query.length > 0 && (
               <Text style={[styles.matchText, { color: subtle, backgroundColor: muted }]}>
@@ -72,7 +78,9 @@ export const ChatSearchBar = ({
             onPress={onPrev}
             disabled={matchCount === 0}
             style={[styles.navButton, matchCount === 0 && { opacity: 0.4 }]}
-            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Previous search result"
+            accessibilityState={{ disabled: matchCount === 0 }}
           >
             <GlassView role="floating" style={styles.navGlass} intensity={40}>
               <Ionicons name="chevron-up" size={18} color={theme.colors.primary} />
@@ -82,7 +90,9 @@ export const ChatSearchBar = ({
             onPress={onNext}
             disabled={matchCount === 0}
             style={[styles.navButton, matchCount === 0 && { opacity: 0.4 }]}
-            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Next search result"
+            accessibilityState={{ disabled: matchCount === 0 }}
           >
             <GlassView role="floating" style={styles.navGlass} intensity={40}>
               <Ionicons name="chevron-down" size={18} color={theme.colors.primary} />
@@ -105,12 +115,12 @@ const styles = StyleSheet.create({
     zIndex: 100,
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  button: { width: 40, height: 40, borderRadius: 20, overflow: 'hidden' },
+  button: { width: 44, height: 44, borderRadius: 22, overflow: 'hidden' },
   buttonGlass: { flex: 1, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   searchGlass: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 40,
+    minHeight: 44,
     borderRadius: 20,
     overflow: 'hidden',
     paddingRight: 8,
@@ -129,7 +139,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   navCluster: { flexDirection: 'row', gap: 4 },
-  navButton: { width: 36, height: 40, borderRadius: 18, overflow: 'hidden' },
+  navButton: { width: 44, height: 44, borderRadius: 22, overflow: 'hidden' },
   navGlass: { flex: 1, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
 });
 

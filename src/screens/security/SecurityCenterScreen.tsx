@@ -1,5 +1,7 @@
+import { DetailScreenScaffold } from '@/components/ui/DetailScreenScaffold';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GlassCard, ListRow, SCREEN_GUTTER, SectionLabel } from '@/components/ui';
+import { ScrimBackdrop } from '@/components/ui/ScrimBackdrop';
+import { AppButton, fullBleed, GlassCard, ListRow, SCREEN_GUTTER, SectionLabel, SelectableChip } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import type {
@@ -31,13 +33,13 @@ import {
   Modal,
   Platform,
   RefreshControl,
-  ScrollView,
+
   StyleSheet,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { Button, Checkbox, Icon, Switch, Text, TextInput } from 'react-native-paper';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { SlideInDown } from 'react-native-reanimated';
 import { SecurityFindingCard } from './SecurityFindingCard';
 
 type FindingFilter = 'active' | 'resolved' | 'muted';
@@ -63,9 +65,7 @@ const IDENTITY_LABEL: Record<SecurityIdentityType, string> = {
 };
 
 const errorText = (error: unknown, fallback: string): string => {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message.replace(/^Firebase:\s*/i, '').replace(/\s*\(functions\/[a-z-]+\)\.?$/i, '');
-  }
+  console.warn('[SecurityCenter] Operation failed:', error);
   return fallback;
 };
 
@@ -85,12 +85,12 @@ const providerLabel = (provider: string): string => ({
 }[provider] ?? provider);
 
 const providerStatusCopy = (status: SecurityCenterSnapshot['providerStatus'][string]): string => {
-  if (status.status === 'success') return `${status.findingCount} findings · ${status.latencyMs}ms`;
-  if (status.status === 'partial') return status.message ?? 'Partial result — some sources were unavailable';
-  if (status.status === 'not_configured') return 'Not configured on the backend';
-  if (status.status === 'rate_limited') return 'Rate limited — will retry later';
-  if (status.status === 'unsupported_identity') return 'No compatible monitored identity';
-  return status.message ?? 'Provider unavailable';
+  if (status.status === 'success') return `${status.findingCount} ${status.findingCount === 1 ? 'finding' : 'findings'}`;
+  if (status.status === 'partial') return 'Some checks were unavailable';
+  if (status.status === 'not_configured') return 'This source is not available';
+  if (status.status === 'rate_limited') return 'Temporarily unavailable. ManaSplit will try later.';
+  if (status.status === 'unsupported_identity') return 'This source cannot check the selected identity';
+  return 'This source is unavailable';
 };
 
 interface EnrollmentModalProps {
@@ -119,39 +119,35 @@ const EnrollmentModal = ({ visible, initialEmail, busy, onClose, onSubmit }: Enr
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
+    <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={close}>
       <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <TouchableOpacity activeOpacity={1} style={styles.backdrop} onPress={close} accessibilityLabel="Close enrollment" />
-        <View style={[styles.sheet, { backgroundColor: theme.colors.surface }]}>
+        <TouchableOpacity activeOpacity={1} style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel="Close enrollment">
+          <ScrimBackdrop />
+        </TouchableOpacity>
+        {visible ? (
+        <Animated.View entering={SlideInDown.springify().damping(30).stiffness(350)} accessibilityViewIsModal>
+        <GlassCard role="floating" radius={28} style={styles.sheet} contentStyle={styles.sheetContent}>
           <View style={styles.sheetHeader}>
             <View style={{ flex: 1 }}>
-              <Text variant="titleLarge" style={{ color: theme.colors.onSurface, fontWeight: '800' }}>Monitor an identity</Text>
+              <Text variant="titleLarge" style={{ color: theme.colors.onSurface, fontWeight: '800' }}>Add monitoring</Text>
               <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 3 }}>
-                Encrypted before storage. Provider access happens only during an approved scan.
+                Your information is encrypted and checked only when you run a scan.
               </Text>
             </View>
-            <TouchableOpacity onPress={close} accessibilityRole="button" accessibilityLabel="Close">
+            <TouchableOpacity onPress={close} accessibilityRole="button" accessibilityLabel="Close enrollment" style={styles.sheetClose}>
               <Icon source="close" size={24} color={theme.colors.onSurfaceVariant} />
             </TouchableOpacity>
           </View>
 
           <View style={styles.typeRow}>
             {(Object.keys(IDENTITY_LABEL) as SecurityIdentityType[]).map((item) => (
-              <TouchableOpacity
+              <SelectableChip
                 key={item}
-                onPress={() => choose(item)}
-                style={[
-                  styles.typeChip,
-                  { borderColor: type === item ? theme.colors.primary : theme.colors.outlineVariant },
-                  type === item && { backgroundColor: theme.colors.primaryContainer },
-                ]}
+                label={IDENTITY_LABEL[item]}
+                selected={type === item}
                 accessibilityRole="radio"
-                accessibilityState={{ selected: type === item }}
-              >
-                <Text variant="labelMedium" style={{ color: type === item ? theme.colors.primary : theme.colors.onSurfaceVariant }}>
-                  {IDENTITY_LABEL[item]}
-                </Text>
-              </TouchableOpacity>
+                onPress={() => choose(item)}
+              />
             ))}
           </View>
 
@@ -170,7 +166,7 @@ const EnrollmentModal = ({ visible, initialEmail, busy, onClose, onSubmit }: Enr
             <View style={[styles.notice, { backgroundColor: theme.colors.warningContainer }]}>
               <Icon source="information-outline" size={18} color={theme.colors.warning} />
               <Text variant="bodySmall" style={{ color: theme.colors.onSurface, flex: 1 }}>
-                Monitoring starts only after an approved ownership proof. Phone numbers matching your verified sign-in number are verified automatically.
+                Monitoring starts after you verify that this belongs to you. A phone number that matches your verified sign-in number is confirmed automatically.
               </Text>
             </View>
           ) : null}
@@ -178,19 +174,20 @@ const EnrollmentModal = ({ visible, initialEmail, busy, onClose, onSubmit }: Enr
           <TouchableOpacity style={styles.consentRow} onPress={() => setConsent((current) => !current)} accessibilityRole="checkbox" accessibilityState={{ checked: consent }}>
             <Checkbox status={consent ? 'checked' : 'unchecked'} />
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1, lineHeight: 18 }}>
-              I authorize ManaSplit to send this identity to the named monitoring providers during scans. I can revoke consent and delete monitoring data at any time.
+              I agree to let ManaSplit check this identity with the services named in Coverage details. I can stop monitoring and delete this data at any time.
             </Text>
           </TouchableOpacity>
 
-          <Button
-            mode="contained"
+          <AppButton
             disabled={!value.trim() || !consent || busy}
             loading={busy}
             onPress={() => void onSubmit(type, value)}
           >
-            Encrypt and enroll
-          </Button>
-        </View>
+            Add to monitoring
+          </AppButton>
+        </GlassCard>
+        </Animated.View>
+        ) : null}
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -200,13 +197,13 @@ export const SecurityCenterScreen = () => {
   const { theme, surfaceStyle } = useTheme();
   const { user } = useAuth();
   const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
   const [snapshot, setSnapshot] = useState<SecurityCenterSnapshot>(EMPTY_SNAPSHOT);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
   const [enrollmentOpen, setEnrollmentOpen] = useState(false);
+  const [providerDetailsExpanded, setProviderDetailsExpanded] = useState(false);
   const [filter, setFilter] = useState<FindingFilter>('active');
   const [password, setPassword] = useState('');
   const [checkingPassword, setCheckingPassword] = useState(false);
@@ -256,7 +253,7 @@ export const SecurityCenterScreen = () => {
         'Scan complete',
         result.newHighRiskCount
           ? `${result.newHighRiskCount} new high-risk ${result.newHighRiskCount === 1 ? 'finding needs' : 'findings need'} attention.`
-          : `Checked configured providers and normalized ${result.findingCount ?? 0} findings.`,
+          : `Checked the available sources. Found ${result.findingCount ?? 0} saved ${(result.findingCount ?? 0) === 1 ? 'finding' : 'findings'}.`,
       );
     } catch (error) {
       appAlert('Scan did not finish', errorText(error, 'Please try again later.'));
@@ -296,7 +293,7 @@ export const SecurityCenterScreen = () => {
   };
 
   const confirmRemoveIdentity = (identityId: string, hint: string) => {
-    appAlert('Stop monitoring this identity?', `${hint} and its findings will be deleted. The provider is also asked to remove its identifier.`, [
+    appAlert('Stop monitoring this identity?', `${hint} and its findings will be deleted. Monitoring services will also be asked to remove the saved monitoring data.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',
@@ -317,7 +314,7 @@ export const SecurityCenterScreen = () => {
   };
 
   const confirmDeleteFinding = (findingId: string) => {
-    appAlert('Delete this finding?', 'The normalized evidence and its risk assessment will be permanently removed.', [
+    appAlert('Delete this finding?', 'The saved evidence and its risk assessment will be permanently removed.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -384,7 +381,7 @@ export const SecurityCenterScreen = () => {
   };
 
   const deleteEverything = () => {
-    appAlert('Delete all Security Center data?', 'This removes encrypted identities, findings, timeline, consent, and provider identifiers. This cannot be undone.', [
+    appAlert('Delete all Security Center data?', 'This removes monitored identities, findings, history, preferences, and saved monitoring data. This cannot be undone.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete everything',
@@ -397,21 +394,44 @@ export const SecurityCenterScreen = () => {
     ]);
   };
 
-  const scoreColor = snapshot.securityScore >= 80 ? theme.colors.success : snapshot.securityScore >= 55 ? theme.colors.warning : theme.colors.danger;
-  const cardFlat = surfaceStyle === 'flat' ? styles.cardFlat : undefined;
+  const verifiedCount = snapshot.identities.filter((identity) => identity.verificationState === 'verified').length;
+  const pendingCount = snapshot.identities.length - verifiedCount;
+  const activeCount = snapshot.findings.filter((finding) => ['active', 'acknowledged', 'remediated'].includes(finding.state)).length;
+  const providers = Object.values(snapshot.providerStatus);
+  const successfulProviders = providers.filter((provider) => provider.status === 'success').length;
+  const coverageIncomplete = providers.length === 0 || successfulProviders < providers.length;
+  const coverageTitle = snapshot.identities.length === 0 ? 'Add an identity to begin'
+    : verifiedCount === 0 ? 'Verify ownership to begin'
+      : !snapshot.enabled ? 'Monitoring is paused'
+        : !snapshot.lastScanAt ? 'Ready for your first check'
+          : successfulProviders === 0 && !providers.some((provider) => provider.status === 'partial') ? 'Coverage is unavailable'
+            : coverageIncomplete ? 'Some checks are unavailable'
+              : 'Monitoring is enabled';
+  const coverageCopy = snapshot.identities.length === 0 ? 'Add an email address or domain, then verify ownership before monitoring starts.'
+    : verifiedCount === 0 ? 'Ownership verification is still needed. No identity is ready to scan.'
+      : !snapshot.enabled ? 'Scheduled checks are off. Turn on Scheduled monitoring below to resume.'
+        : !snapshot.lastScanAt ? 'Run a scan to check the available sources. Nothing has been checked yet.'
+          : coverageIncomplete ? 'The last scan did not establish full coverage. Open Coverage details to see which sources could be checked.'
+            : 'Available sources were checked. No service can guarantee that an account is safe.';
+
+  // Flat sections that contain ordinary copy stay inside the same readable
+  // gutter as their labels. Only row lists may reach the screen edge because
+  // ListRow owns its own horizontal inset and its press state benefits from
+  // spanning the full width.
+  const rowCardFlat = surfaceStyle === 'flat' ? styles.rowCardFlat : undefined;
 
   return (
     <LiquidBackground style={styles.root}>
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 58, paddingBottom: insets.bottom + 40 }]}
+      <DetailScreenScaffold bottomSpacing={40}
+        horizontalInset={SCREEN_GUTTER}
+        contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={theme.colors.primary} />}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.heroCopy}>
           <Text variant="headlineMedium" style={{ color: theme.colors.onSurface, fontWeight: '800' }}>Security Center</Text>
           <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, lineHeight: 20 }}>
-            Evidence first. Secrets never. Severity comes from deterministic rules—not a model.
+            See what has been checked and what needs your attention.
           </Text>
         </View>
 
@@ -419,29 +439,61 @@ export const SecurityCenterScreen = () => {
           <View style={styles.loading}><ActivityIndicator color={theme.colors.primary} /><Text style={{ color: theme.colors.onSurfaceVariant }}>Opening protected monitoring…</Text></View>
         ) : (
           <>
-            <GlassCard style={[styles.heroCard, cardFlat]} contentStyle={styles.heroCardContent}>
-              <View style={[styles.scoreRing, { borderColor: scoreColor }]} accessibilityLabel={`Security score ${snapshot.securityScore} out of 100`}>
-                <Text variant="headlineLarge" style={{ color: scoreColor, fontWeight: '900' }}>{snapshot.securityScore}</Text>
-                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>out of 100</Text>
-              </View>
+            <GlassCard contentStyle={styles.heroCardContent}>
               <View style={styles.heroStatus}>
                 <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '800' }}>
-                  {snapshot.enabled ? 'Monitoring is active' : 'Monitoring is paused'}
+                  {coverageTitle}
                 </Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                  Last scan {relativeDate(snapshot.lastScanAt)} · {snapshot.identities.filter((entry) => entry.verificationState === 'verified').length} verified
+                  {verifiedCount} verified · {pendingCount} not verified{'\n'}
+                  Last check: {snapshot.lastScanAt ? relativeDate(snapshot.lastScanAt) : 'Not checked yet'}
                 </Text>
-                <Button mode="contained" icon="radar" loading={scanning} disabled={scanning || !snapshot.enabled} onPress={() => void runScan()}>
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>{coverageCopy}</Text>
+                <Text variant="bodyMedium" style={{ color: activeCount ? theme.colors.warning : theme.colors.onSurface }}>
+                  {activeCount ? `${activeCount} ${activeCount === 1 ? 'finding needs' : 'findings need'} review` : snapshot.lastScanAt ? 'No active findings in the saved results' : 'No findings yet; a scan is needed'}
+                </Text>
+                <Button mode="contained" icon="radar" loading={scanning} disabled={scanning || !snapshot.enabled || verifiedCount === 0} onPress={() => void runScan()}>
                   Scan now
                 </Button>
               </View>
             </GlassCard>
 
+            <View style={styles.sectionHeaderRow}>
+              <SectionLabel style={styles.sectionLabel}>Findings</SectionLabel>
+              <View style={styles.filterRow} accessibilityRole="tablist">
+                {(['active', 'resolved', 'muted'] as FindingFilter[]).map((item) => (
+                  <SelectableChip
+                    key={item}
+                    label={item.charAt(0).toUpperCase() + item.slice(1)}
+                    selected={filter === item}
+                    onPress={() => setFilter(item)}
+                    accessibilityRole="tab"
+                  />
+                ))}
+              </View>
+            </View>
+            <View style={styles.findingList}>
+              {visibleFindings.length === 0 ? (
+                <GlassCard contentStyle={styles.emptyState}>
+                  <Icon source="clipboard-text-outline" size={32} color={theme.colors.onSurfaceVariant} />
+                  <Text variant="titleSmall" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>No {filter} findings</Text>
+                  <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>This list only reflects saved results. Missing checks or an empty list do not establish that an account is safe.</Text>
+                </GlassCard>
+              ) : visibleFindings.map((finding: SecurityFinding) => (
+                <SecurityFindingCard
+                  key={finding.findingId}
+                  finding={finding}
+                  onStateChange={(state) => changeFindingState(finding.findingId, state)}
+                  onDelete={() => confirmDeleteFinding(finding.findingId)}
+                />
+              ))}
+            </View>
+
             <SectionLabel style={styles.sectionLabel}>Protection tools</SectionLabel>
-            <GlassCard style={[styles.sectionCard, cardFlat]} contentStyle={styles.toolContent}>
+            <GlassCard contentStyle={styles.toolContent}>
               <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>Check a password privately</Text>
               <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, lineHeight: 18 }}>
-                SHA-1 matching happens here. Only a 5-character prefix goes to HIBP; the password and full hash never leave or persist.
+                Check whether this password appears in known breaches. Your password is not sent or saved. Matching happens on this device; only the first five characters of its SHA-1 hash go to Have I Been Pwned.
               </Text>
               <View style={styles.inputActionRow}>
                 <TextInput
@@ -462,8 +514,8 @@ export const SecurityCenterScreen = () => {
                   <Icon source={passwordResult.exposed ? 'alert-circle' : 'check-circle'} size={20} color={passwordResult.exposed ? theme.colors.danger : theme.colors.success} />
                   <Text variant="bodySmall" style={{ color: theme.colors.onSurface, flex: 1 }}>
                     {passwordResult.exposed
-                      ? `Found in the Pwned Passwords corpus ${passwordResult.occurrenceCount.toLocaleString()} times. Change it anywhere it is used.`
-                      : 'No match in the current Pwned Passwords corpus. This does not prove the password is otherwise safe.'}
+                      ? `Found in the Pwned Passwords breach database ${passwordResult.occurrenceCount.toLocaleString()} times. Change it anywhere it is used.`
+                      : 'No match in the current Pwned Passwords breach database. This does not prove the password is otherwise safe.'}
                   </Text>
                 </View>
               ) : null}
@@ -471,7 +523,7 @@ export const SecurityCenterScreen = () => {
               <View style={[styles.toolDivider, { backgroundColor: theme.colors.outlineVariant }]} />
               <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>Analyze a suspicious link</Text>
               <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, lineHeight: 18 }}>
-                Checks lookalikes, homoglyphs, redirect tricks, credential-themed paths, and Google Web Risk without opening the page.
+                Check for deceptive addresses and known threats without opening the page. The link is analyzed for lookalike characters and suspicious patterns, with a reputation check through Google Web Risk when available.
               </Text>
               <View style={styles.inputActionRow}>
                 <TextInput
@@ -498,7 +550,7 @@ export const SecurityCenterScreen = () => {
                         ? urlResult.indicators.map((indicator) => indicator.label).join(' · ')
                         : urlResult.providerStatus === 'success'
                           ? 'No configured signal matched; stay cautious.'
-                          : 'Reputation provider unavailable; no safety verdict was issued.'}
+                          : 'The link check is unavailable, so ManaSplit cannot assess this address right now.'}
                     </Text>
                   </View>
                 </View>
@@ -509,11 +561,11 @@ export const SecurityCenterScreen = () => {
               <SectionLabel style={styles.sectionLabel}>Monitored identities</SectionLabel>
               <Button compact icon="plus" onPress={() => setEnrollmentOpen(true)}>Add</Button>
             </View>
-            <GlassCard style={[styles.sectionCard, cardFlat]} contentStyle={styles.listContent}>
+            <GlassCard style={rowCardFlat} contentStyle={styles.listContent}>
               {snapshot.identities.length === 0 ? (
                 <TouchableOpacity style={styles.emptyState} onPress={() => setEnrollmentOpen(true)} accessibilityRole="button">
                   <Icon source="account-lock-outline" size={30} color={theme.colors.primary} />
-                  <Text variant="titleSmall" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>No identity leaves this screen until you consent</Text>
+                  <Text variant="titleSmall" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>No monitored identities yet</Text>
                   <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>Add your verified sign-in email or prove control of a domain to begin.</Text>
                 </TouchableOpacity>
               ) : snapshot.identities.map((identity, index) => (
@@ -521,14 +573,14 @@ export const SecurityCenterScreen = () => {
                   {index > 0 ? <View style={[styles.rowDivider, { backgroundColor: theme.colors.outlineVariant }]} /> : null}
                   <ListRow
                     title={identity.displayHint}
-                    subtitle={`${IDENTITY_LABEL[identity.type]} · ${identity.verificationState === 'verified' ? 'Verified and scanning' : identity.verificationMethod === 'dns_txt' ? 'DNS proof pending' : 'Ownership proof pending'}`}
+                    subtitle={`${IDENTITY_LABEL[identity.type]} · ${identity.verificationState === 'verified' ? snapshot.enabled ? 'Verified; monitoring enabled' : 'Verified; monitoring paused' : identity.verificationState === 'failed' ? 'Verification failed' : identity.verificationMethod === 'dns_txt' ? 'DNS proof pending' : 'Ownership proof pending'}`}
                     icon={identity.verificationState === 'verified' ? 'shield-check-outline' : 'shield-key-outline'}
                     iconColor={identity.verificationState === 'verified' ? theme.colors.success : theme.colors.warning}
                     chevron={false}
                     trailing={(
                       <View style={styles.identityActions}>
                         {identity.verificationState !== 'verified' ? <Button compact onPress={() => void verify(identity.identityId)}>Verify</Button> : null}
-                        <TouchableOpacity onPress={() => confirmRemoveIdentity(identity.identityId, identity.displayHint)} accessibilityRole="button" accessibilityLabel={`Remove ${identity.displayHint}`}>
+                        <TouchableOpacity onPress={() => confirmRemoveIdentity(identity.identityId, identity.displayHint)} accessibilityRole="button" accessibilityLabel={`Remove ${identity.displayHint}`} style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
                           <Icon source="trash-can-outline" size={20} color={theme.colors.danger} />
                         </TouchableOpacity>
                       </View>
@@ -538,12 +590,18 @@ export const SecurityCenterScreen = () => {
               ))}
             </GlassCard>
 
-            <SectionLabel style={styles.sectionLabel}>Provider health</SectionLabel>
-            <GlassCard style={[styles.sectionCard, cardFlat]} contentStyle={styles.listContent}>
+            <Button
+              icon={providerDetailsExpanded ? 'chevron-up' : 'chevron-down'}
+              accessibilityState={{ expanded: providerDetailsExpanded }}
+              onPress={() => setProviderDetailsExpanded((expanded) => !expanded)}
+            >Coverage details</Button>
+            {providerDetailsExpanded ? (
+              <View>
+            <GlassCard style={rowCardFlat} contentStyle={styles.listContent}>
               {Object.keys(snapshot.providerStatus).length === 0 ? (
                 <View style={styles.emptyProvider}>
                   <Icon source="cloud-search-outline" size={22} color={theme.colors.onSurfaceVariant} />
-                  <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>Run a scan to measure provider status and latency.</Text>
+                  <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>Run a scan to see which sources are available.</Text>
                 </View>
               ) : Object.entries(snapshot.providerStatus).map(([provider, status], index) => (
                 <View key={provider}>
@@ -559,44 +617,14 @@ export const SecurityCenterScreen = () => {
               ))}
             </GlassCard>
 
-            <View style={styles.sectionHeaderRow}>
-              <SectionLabel style={styles.sectionLabel}>Findings</SectionLabel>
-              <View style={styles.filterRow} accessibilityRole="tablist">
-                {(['active', 'resolved', 'muted'] as FindingFilter[]).map((item) => (
-                  <TouchableOpacity
-                    key={item}
-                    onPress={() => setFilter(item)}
-                    style={[styles.filterChip, filter === item && { backgroundColor: theme.colors.primaryContainer }]}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: filter === item }}
-                  >
-                    <Text variant="labelSmall" style={{ color: filter === item ? theme.colors.primary : theme.colors.onSurfaceVariant, textTransform: 'capitalize' }}>{item}</Text>
-                  </TouchableOpacity>
-                ))}
               </View>
-            </View>
-            <View style={styles.findingList}>
-              {visibleFindings.length === 0 ? (
-                <GlassCard style={[styles.sectionCard, cardFlat]} contentStyle={styles.emptyState}>
-                  <Icon source="shield-check-outline" size={32} color={theme.colors.success} />
-                  <Text variant="titleSmall" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>No {filter} findings</Text>
-                  <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>A clean list means no current match—not a promise that an account can never be compromised.</Text>
-                </GlassCard>
-              ) : visibleFindings.map((finding: SecurityFinding) => (
-                <SecurityFindingCard
-                  key={finding.findingId}
-                  finding={finding}
-                  onStateChange={(state) => changeFindingState(finding.findingId, state)}
-                  onDelete={() => confirmDeleteFinding(finding.findingId)}
-                />
-              ))}
-            </View>
+            ) : null}
 
             <SectionLabel style={styles.sectionLabel}>Privacy controls</SectionLabel>
-            <GlassCard style={[styles.sectionCard, cardFlat]} contentStyle={styles.listContent}>
+            <GlassCard style={rowCardFlat} contentStyle={styles.listContent}>
               <ListRow
                 title="Scheduled monitoring"
-                subtitle={snapshot.enabled ? 'Daily scans and high-risk alerts are enabled' : 'No scheduled provider requests are made'}
+                subtitle={snapshot.enabled ? 'Daily scans and high-risk alerts are enabled' : 'No scheduled checks are made'}
                 icon="radar"
                 trailing={<Switch value={snapshot.enabled} onValueChange={(value) => void toggleMonitoring(value)} />}
               />
@@ -610,7 +638,7 @@ export const SecurityCenterScreen = () => {
               <View style={[styles.rowDivider, { backgroundColor: theme.colors.outlineVariant }]} />
               <ListRow
                 title="Delete Security Center data"
-                subtitle="Erase consent, encrypted identities, findings, timeline, and provider identifiers"
+                subtitle="Erase monitored identities, findings, history, preferences, and saved monitoring data"
                 icon="delete-forever-outline"
                 destructive
                 chevron={false}
@@ -621,7 +649,7 @@ export const SecurityCenterScreen = () => {
             {snapshot.timeline.length > 0 ? (
               <>
                 <SectionLabel style={styles.sectionLabel}>Recent timeline</SectionLabel>
-                <GlassCard style={[styles.sectionCard, cardFlat]} contentStyle={styles.timelineContent}>
+                <GlassCard contentStyle={styles.timelineContent}>
                   {snapshot.timeline.slice(0, 8).map((event, index) => (
                     <View key={event.eventId} style={styles.timelineRow}>
                       <View style={styles.timelineRail}>
@@ -639,7 +667,7 @@ export const SecurityCenterScreen = () => {
             ) : null}
           </>
         )}
-      </ScrollView>
+      </DetailScreenScaffold>
 
       <EnrollmentModal
         visible={enrollmentOpen}
@@ -655,28 +683,24 @@ export const SecurityCenterScreen = () => {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   scrollContent: { gap: 10 },
-  heroCopy: { paddingHorizontal: SCREEN_GUTTER, gap: 5, marginBottom: 3 },
+  heroCopy: { gap: 5, marginBottom: 3 },
   loading: { paddingVertical: 80, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  heroCard: { marginHorizontal: SCREEN_GUTTER },
-  heroCardContent: { padding: 18, flexDirection: 'row', alignItems: 'center', gap: 17 },
-  scoreRing: { width: 96, height: 96, borderRadius: 48, borderWidth: 7, alignItems: 'center', justifyContent: 'center' },
-  heroStatus: { flex: 1, alignItems: 'flex-start', gap: 7 },
-  sectionLabel: { marginHorizontal: SCREEN_GUTTER, marginTop: 13 },
-  sectionCard: { marginHorizontal: SCREEN_GUTTER },
-  cardFlat: { marginHorizontal: 0, borderRadius: 0 },
+  heroCardContent: { padding: 18, gap: 16 },
+  heroStatus: { alignItems: 'stretch', gap: 7 },
+  sectionLabel: { marginTop: 13 },
+  rowCardFlat: { borderRadius: 0, ...fullBleed },
   toolContent: { padding: 16, gap: 9 },
   inputActionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   flexInput: { flex: 1 },
   resultBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, borderRadius: 13, padding: 11 },
   toolDivider: { height: StyleSheet.hairlineWidth, marginVertical: 6 },
-  sectionHeaderRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', paddingRight: SCREEN_GUTTER },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
   listContent: { paddingVertical: 3 },
   rowDivider: { height: StyleSheet.hairlineWidth, marginLeft: 58 },
   emptyState: { alignItems: 'center', justifyContent: 'center', padding: 24, gap: 8 },
   emptyProvider: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 18 },
   identityActions: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   filterRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  filterChip: { borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5 },
   findingList: { gap: 10 },
   timelineContent: { padding: 15 },
   timelineRow: { flexDirection: 'row', gap: 10 },
@@ -684,11 +708,12 @@ const styles = StyleSheet.create({
   timelineDot: { width: 8, height: 8, borderRadius: 4, marginTop: 4 },
   timelineLine: { width: 1, flex: 1, marginTop: 3 },
   modalRoot: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)' },
-  sheet: { borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: 34, gap: 15 },
+  backdrop: { ...StyleSheet.absoluteFillObject },
+  sheet: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 },
+  sheetContent: { padding: 20, paddingBottom: 34, gap: 15 },
   sheetHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  sheetClose: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
-  typeChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1 },
   notice: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, borderRadius: 12, padding: 10 },
   consentRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 3 },
 });

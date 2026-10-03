@@ -11,11 +11,7 @@
 import { useDisplayCurrency } from '@/context/DisplayCurrencyContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
-import {
-  COMMON_CURRENCIES,
-  getRateTable,
-  type RateTableResult,
-} from '@/services/currencyRatesService';
+import { COMMON_CURRENCIES, getRateTable, type RateTableResult } from '@/services/currencyRatesService';
 import { formatRelativeTime } from '@/utils/format';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import React, { useEffect, useRef, useState } from 'react';
@@ -35,6 +31,7 @@ import {
 import { Icon, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassCard } from './GlassCard';
+import { ScrimBackdrop } from './ScrimBackdrop';
 
 export interface DisplayCurrencySheetProps {
   visible: boolean;
@@ -85,9 +82,10 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
       }).start();
       getRateTable(base)
         .then(setTable)
-        .catch((error: unknown) =>
-          setTableError(error instanceof Error ? error.message : 'Could not fetch rates.'),
-        );
+        .catch((error: unknown) => {
+          console.warn('[DisplayCurrency] Rate lookup failed:', error);
+          setTableError('Current rates are unavailable. Enter a custom rate or try again later.');
+        });
     }
     wasVisible.current = visible;
   }, [visible, base, group.groupId, getPref, slide]);
@@ -131,7 +129,7 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
   };
 
   const summaryLine = !staged
-    ? `Off — amounts in ${base}`
+    ? `Off. Amounts in ${base}`
     : isCustom
       ? `≈ ${staged} · 1 ${base} = ${parsedRate} (your rate)`
       : liveRate !== undefined
@@ -140,50 +138,55 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
           ? `≈ ${staged} · waiting for a rate`
           : `≈ ${staged} · fetching rate…`;
 
-  const translateY = slide.interpolate({ inputRange: [0, 1], outputRange: [sheetH + 60, 0] });
+  const translateY = slide.interpolate({
+    inputRange: [0, 1],
+    outputRange: [sheetH + 60, 0],
+  });
   const hairline = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)';
   const inputBorder = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)';
 
   return (
     <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={styles.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        pointerEvents="box-none"
-      >
-        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close display currency picker" />
-        <Animated.View
-          onLayout={(e) => setSheetH(e.nativeEvent.layout.height)}
-          style={{ transform: [{ translateY }] }}
-        >
-          <GlassCard role="floating"
+      <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
+        <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close display currency picker">
+          <ScrimBackdrop pointerEvents="none" />
+        </Pressable>
+        <Animated.View onLayout={(e) => setSheetH(e.nativeEvent.layout.height)} style={{ transform: [{ translateY }] }}>
+          <GlassCard
+            role="floating"
             style={styles.sheet}
             contentStyle={[styles.sheetContent, { paddingBottom: insets.bottom + 10 }]}
             intensity={70}
           >
-            <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)' }]} />
+            <View
+              style={[
+                styles.grabber,
+                {
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)',
+                },
+              ]}
+            />
             <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
               View in another currency
             </Text>
             <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
-              Display only — everything stays recorded in {base}. Converted amounts are marked ≈.
+              Display only. Everything stays recorded in {base}. Converted amounts are marked ≈.
             </Text>
 
             <ScrollView
               style={styles.list}
               contentContainerStyle={{ paddingBottom: 4 }}
               keyboardShouldPersistTaps="handled"
+              accessibilityRole="radiogroup"
             >
               {/* Off row: the group's own currency. */}
               <TouchableOpacity
                 onPress={stageOff}
                 activeOpacity={0.7}
-                accessibilityRole="button"
+                accessibilityRole="radio"
                 accessibilityLabel={`Show amounts in ${base}, the group currency`}
-                style={[
-                  styles.row,
-                  { borderBottomColor: hairline },
-                ]}
+                accessibilityState={{ selected: staged === null }}
+                style={[styles.row, { borderBottomColor: hairline }]}
               >
                 <View>
                   <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
@@ -201,15 +204,19 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
                   key={code}
                   onPress={() => stageTarget(code)}
                   activeOpacity={0.7}
-                  accessibilityRole="button"
+                  accessibilityRole="radio"
                   accessibilityLabel={`View amounts in ${code}`}
-                  style={[
-                  styles.row,
-                  { borderBottomColor: hairline },
-                ]}
+                  accessibilityState={{ selected: staged === code }}
+                  style={[styles.row, { borderBottomColor: hairline }]}
                 >
                   <View>
-                    <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                    <Text
+                      variant="bodyLarge"
+                      style={{
+                        color: theme.colors.onSurface,
+                        fontWeight: '600',
+                      }}
+                    >
                       {code}
                     </Text>
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -226,12 +233,7 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
             </ScrollView>
 
             {staged ? (
-              <View
-                style={[
-                  styles.ratePanel,
-                  { borderTopColor: hairline },
-                ]}
-              >
+              <View style={[styles.ratePanel, { borderTopColor: hairline }]}>
                 <View style={styles.rateEditRow}>
                   <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
                     1 {base} =
@@ -243,35 +245,30 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
                     accessibilityLabel="Exchange rate"
                     placeholder="rate"
                     placeholderTextColor={theme.colors.onSurfaceVariant}
-                    style={[styles.rateInput, { borderColor: inputBorder, color: theme.colors.onSurface }]}
+                    style={[
+                      styles.rateInput,
+                      {
+                        borderColor: inputBorder,
+                        color: theme.colors.onSurface,
+                      },
+                    ]}
                   />
                   <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
                     {staged}
                   </Text>
                 </View>
                 <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 6 }}>
-                  {isCustom
-                    ? 'Custom rate — it stays pinned until you change it here.'
-                    : 'ECB reference rate. Edit it to pin your own.'}
+                  {isCustom ? 'Custom rate. It stays pinned until you change it here.' : 'ECB reference rate. Edit it to pin your own.'}
                 </Text>
               </View>
             ) : null}
 
             {/* Docked commit bar: summary left, Cancel + Save right. */}
             <View style={[styles.footer, { borderTopColor: hairline }]}>
-              <Text
-                variant="labelSmall"
-                numberOfLines={2}
-                style={[styles.footerSummary, { color: theme.colors.onSurfaceVariant }]}
-              >
+              <Text variant="labelSmall" numberOfLines={2} style={[styles.footerSummary, { color: theme.colors.onSurfaceVariant }]}>
                 {summaryLine}
               </Text>
-              <TouchableOpacity
-                onPress={onClose}
-                accessibilityRole="button"
-                accessibilityLabel="Cancel"
-                style={styles.cancelBtn}
-              >
+              <TouchableOpacity onPress={onClose} accessibilityRole="button" accessibilityLabel="Cancel" style={styles.cancelBtn}>
                 <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
                   Cancel
                 </Text>
@@ -301,7 +298,6 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.45)', // full-screen scrim — fades with the Modal
   },
   sheet: {
     borderTopLeftRadius: 28,

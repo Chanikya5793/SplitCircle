@@ -65,14 +65,14 @@ const headlineFor = (
   if (peerCount > 0) {
     return {
       title: 'Known phone found',
-      detail: 'Checking the cached conversation trust before connecting.',
+      detail: 'Checking whether this phone belongs to someone in the conversation.',
     };
   }
   return {
     title: 'Looking for known contacts…',
     detail: snapshot.ignoredPeerCount > 0
       ? `${snapshot.ignoredPeerCount} unknown ${snapshot.ignoredPeerCount === 1 ? 'phone was' : 'phones were'} ignored.`
-      : 'Unknown ManaSplit installations cannot connect.',
+      : 'Only phones that belong to people in this conversation can connect.',
   };
 };
 
@@ -321,34 +321,34 @@ export const NearbyDiscoveryArena = ({
           <View style={styles.factRow}>
             <Ionicons name="wifi-outline" size={17} color={theme.colors.onSurfaceVariant} />
             <Text style={[styles.factLabel, { color: theme.colors.onSurfaceVariant }]}>
-              Transport
+              Connection
             </Text>
             <Text style={[styles.factValue, { color: theme.colors.onSurface }]}>
-              Peer-to-peer Wi-Fi
+              Direct Wi-Fi
             </Text>
           </View>
           <View style={styles.factRow}>
             <Ionicons name="shield-checkmark-outline" size={17} color={theme.colors.onSurfaceVariant} />
             <Text style={[styles.factLabel, { color: theme.colors.onSurfaceVariant }]}>
-              Trust
+              Recognition
             </Text>
             <Text style={[styles.factValue, { color: theme.colors.onSurface }]}>
-              Cached identity · each message signed
+              Recognized from this conversation
             </Text>
           </View>
           <View style={styles.factRow}>
             <Ionicons name="lock-closed-outline" size={17} color={theme.colors.onSurfaceVariant} />
             <Text style={[styles.factLabel, { color: theme.colors.onSurfaceVariant }]}>
-              Encryption
+              Privacy
             </Text>
             <Text style={[styles.factValue, { color: theme.colors.onSurface }]}>
-              End-to-end · one copy per device
+              Messages stay private between phones
             </Text>
           </View>
           <View style={styles.factRow}>
             <Ionicons name="pulse-outline" size={17} color={theme.colors.onSurfaceVariant} />
             <Text style={[styles.factLabel, { color: theme.colors.onSurfaceVariant }]}>
-              Link test
+              Connection test
             </Text>
             <Text style={[styles.factValue, { color: theme.colors.onSurface }]}>
               {selectedPeer.isProbing
@@ -368,6 +368,7 @@ export const NearbyDiscoveryArena = ({
             accessibilityLabel={selectedPeer.status === 'connected'
               ? `Test link to ${selectedPeer.label}`
               : 'Scan for nearby phones again'}
+            accessibilityState={{ disabled: selectedPeer.isProbing }}
             style={[
               styles.testButton,
               { backgroundColor: theme.colors.primary },
@@ -557,8 +558,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   testButton: {
-    minHeight: 42,
-    borderRadius: 21,
+    minHeight: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',

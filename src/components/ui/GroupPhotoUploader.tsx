@@ -13,7 +13,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import React, { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { ActivityIndicator, IconButton, TouchableRipple } from 'react-native-paper';
+import { ActivityIndicator, Icon, TouchableRipple } from 'react-native-paper';
 import { GroupAvatar } from './AvatarPhoto';
 
 interface GroupPhotoUploaderProps {
@@ -92,15 +92,16 @@ export const GroupPhotoUploader = ({ group, size = 72, editable = false }: Group
       </TouchableRipple>
 
       {editable && !uploading && (
-        <View style={[styles.editBadge, { backgroundColor: theme.colors.primary }]}>
-          <IconButton
-            icon="camera"
+        <View
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={[styles.editBadge, { backgroundColor: theme.colors.primary }]}
+        >
+          <Icon
+            source="camera"
             size={14}
-            iconColor={theme.colors.onPrimary}
-            onPress={handlePick}
-            accessibilityLabel="Change group photo"
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            style={styles.editIcon}
+            color={theme.colors.onPrimary}
           />
         </View>
       )}
@@ -126,5 +127,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  editIcon: { margin: 0, padding: 0 },
 });

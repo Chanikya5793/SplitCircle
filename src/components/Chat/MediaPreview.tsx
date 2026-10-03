@@ -1,4 +1,4 @@
-import { GlassCard } from '@/components/ui';
+import { GlassCard, ScrimBackdrop } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
 import {
@@ -21,7 +21,9 @@ import {
     Image,
     KeyboardAvoidingView,
     Modal,
+    PanResponder,
     Platform,
+    Pressable,
     StyleSheet,
     TouchableOpacity,
     View,
@@ -197,6 +199,9 @@ const StripThumb = ({ item, quality, fitStatus, active, onPress, onRemove, showR
       <TouchableOpacity
         onPress={onPress}
         activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel={`${isVideo ? 'Video' : isImage ? 'Photo' : item.type === 'audio' ? 'Audio' : 'Document'} thumbnail`}
+        accessibilityState={{ selected: active }}
         style={[
           styles.stripThumb,
           {
@@ -244,8 +249,15 @@ const StripThumb = ({ item, quality, fitStatus, active, onPress, onRemove, showR
         )}
       </TouchableOpacity>
       {showRemove && (
-        <TouchableOpacity style={styles.stripRemove} onPress={onRemove} hitSlop={6}>
-          <Ionicons name="close" size={12} color="#fff" />
+        <TouchableOpacity
+          style={styles.stripRemove}
+          onPress={onRemove}
+          accessibilityRole="button"
+          accessibilityLabel="Remove this item"
+        >
+          <View style={styles.stripRemoveGlyph}>
+            <Ionicons name="close" size={12} color="#fff" />
+          </View>
         </TouchableOpacity>
       )}
     </View>
@@ -627,7 +639,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
       });
     } catch (err) {
       console.error('Trim failed:', err);
-      appAlert("Couldn't trim video", err instanceof Error ? err.message : 'Please try again.');
+      appAlert("Couldn't trim video", 'The original video is unchanged. Try again.');
     }
   }, [media, safeIndex, qualities, triggerTrim]);
 
@@ -643,6 +655,17 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
     if (audioStatus.playing) audioPlayer.pause();
     onClose();
   };
+
+  const dismissPanResponder = PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gesture) =>
+      (gesture.dy > 20 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.4)
+      || (gesture.x0 < 28 && gesture.dx > 18 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.3),
+    onPanResponderRelease: (_, gesture) => {
+      const dismissDown = gesture.dy > 120 || gesture.vy > 1;
+      const dismissBack = gesture.x0 < 28 && (gesture.dx > 90 || gesture.vx > 0.9);
+      if (dismissDown || dismissBack) handleClose();
+    },
+  });
 
   const handleRemoveAt = (idx: number) => {
     setInternalItems((prev) => {
@@ -851,8 +874,14 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
               style={[styles.audioPlayButton, { backgroundColor: theme.colors.primary }]}
               onPress={toggleAudio}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={audioStatus.playing ? 'Pause audio preview' : 'Play audio preview'}
             >
-              <Ionicons name={audioStatus.playing ? 'pause' : 'play'} size={32} color="#fff" />
+              <Ionicons
+                name={audioStatus.playing ? 'pause' : 'play'}
+                size={32}
+                color={theme.colors.onPrimary}
+              />
             </TouchableOpacity>
           </View>
         );
@@ -881,7 +910,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="fade"
       presentationStyle="fullScreen"
       statusBarTranslucent
       onRequestClose={handleClose}
@@ -892,14 +921,25 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
           style={{ flex: 1 }}
         >
           {/* Header */}
-          <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
-            <IconButton icon="close" iconColor="#fff" size={28} onPress={handleClose} />
+          <GlassCard
+            role="floating"
+            radius="xl"
+            style={[styles.headerGlass, { marginTop: insets.top + 10 }]}
+            contentStyle={styles.header}
+          >
+            <IconButton
+              icon="close"
+              iconColor={theme.colors.onSurface}
+              size={28}
+              onPress={handleClose}
+              accessibilityLabel="Close media preview"
+            />
             <View style={styles.headerInfo}>
-              <Text style={styles.headerTitle}>
+              <Text style={[styles.headerTitle, { color: theme.colors.onSurface }]}>
                 {showStrip ? `${safeIndex + 1} / ${internalItems.length}` : headerLabel}
               </Text>
               {(media.type === 'image' || media.type === 'video' || media.type === 'camera') && (
-                <Text style={styles.headerSubtitle}>
+                <Text style={[styles.headerSubtitle, { color: theme.colors.onSurfaceVariant }]}>
                   {media.width && media.height ? `${media.width} × ${media.height}` : ''}
                   {media.duration ? `${media.width && media.height ? ' • ' : ''}${formatDuration(media.duration)}` : ''}
                   {media.fileSize ? `${(media.width && media.height) || media.duration ? ' • ' : ''}${formatFileSize(media.fileSize)}` : ''}
@@ -915,7 +955,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                 behind a control about file size. */}
             {media.type === 'video' && (
               <TouchableOpacity
-                style={[styles.editButton, !!media.assetId && styles.editButtonBusy]}
+                style={[styles.editButton, { backgroundColor: theme.colors.surfaceVariant }, !!media.assetId && styles.editButtonBusy]}
                 onPress={() => void handleTrimActiveVideo()}
                 disabled={!!media.assetId}
                 activeOpacity={0.7}
@@ -927,14 +967,14 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                 <Ionicons
                   name={media.assetId ? 'hourglass-outline' : 'cut-outline'}
                   size={19}
-                  color="#fff"
+                  color={theme.colors.onSurface}
                 />
               </TouchableOpacity>
             )}
 
             {isEditableImage && (
               <TouchableOpacity
-                style={styles.editButton}
+                style={[styles.editButton, { backgroundColor: theme.colors.surfaceVariant }]}
                 onPress={openEditor}
                 disabled={materializing || materializeProgress !== null}
                 activeOpacity={0.7}
@@ -942,9 +982,9 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                 accessibilityLabel="Edit this photo"
               >
                 {materializing ? (
-                  <ActivityIndicator animating size="small" color="#fff" />
+                  <ActivityIndicator animating size="small" color={theme.colors.onSurface} />
                 ) : (
-                  <Ionicons name="create-outline" size={20} color="#fff" />
+                  <Ionicons name="create-outline" size={20} color={theme.colors.onSurface} />
                 )}
               </TouchableOpacity>
             )}
@@ -954,7 +994,10 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                 <TouchableOpacity
                   style={[
                     styles.qualityButton,
-                    activeQuality !== 'SD' && styles.qualityButtonActive,
+                    {
+                      backgroundColor: activeQuality !== 'SD' ? theme.colors.primary : theme.colors.surfaceVariant,
+                      borderColor: activeQuality !== 'SD' ? theme.colors.primary : theme.colors.outline,
+                    },
                     isPreviewLoading && styles.qualityButtonDisabled,
                   ]}
                   onPress={isPreviewLoading ? undefined : () => setQualityMenuOpen(true)}
@@ -962,7 +1005,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                   accessibilityRole="button"
                   accessibilityLabel={`Quality: ${activeQuality}. Tap to change.`}
                 >
-                  <Text style={[styles.qualityText, activeQuality !== 'SD' && styles.qualityTextActive]}>
+                  <Text style={[styles.qualityText, { color: activeQuality !== 'SD' ? theme.colors.onPrimary : theme.colors.onSurfaceVariant }]}>
                     {QUALITY_LABEL[activeQuality]}
                   </Text>
                 </TouchableOpacity>
@@ -970,10 +1013,10 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
             )}
 
             <View style={{ width: showQualityControl ? 0 : 48 }} />
-          </View>
+          </GlassCard>
 
           {/* Media Content */}
-          <View style={styles.mediaContainer}>
+          <View style={styles.mediaContainer} {...dismissPanResponder.panHandlers}>
             {renderMediaContent()}
             {isPreviewLoading ? (
               <View style={styles.previewLoadingOverlay}>
@@ -990,7 +1033,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
 
           {/* Thumbnail strip — only when multiple items are pending */}
           {showStrip && (
-            <View style={styles.stripWrap}>
+            <GlassCard role="floating" radius="lg" style={styles.stripGlass} contentStyle={styles.stripWrap}>
               <FlatList
                 ref={stripRef}
                 data={internalItems}
@@ -1022,7 +1065,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                   />
                 )}
               />
-            </View>
+            </GlassCard>
           )}
 
           {/* Preflight banner — appears only when at least one item won't
@@ -1054,19 +1097,24 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
           })()}
 
           {/* Caption Input & Send */}
-          <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>
+          <GlassCard
+            role="floating"
+            radius="xl"
+            style={[styles.footerGlass, { marginBottom: insets.bottom + 8 }]}
+            contentStyle={styles.footer}
+          >
             {showCaptionInput && (
               <TextInput
                 mode="flat"
                 placeholder={showStrip ? `Caption for ${safeIndex + 1} / ${internalItems.length}…` : 'Add a caption...'}
-                placeholderTextColor="rgba(255,255,255,0.5)"
+                placeholderTextColor={theme.colors.onSurfaceVariant}
                 value={activeCaption}
                 onChangeText={updateActiveCaption}
                 style={styles.captionInput}
                 contentStyle={styles.captionInputContent}
                 underlineColor="transparent"
                 activeUnderlineColor="transparent"
-                textColor="#fff"
+                textColor={theme.colors.onSurface}
                 maxLength={500}
                 multiline
                 numberOfLines={2}
@@ -1087,7 +1135,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                 disabled: isPreviewLoading || !allItemsFit,
                 busy: isPreviewLoading,
               }}
-              accessibilityLabel={!allItemsFit ? 'Send blocked — resolve oversize item' : 'Send'}
+              accessibilityLabel={!allItemsFit ? 'Send blocked. Resolve the oversized item' : 'Send'}
             >
               {isPreviewLoading ? (
                 <ActivityIndicator animating size="small" color="#fff" />
@@ -1100,7 +1148,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                 </View>
               )}
             </TouchableOpacity>
-          </View>
+          </GlassCard>
         </KeyboardAvoidingView>
 
         {/* Quality picker — WhatsApp-style sheet, but per-item. Tapping a
@@ -1109,12 +1157,15 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
             Photos: HD = 1920px, SD = 1280px. Videos: HD ≈ 720p, SD ≈ 480p.
             Already-tiny media is sent unchanged regardless. */}
         {qualityMenuOpen && media && (
-          <TouchableOpacity
-            activeOpacity={1}
-            style={styles.qualitySheetBackdrop}
-            onPress={() => setQualityMenuOpen(false)}
-          >
-            <TouchableOpacity activeOpacity={1} style={styles.qualitySheetTouchWrap}>
+          <View style={styles.qualitySheetBackdrop}>
+            <ScrimBackdrop pointerEvents="none" />
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => setQualityMenuOpen(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Close quality picker"
+            />
+            <View style={styles.qualitySheetTouchWrap} accessibilityViewIsModal>
               <GlassCard role="floating" style={styles.qualitySheetGlass} contentStyle={styles.qualitySheetContent}>
               <Text style={[styles.qualitySheetTitle, { color: theme.colors.onSurface }]}>
                 {internalItems.length > 1
@@ -1154,6 +1205,9 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                       });
                       setQualityMenuOpen(false);
                     }}
+                    accessibilityRole="radio"
+                    accessibilityLabel={`${opt === 'HD' ? 'HD quality' : opt === 'SD' ? 'Standard quality' : 'Original quality'}, ${resolutionLabel}`}
+                    accessibilityState={{ selected: isActive, disabled: !willFit }}
                   >
                     <View style={styles.qualitySheetRowText}>
                       <Text style={[styles.qualitySheetRowLabel, { color: theme.colors.onSurface }]}>
@@ -1161,7 +1215,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                           ? 'HD quality'
                           : opt === 'SD'
                             ? 'Standard quality'
-                            : 'Original — no compression'}
+                            : 'Original, no compression'}
                       </Text>
                       <Text style={[styles.qualitySheetRowDescription, { color: theme.colors.onSurfaceVariant }]}>
                         {resolutionLabel}
@@ -1190,6 +1244,8 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                     setQualities(internalItems.map(() => activeQuality));
                     setQualityMenuOpen(false);
                   }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Apply ${activeQuality} quality to all ${internalItems.length} items`}
                 >
                   <Ionicons name="copy-outline" size={16} color={theme.colors.primary} />
                   <Text style={[styles.qualitySheetApplyAllText, { color: theme.colors.primary }]}>
@@ -1198,8 +1254,8 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                 </TouchableOpacity>
               )}
               </GlassCard>
-            </TouchableOpacity>
-          </TouchableOpacity>
+            </View>
+          </View>
         )}
 
         {/* Mounted only while open so the Skia image is decoded on demand and
@@ -1225,20 +1281,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    paddingBottom: 10,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    minHeight: 56,
+    paddingVertical: 4,
+  },
+  headerGlass: {
+    marginHorizontal: 10,
+    marginBottom: 8,
   },
   headerInfo: {
     flex: 1,
     alignItems: 'center',
   },
   headerTitle: {
-    color: '#fff',
     fontSize: 18,
     fontWeight: '600',
   },
   headerSubtitle: {
-    color: 'rgba(255,255,255,0.7)',
     fontSize: 12,
     marginTop: 2,
   },
@@ -1364,15 +1422,19 @@ const styles = StyleSheet.create({
   stripWrap: {
     paddingTop: 10,
     paddingBottom: 4,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  stripGlass: {
+    marginHorizontal: 10,
+    marginBottom: 6,
   },
   stripContent: {
     paddingHorizontal: 12,
     gap: STRIP_THUMB_GAP,
   },
   stripCell: {
-    paddingTop: 8,
-    paddingRight: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
   },
   stripThumb: {
     width: STRIP_THUMB_SIZE,
@@ -1457,12 +1519,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   stripRemove: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stripRemoveGlyph: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: 'rgba(0,0,0,0.85)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1475,12 +1540,15 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: 16,
     paddingTop: 10,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingBottom: 10,
     gap: 12,
+  },
+  footerGlass: {
+    marginHorizontal: 10,
+    marginTop: 4,
   },
   captionInput: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.15)',
     borderRadius: 24,
     maxHeight: 100,
   },
@@ -1540,33 +1608,23 @@ const styles = StyleSheet.create({
   videoPosterNoteText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   editButtonBusy: { opacity: 0.45 },
   editButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.16)',
     marginRight: 8,
   },
   qualityButton: {
+    minHeight: 44,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.2)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
-  },
-  qualityButtonActive: {
-    backgroundColor: 'rgba(255,255,255,0.9)',
-    borderColor: '#fff',
   },
   qualityText: {
-    color: '#fff',
     fontSize: 12,
     fontWeight: 'bold',
-  },
-  qualityTextActive: {
-    color: '#000',
   },
   qualityButtonDisabled: {
     opacity: 0.5,
@@ -1577,10 +1635,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
-  qualitySheetTouchWrap: {},
+  qualitySheetTouchWrap: { width: '100%' },
   qualitySheetGlass: {
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,

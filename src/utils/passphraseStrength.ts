@@ -55,8 +55,19 @@ const hasObviousPattern = (value: string): boolean => {
 };
 
 const COMMON_WORDS = [
-  'password', 'passphrase', 'splitcircle', 'manasplit', 'letmein', 'welcome',
-  'iloveyou', 'admin', 'qwerty', 'monkey', 'dragon', 'football', 'baseball',
+  'password',
+  'passphrase',
+  'splitcircle',
+  'manasplit',
+  'letmein',
+  'welcome',
+  'iloveyou',
+  'admin',
+  'qwerty',
+  'monkey',
+  'dragon',
+  'football',
+  'baseball',
 ];
 
 /**
@@ -86,13 +97,10 @@ export const assessPassphrase = (passphrase: string): PassphraseAssessment => {
   const effectiveLength = period < passphrase.length ? period : passphrase.length;
   let entropyBits =
     charset > 0
-      ? Math.round(
-          effectiveLength * Math.log2(charset) +
-            (period < passphrase.length ? Math.log2(passphrase.length / period) : 0),
-        )
+      ? Math.round(effectiveLength * Math.log2(charset) + (period < passphrase.length ? Math.log2(passphrase.length / period) : 0))
       : 0;
   if (period < passphrase.length) {
-    issues.push('Repeating a short word doesn’t make it stronger — use unrelated words instead.');
+    issues.push('Repeating a short word doesn’t make it stronger. Use unrelated words instead.');
   }
 
   const lower = passphrase.toLowerCase();
@@ -116,7 +124,7 @@ export const assessPassphrase = (passphrase: string): PassphraseAssessment => {
     // hint. Multi-word passphrases keep passing because a space (or any
     // punctuation) widens the charset past this branch.
     entropyBits = Math.round(entropyBits * 0.6);
-    issues.push('Mix in capitals, numbers, or symbols — or use several unrelated words.');
+    issues.push('Mix in capitals, numbers, or symbols. Or use several unrelated words.');
   }
 
   const meetsMinimum = passphrase.length >= MIN_LENGTH && entropyBits >= MIN_ENTROPY_BITS;

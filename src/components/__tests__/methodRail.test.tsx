@@ -1,0 +1,21 @@
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+vi.mock('@/context/ThemeContext', () => ({ useTheme: () => ({ theme: { reduceMotion: true, colors: { primary: '#125bcc', onPrimary: '#fff', onSurface: '#111', onSurfaceVariant: '#555', muted: '#555', outline: '#777', pressed: '#eee' }, spacing: { md: 16, sm: 8 }, typography: { caption: { fontSize: 13, lineHeight: 18 }, body: { fontSize: 15 } } } }) }));
+vi.mock('@/utils/haptics', () => ({ mediumHaptic: vi.fn() }));
+vi.mock('react-native-paper', async () => { const { Text } = await import('react-native'); return { Text, Icon: () => null }; });
+import { MethodRail } from '../BillSplit/MethodRail';
+afterEach(cleanup);
+it('preserves all eleven method identities and selected state', () => {
+  const basic = vi.fn(); const advanced = vi.fn();
+  const view = render(<MethodRail activeMethod="equal" onSelectBasic={basic} onSelectAdvanced={advanced} />);
+  const buttons = screen.getAllByRole('button');
+  expect(buttons).toHaveLength(11);
+  buttons.forEach((button) => fireEvent.click(button));
+  expect(basic.mock.calls.map(call => call[0])).toEqual(['exact', 'percentage', 'shares', 'adjustment']);
+  expect(advanced.mock.calls.map(call => call[0])).toEqual(['itemized', 'income', 'consumption', 'timeBased', 'gamified', 'itemType']);
+  view.rerender(<MethodRail activeMethod="timeBased" onSelectBasic={basic} onSelectAdvanced={advanced} />);
+  expect(screen.getByText('Choose the billing period and the days each person stayed.')).toBeTruthy();
+  advanced.mockClear();
+  fireEvent.click(screen.getAllByRole('button')[8]);
+  expect(advanced).not.toHaveBeenCalled();
+});

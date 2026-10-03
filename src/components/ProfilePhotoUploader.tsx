@@ -13,7 +13,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import React, { useState } from 'react';
 import { Image, StyleSheet, View } from 'react-native';
-import { ActivityIndicator, Avatar, IconButton, TouchableRipple } from 'react-native-paper';
+import { ActivityIndicator, Avatar, Icon, TouchableRipple } from 'react-native-paper';
 
 interface ProfilePhotoUploaderProps {
   size?: number;
@@ -128,16 +128,13 @@ export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhot
       </TouchableRipple>
 
       {editable && !uploading && (
-        <View style={[styles.editBadge, { backgroundColor: theme.colors.primary }]}>
-          <IconButton
-            icon="camera"
-            size={16}
-            iconColor={theme.colors.onPrimary}
-            onPress={handlePickImage}
-            accessibilityLabel="Change profile photo"
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            style={styles.editIcon}
-          />
+        <View
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={[styles.editBadge, { backgroundColor: theme.colors.primary }]}
+        >
+          <Icon source="camera" size={16} color={theme.colors.onPrimary} />
         </View>
       )}
     </View>
@@ -171,9 +168,5 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  editIcon: {
-    margin: 0,
-    padding: 0,
   },
 });

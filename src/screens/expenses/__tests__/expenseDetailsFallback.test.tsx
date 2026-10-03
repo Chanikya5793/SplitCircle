@@ -62,6 +62,7 @@ vi.mock('@/components/ui', () => ({
   ),
   GuardedScreen: ({ children }: any) => <div>{children}</div>,
   GlassCard: ({ children }: any) => <div>{children}</div>,
+  ScrimBackdrop: () => <div data-testid="scrim" />,
   Divider: () => <div />,
 }));
 

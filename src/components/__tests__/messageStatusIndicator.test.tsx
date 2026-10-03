@@ -74,3 +74,13 @@ describe('message status marks', () => {
     expect(labelsFor({ status: 'delivered', deliveredCount: 2, readCount: 1 })).toEqual(['Read']);
   });
 });
+
+it('solid bubbles keep read and failure meanings visible without relying on color', () => {
+  const view = render(<MessageStatusIndicator status="read" foregroundColor="#102030" />);
+  expect(view.getByText('Read')).toBeTruthy();
+  view.rerender(<MessageStatusIndicator status="failed" foregroundColor="#102030" readCount={3} />);
+  expect(view.getByText('Not sent')).toBeTruthy();
+  expect(view.queryByText('Read')).toBeNull();
+  view.rerender(<MessageStatusIndicator status="undecryptable" foregroundColor="#102030" />);
+  expect(view.getByText('Cannot open')).toBeTruthy();
+});

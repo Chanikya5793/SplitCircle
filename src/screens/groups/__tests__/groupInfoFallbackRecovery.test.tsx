@@ -52,6 +52,11 @@ vi.mock('@/services/wallpaperService', () => ({
   getWallpaperSync: () => null,
 }));
 
+vi.mock('@/services/safetyService', () => ({
+  subscribeToBlockedUserIds: () => () => {},
+  setUserBlocked: vi.fn(),
+}));
+
 vi.mock('expo-constants', () => ({
   default: { expoConfig: { name: 'SplitCircle', version: '1.0.0' } },
 }));
@@ -120,6 +125,7 @@ vi.mock('react-native-paper', () => {
     ),
     Divider: () => <hr />,
     IconButton: () => <button type="button" />,
+    Icon: () => <span />,
     List: { Item: ListItem, Icon: () => <span /> },
     Avatar: { Text: ({ label }: any) => <span>{label}</span> },
     TextInput: () => <input />,

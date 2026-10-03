@@ -8,6 +8,7 @@ import { needsDisplayName } from '@/utils/identity';
 import { setLockedChatIds } from '@/utils/lockedChatRegistry';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Google from 'expo-auth-session/providers/google';
+import { exchangeCodeAsync } from 'expo-auth-session';
 import Constants from 'expo-constants';
 import * as Crypto from 'expo-crypto';
 import * as WebBrowser from 'expo-web-browser';
@@ -46,9 +47,9 @@ type LegacyManifestExtra = {
 interface AuthContextValue {
   user: UserProfile | null;
   loading: boolean;
-  // True while a Google credential exchange is in flight after promptAsync()
-  // has already returned — see the state declaration below for why screens
-  // need this in addition to their own per-button loading flags.
+  /** True only after Firebase Auth has restored this profile's live session. */
+  sessionAuthenticated: boolean;
+  // True for the entire Google browser, token exchange, and Firebase sign-in.
   authBusy: boolean;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   registerWithEmail: (displayName: string, email: string, password: string) => Promise<void>;
@@ -145,14 +146,9 @@ const sanitizeForFirestore = <T extends Record<string, any>>(obj: T): T => {
 export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  // True while a Google credential exchange is in flight. signInWithGoogle()
-  // only awaits promptAsync() — the actual signInWithCredential happens in a
-  // separate, fire-and-forget effect below — so a caller's own loading flag
-  // (e.g. SignInScreen's googleLoading) clears before that exchange finishes,
-  // leaving a window where a DIFFERENT sign-in method (Apple, email) can fire
-  // concurrently against the same `auth` instance. Screens gate every sign-in
-  // trigger on this too, not just their own provider's loading flag.
+  const [authenticatedUserId, setAuthenticatedUserId] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
+  const googleSignInInFlight = useRef(false);
   // Set right after signInWithApple() completes its own credential exchange.
   // Apple's getCredentialStateAsync has been observed returning REVOKED
   // (state 0) for a session that's seconds old — a false positive that
@@ -170,7 +166,15 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const legacyExtra = (Constants as unknown as { manifest?: { extra?: LegacyManifestExtra } }).manifest?.extra;
   const googleConfig = Constants.expoConfig?.extra?.google ?? legacyExtra?.google ?? {};
 
-  const [request, response, promptAsync] = Google.useAuthRequest({
+  const iosClientId = googleConfig.iosClientId ?? process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '';
+  // Google expects its iOS client's reversed ID as the callback scheme. The
+  // generic bundle-ID callback used by expo-auth-session can be rejected even
+  // when the browser successfully shows the account chooser.
+  const iosRedirectScheme = iosClientId.endsWith('.apps.googleusercontent.com')
+    ? `com.googleusercontent.apps.${iosClientId.slice(0, -'.apps.googleusercontent.com'.length)}`
+    : null;
+
+  const [request, , promptAsync] = Google.useAuthRequest({
     webClientId: googleConfig.webClientId
       ?? process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
       ?? '',
@@ -179,7 +183,14 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       ?? process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID
       ?? '',
     androidClientId: googleConfig.androidClientId ?? process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '',
-    iosClientId: googleConfig.iosClientId ?? process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '',
+    iosClientId,
+    ...(Platform.OS === 'ios' && iosRedirectScheme
+      ? { redirectUri: `${iosRedirectScheme}:/oauthredirect` }
+      : {}),
+    // The provider hook exchanges codes in a separate effect and drops
+    // exchange failures. We exchange the returned code in the button's own
+    // promise so its loading state and errors cover the entire operation.
+    shouldAutoExchangeCode: false,
   });
 
   useEffect(() => {
@@ -213,6 +224,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
     const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
       resolvedFromAuth = true;
+      setAuthenticatedUserId(firebaseUser?.uid ?? null);
       if (unsubscribeSnapshot) {
         unsubscribeSnapshot();
         unsubscribeSnapshot = undefined;
@@ -240,7 +252,11 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       // cache on RN), so without this the app would hang on the splash forever
       // and never reach the signed-in UI when offline.
       setUser((prev) => {
-        const profile = buildUserProfile(firebaseUser, prev ?? undefined);
+        // A cached or just-signed-out profile can belong to a different UID.
+        // Never carry account-scoped groups, archives, photos, or preferences
+        // across that boundary while waiting for the new Firestore snapshot.
+        const existing = prev?.userId === firebaseUser.uid ? prev : undefined;
+        const profile = buildUserProfile(firebaseUser, existing);
         void persistProfile(profile);
         return profile;
       });
@@ -251,12 +267,18 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
       unsubscribeSnapshot = onSnapshot(docRef, async (docSnap) => {
         if (docSnap.exists()) {
-          hasSeenProfileDoc = true;
+          // An optimistic local profile write can appear before Firestore has
+          // accepted it. Only a server-confirmed document is evidence that a
+          // later missing document means account deletion. Otherwise a failed
+          // first-sign-in write could wrongly sign the user straight back out.
+          if (!docSnap.metadata.fromCache && !docSnap.metadata.hasPendingWrites) {
+            hasSeenProfileDoc = true;
+          }
           const payload = buildUserProfile(firebaseUser, docSnap.data() as UserProfile);
           setUser(payload);
           setLoading(false);
           void persistProfile(payload);
-        } else if (docSnap.metadata.fromCache) {
+        } else if (docSnap.metadata.fromCache || docSnap.metadata.hasPendingWrites) {
           // Native Firestore uses a memory-only cache in this app. Its first
           // offline event is therefore a synthetic "missing from cache", not
           // proof that the server profile is missing. Do not start a profile
@@ -350,50 +372,37 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   // until the process is killed and relaunched.
   useEffect(() => {
     if (Platform.OS !== 'ios' || !user) return;
-    const checkAppleRevocation = () => {
+    const checkAppleRevocation = async () => {
       const signedInAt = signedInWithAppleAtRef.current;
       if (signedInAt !== null && Date.now() - signedInAt < APPLE_REVOCATION_GRACE_MS) {
         return;
       }
-      const appleLink = auth.currentUser?.providerData.find((p) => p.providerId === 'apple.com');
+      const firebaseUser = auth.currentUser;
+      if (!firebaseUser || firebaseUser.uid !== user.userId) return;
+      const appleLink = firebaseUser.providerData.find((p) => p.providerId === 'apple.com');
       if (!appleLink) return;
-      AppleAuthentication.getCredentialStateAsync(appleLink.uid)
-        .then((state) => {
-          if (state === AppleAuthentication.AppleAuthenticationCredentialState.REVOKED) {
-            void signOutUser();
-          }
-        })
-        .catch(() => undefined);
+      try {
+        // A Firebase account can link both providers. Revoking its Apple
+        // credential must not eject a session authenticated with Google.
+        const token = await firebaseUser.getIdTokenResult();
+        if (token.signInProvider !== 'apple.com') return;
+        const state = await AppleAuthentication.getCredentialStateAsync(appleLink.uid);
+        if (
+          state === AppleAuthentication.AppleAuthenticationCredentialState.REVOKED &&
+          auth.currentUser?.uid === firebaseUser.uid
+        ) {
+          await signOutUser();
+        }
+      } catch (error) {
+        console.warn('Unable to check Apple credential state:', error);
+      }
     };
-    checkAppleRevocation();
+    void checkAppleRevocation();
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') checkAppleRevocation();
+      if (state === 'active') void checkAppleRevocation();
     });
     return () => sub.remove();
   }, [user?.userId]);
-
-  useEffect(() => {
-    const handleGoogleResponse = async () => {
-      if (response?.type !== 'success' || !response.authentication?.idToken) {
-        if (response?.type === 'error') {
-          console.error('Google Auth Error:', response.error);
-        }
-        return;
-      }
-      setAuthBusy(true);
-      try {
-        debugLog('Signing in with Google credential');
-        const credential = GoogleAuthProvider.credential(response.authentication.idToken);
-        await signInWithCredential(auth, credential);
-        debugLog('Google Sign-In successful');
-      } catch (error) {
-        console.error('Firebase Google Sign-In failed:', error);
-      } finally {
-        setAuthBusy(false);
-      }
-    };
-    handleGoogleResponse();
-  }, [response]);
 
   const signInWithEmail = async (email: string, password: string) => {
     try {
@@ -442,9 +451,57 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
   const signInWithGoogle = async () => {
     if (!request) {
-      throw new Error('Google auth is not configured. Add EXPO_PUBLIC_GOOGLE_* env vars.');
+      throw Object.assign(new Error('Google sign-in is still preparing.'), { code: 'auth/google-not-ready' });
     }
-    await promptAsync();
+    if (Platform.OS === 'ios' && !iosRedirectScheme) {
+      throw Object.assign(new Error('Invalid iOS Google client ID.'), { code: 'auth/google-configuration' });
+    }
+    if (googleSignInInFlight.current) return;
+    googleSignInInFlight.current = true;
+    setAuthBusy(true);
+    let stage: 'browser' | 'token' | 'firebase' = 'browser';
+    try {
+      const result = await promptAsync();
+      if (result.type === 'cancel' || result.type === 'dismiss') return;
+      if (result.type !== 'success') {
+        throw Object.assign(new Error(result.type === 'error' ? result.error?.message : 'Google sign-in did not finish.'), {
+          code: 'auth/google-provider-error',
+        });
+      }
+
+      let idToken = result.authentication?.idToken ?? result.params.id_token;
+      let accessToken = result.authentication?.accessToken ?? result.params.access_token;
+      if (result.params.code) {
+        stage = 'token';
+        if (!request.codeVerifier) {
+          throw Object.assign(new Error('Missing PKCE verifier.'), { code: 'auth/google-configuration' });
+        }
+        const exchange = await exchangeCodeAsync({
+          clientId: request.clientId,
+          code: result.params.code,
+          redirectUri: request.redirectUri,
+          extraParams: { code_verifier: request.codeVerifier },
+        }, Google.discovery);
+        idToken = exchange.idToken;
+        accessToken = exchange.accessToken;
+      }
+      if (!idToken && !accessToken) {
+        throw Object.assign(new Error('Google returned no usable token.'), { code: 'auth/google-token-missing' });
+      }
+      stage = 'firebase';
+      await signInWithCredential(auth, GoogleAuthProvider.credential(idToken ?? null, accessToken ?? null));
+    } catch (error) {
+      // Codes and stage are enough to diagnose Release failures; never log
+      // OAuth responses, credentials, or the user's email address.
+      console.error('[auth] Google sign-in failed', {
+        stage,
+        code: (error as { code?: string })?.code ?? 'unknown',
+      });
+      throw error;
+    } finally {
+      googleSignInInFlight.current = false;
+      setAuthBusy(false);
+    }
   };
 
   const signInWithApple = async () => {
@@ -564,6 +621,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     () => ({
       user,
       loading,
+      sessionAuthenticated: Boolean(user?.userId && authenticatedUserId === user.userId),
       authBusy,
       signInWithEmail,
       registerWithEmail,
@@ -575,7 +633,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       appleNameCaptureIncomplete,
       acknowledgeAppleNameCaptureIncomplete,
     }),
-    [loading, user, authBusy, appleNameCaptureIncomplete],
+    [authenticatedUserId, loading, user, authBusy, appleNameCaptureIncomplete, request, promptAsync, iosRedirectScheme],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

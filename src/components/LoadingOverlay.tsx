@@ -1,5 +1,5 @@
 import { MugguLoader } from '@/components/brand';
-import { GlassCard } from '@/components/ui';
+import { GlassCard, ScrimBackdrop } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { Modal, StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -14,7 +14,8 @@ export const LoadingOverlay = ({ visible, message = 'Loading…' }: LoadingOverl
 
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent>
-      <View style={[styles.backdrop, { backgroundColor: theme.colors.overlay }]}>
+      <View style={styles.backdrop} accessibilityViewIsModal>
+        <ScrimBackdrop pointerEvents="none" />
         <GlassCard role="floating" style={styles.container} contentStyle={styles.content}>
           <MugguLoader
             size={48}

@@ -56,6 +56,9 @@ const google: GoogleEnv = {
   iosClientId: readEnv(['EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID'])!,
   androidClientId: readEnv(['EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID'])!,
 };
+const iosGoogleRedirectScheme = google.iosClientId.endsWith('.apps.googleusercontent.com')
+  ? `com.googleusercontent.apps.${google.iosClientId.slice(0, -'.apps.googleusercontent.com'.length)}`
+  : undefined;
 
 const googleMapsApiKey = readEnv(['EXPO_PUBLIC_GOOGLE_MAPS_API_KEY'], { optional: true });
 const iosPushNotificationsEnabled = true;
@@ -63,13 +66,13 @@ const iosPushNotificationsEnabled = true;
 const config = {
   name: 'ManaSplit',
   slug: 'SplitCircle',
-  version: '0.0.5',
+  version: '1.0.1',
   owner: 'chanikya6163',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
   newArchEnabled: true,
-  scheme: 'splitcircle',
+  scheme: iosGoogleRedirectScheme ? ['splitcircle', iosGoogleRedirectScheme] : 'splitcircle',
   splash: {
     image: './assets/splash-icon.png',
     resizeMode: 'contain',
@@ -100,9 +103,13 @@ const config = {
       CFBundleDisplayName: 'ManaSplit',
       CFBundleName: 'ManaSplit',
       ITSAppUsesNonExemptEncryption: false,
-      NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
-      NSFaceIDUsageDescription: 'Unlock ManaSplit and its hidden privacy settings with Face ID.',
-      NSLocalNetworkUsageDescription: 'ManaSplit uses your local network to pair with trusted nearby contacts and exchange messages when the internet is unavailable.',
+      NSPhotoLibraryUsageDescription: 'ManaSplit uses your photo library so you can choose photos and videos to send in chats, attach receipt photos to expenses, or set profile, group, and chat wallpaper images. For example, choose a dinner receipt to add to a shared expense.',
+      NSCameraUsageDescription: 'ManaSplit uses your camera for video calls, taking photos to send in chats, and scanning receipts. For example, photograph a dinner receipt to add it to a shared expense.',
+      NSMicrophoneUsageDescription: 'ManaSplit uses your microphone for voice and video calls and voice messages. For example, record a voice message to send in a group chat.',
+      NSLocationWhenInUseUsageDescription: 'ManaSplit uses your location while you choose a place to share in a chat. For example, select your current location and send its map pin to a group.',
+      NSFaceIDUsageDescription: 'ManaSplit uses Face ID to unlock protected chats and privacy settings. For example, confirm it is you before opening a locked chat.',
+      NSLocalNetworkUsageDescription: 'ManaSplit uses your local network to find trusted nearby contacts and exchange messages when the internet is unavailable. For example, send a message to a paired device on the same Wi-Fi network.',
+      NSBluetoothAlwaysUsageDescription: 'ManaSplit uses Bluetooth to connect with trusted nearby devices for offline messaging. For example, exchange a message with a paired phone when the internet is unavailable.',
       NSBonjourServices: ['_manasplit-mesh._tcp'],
       // Donated by the splitcircle-ai native module after an AI ask, so iOS can
       // surface "Ask SplitCircle" in Spotlight / Siri Suggestions.
@@ -132,6 +139,7 @@ const config = {
       'FOREGROUND_SERVICE_MEDIA_PLAYBACK',
       'FOREGROUND_SERVICE_MICROPHONE',
       'FOREGROUND_SERVICE_CAMERA',
+      'com.android.vending.BILLING',
       'ACCESS_COARSE_LOCATION',
       'ACCESS_FINE_LOCATION',
       'com.google.android.c2dm.permission.RECEIVE',
@@ -163,6 +171,7 @@ const config = {
     'expo-secure-store',
     'expo-web-browser',
     'expo-sqlite',
+    'expo-iap',
     [
       'expo-notifications',
       {
@@ -176,7 +185,7 @@ const config = {
     [
       'expo-location',
       {
-        locationWhenInUsePermission: 'Allow ManaSplit to use your location to share it with your friends.',
+        locationWhenInUsePermission: 'ManaSplit uses your location while you choose a place to share in a chat. For example, select your current location and send its map pin to a group.',
         isAndroidBackgroundLocationEnabled: false,
         isAndroidForegroundServiceEnabled: false,
         isIosBackgroundLocationEnabled: false,

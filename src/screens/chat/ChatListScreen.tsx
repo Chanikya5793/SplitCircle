@@ -1,3 +1,5 @@
+import { EmptyState, OfflineState } from '@/components/ui/EmptyState';
+import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ChatListSkeleton } from '@/components/SkeletonLoader';
 import { ChatThreadRow } from '@/components/ChatThreadRow';
@@ -36,6 +38,7 @@ interface ChatListScreenProps {
 
 export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const navigation = useNavigation<any>();
+  const { isOnline } = useOfflineSync();
   const { threads, loading } = useChat();
   const { user } = useAuth();
   const { groups } = useGroups();
@@ -226,9 +229,11 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                 <ChatListSkeleton />
               </View>
             ) : vanishAllChats || otherBucketCount > 0 ? null : (
-              <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
-                No chats yet.
-              </Text>
+              !isOnline ? <OfflineState subject="chats" /> : (
+                <EmptyState icon="chat-outline" title="Start a conversation"
+                  hint="Open a friend or group to start chatting. Your conversations will appear here."
+                  actionLabel="Open friends" onAction={() => navigation.navigate(ROUTES.APP.FRIENDS, { backTitle: 'Chats' })} />
+              )
             )
           }
           // The gutter STAYS in both modes — the flat rows cancel it themselves

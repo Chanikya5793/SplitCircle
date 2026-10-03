@@ -72,44 +72,9 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid in request.resource.data.participantIds;
     }
 
-    // Members may refresh the denormalized displayName/photoURL copies inside
-    // `members` / `archivedMembers` (profile-photo propagation). Membership
-    // itself is immutable here: memberIds and both array sizes must not change.
-    function isGroupProfileSync(groupId) {
-      return isGroupMemberById(groupId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'members',
-          'archivedMembers',
-          'updatedAt',
-        ])
-        && request.resource.data.memberIds == resource.data.memberIds
-        && request.resource.data.members.size() == resource.data.members.size();
-    }
-
-    function isGroupJoinUpdate() {
-      return isSignedIn()
-        && !(request.auth.uid in resource.data.memberIds)
-        && request.auth.uid in request.resource.data.memberIds
-        && request.resource.data.memberIds.hasAll(resource.data.memberIds)
-        && request.resource.data.memberIds.size() == resource.data.memberIds.size() + 1
-        && request.resource.data.members.size() == resource.data.members.size() + 1
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'memberIds',
-          'members',
-          // joinGroup (GroupContext.tsx) always writes archivedMembers too, purging
-          // the joiner's own stale archived entry so rejoining after a prior leave/
-          // removal doesn't leave a duplicate identity record.
-          'archivedMembers',
-          'updatedAt',
-        ]);
-    }
-
-    // Mirror of isGroupJoinUpdate: a current member departs (self-leave via
-    // leaveGroup, or an admin-initiated removeMember) — memberIds/members
-    // shrink by exactly one, the departed member moves into archivedMembers.
-    // Doesn't re-verify WHO can be removed (owner-block, admin-only removal);
-    // that role logic stays enforced client-side in GroupContext.tsx, same
-    // trust model isGroupMutableUpdate already uses for expenses/settlements.
+    // A current member may remove only their own membership directly.
+    // Owner and admin membership changes are server-authorized by the
+    // mutateGroupMember callable.
     function isGroupDepartureUpdate(groupId) {
       return isGroupMemberById(groupId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -119,6 +84,7 @@ service cloud.firestore {
           'updatedAt',
         ])
         && resource.data.memberIds.hasAll(request.resource.data.memberIds)
+        && !(request.auth.uid in request.resource.data.memberIds)
         && request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1
         && request.resource.data.members.size() == resource.data.members.size() - 1;
     }
@@ -129,9 +95,6 @@ service cloud.firestore {
           'name',
           'description',
           'photoURL',
-          'currency',
-          'expenses',
-          'settlements',
           'moneyInChat',
           'budgets',
           'updatedAt',
@@ -142,24 +105,6 @@ service cloud.firestore {
         && request.resource.data.memberIds == resource.data.memberIds
         && request.resource.data.members == resource.data.members
         && request.resource.data.createdAt == resource.data.createdAt;
-    }
-
-    function isGroupChatJoinUpdate() {
-      return isSignedIn()
-        && resource.data.type == 'group'
-        && resource.data.groupId is string
-        && isGroupMemberById(resource.data.groupId)
-        && !(request.auth.uid in resource.data.participantIds)
-        && request.auth.uid in request.resource.data.participantIds
-        && request.resource.data.participantIds.hasAll(resource.data.participantIds)
-        && request.resource.data.participantIds.size() == resource.data.participantIds.size() + 1
-        && request.resource.data.participants.size() == resource.data.participants.size() + 1
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'participantIds',
-          'participants',
-          'lastMessage',
-          'updatedAt',
-        ]);
     }
 
     function isChatMutableUpdate() {
@@ -180,6 +125,15 @@ service cloud.firestore {
     match /users/{userId} {
       allow read, update, create: if isSelfWithLiveDevice(userId);
       allow delete: if false;
+    }
+
+    match /users/{userId}/blockedUsers/{blockedUserId} {
+      allow read: if isSelf(userId);
+      allow write: if false;
+    }
+
+    match /safetyReports/{reportId} {
+      allow read, write: if false;
     }
 
     match /users/{userId}/notificationDevices/{deviceId} {
@@ -262,23 +216,32 @@ service cloud.firestore {
     match /groups/{groupId} {
       allow create: if isSignedIn()
         && request.resource.data.createdBy == request.auth.uid
-        && request.auth.uid in request.resource.data.memberIds;
+        && request.auth.uid in request.resource.data.memberIds
+        && request.resource.data.expenses is list
+        && request.resource.data.expenses.size() == 0
+        && request.resource.data.settlements is list
+        && request.resource.data.settlements.size() == 0;
       // Must use resource.data (not get()) so membership is provable for
       // collection queries like where('memberIds', 'array-contains', uid) —
       // get()-based rules deny list operations outright.
       allow read: if isSignedIn() && request.auth.uid in resource.data.memberIds;
-      allow update: if isGroupMutableUpdate(groupId) || isGroupJoinUpdate() || isGroupProfileSync(groupId) || isGroupDepartureUpdate(groupId);
+      // Joining is intentionally absent here. The callable
+      // joinGroupByInviteCode performs the invite-code lookup and membership
+      // mutation with the Admin SDK. Allowing a client-side join update would
+      // let any signed-in user who learns a group document ID bypass the code.
+      allow update: if isGroupMutableUpdate(groupId) || isGroupDepartureUpdate(groupId);
       allow delete: if isSignedIn() && resource.data.createdBy == request.auth.uid;
     }
 
     match /groups/{groupId}/expenses/{expenseId} {
-      allow read, create, update, delete: if isGroupMemberById(groupId);
+      allow read: if isGroupMemberById(groupId);
+      allow create, update, delete: if false;
     }
 
     match /chats/{chatId} {
       allow create: if isNewChatParticipant();
       allow read: if isCurrentChatParticipant();
-      allow update: if isChatMutableUpdate() || isGroupChatJoinUpdate();
+      allow update: if isChatMutableUpdate();
       allow delete: if false;
     }
 
@@ -295,37 +258,17 @@ service cloud.firestore {
     }
 
     match /expenses/{expenseId} {
-      allow create: if isSignedIn()
-        && request.resource.data.groupId is string
-        && isGroupMemberById(request.resource.data.groupId);
       allow read: if isSignedIn()
         && resource.data.groupId is string
         && isGroupMemberById(resource.data.groupId);
-      allow update: if isSignedIn()
-        && resource.data.groupId is string
-        && request.resource.data.groupId is string
-        && request.resource.data.groupId == resource.data.groupId
-        && isGroupMemberById(resource.data.groupId);
-      allow delete: if isSignedIn()
-        && resource.data.groupId is string
-        && isGroupMemberById(resource.data.groupId);
+      allow create, update, delete: if false;
     }
 
     match /recurringBills/{billId} {
-      allow create: if isSignedIn()
-        && request.resource.data.groupId is string
-        && isGroupMemberById(request.resource.data.groupId);
       allow read: if isSignedIn()
         && resource.data.groupId is string
         && isGroupMemberById(resource.data.groupId);
-      allow update: if isSignedIn()
-        && resource.data.groupId is string
-        && request.resource.data.groupId is string
-        && request.resource.data.groupId == resource.data.groupId
-        && isGroupMemberById(resource.data.groupId);
-      allow delete: if isSignedIn()
-        && resource.data.groupId is string
-        && isGroupMemberById(resource.data.groupId);
+      allow create, update, delete: if false;
     }
 
     match /calls/{callId} {

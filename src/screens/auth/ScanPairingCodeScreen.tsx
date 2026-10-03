@@ -43,7 +43,6 @@ const errorMessage = (error: unknown): string => {
     const key = code.split('/').pop() ?? code;
     if (PAIRING_ERROR_MESSAGES[key]) return PAIRING_ERROR_MESSAGES[key];
   }
-  if (error instanceof Error && error.message.trim()) return error.message;
   return 'Could not link this device. Please try again.';
 };
 
@@ -95,7 +94,7 @@ export const ScanPairingCodeScreen = ({ onBack }: ScanPairingCodeScreenProps) =>
             stopped = true;
             clearInterval(timer);
             setOffer(null);
-            setError('That code was already used. Showing a new one — scan it again.');
+            setError('That code was already used. A new code is ready. Scan it again.');
           }
         })
         .finally(() => {
@@ -119,6 +118,7 @@ export const ScanPairingCodeScreen = ({ onBack }: ScanPairingCodeScreenProps) =>
       // No explicit navigation needed — signInWithCustomToken flips `user`
       // truthy, AppNavigator swaps stacks on its own.
     } catch (err) {
+      console.warn('[ScanPairingCode] Link failed:', err);
       errorHaptic();
       setError(errorMessage(err));
       // Re-arm for a DIFFERENT code only. `attemptedRef` still holds this one,

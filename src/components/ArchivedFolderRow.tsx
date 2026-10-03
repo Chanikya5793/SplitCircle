@@ -6,7 +6,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
-import { IconButton, Text, TouchableRipple } from 'react-native-paper';
+import { Icon, Text, TouchableRipple } from 'react-native-paper';
 
 interface ArchivedFolderRowProps {
   /** MaterialCommunityIcons name for the leading icon. */
@@ -41,21 +41,25 @@ export const ArchivedFolderRow = ({
       borderless
       accessibilityRole="button"
       accessibilityLabel={`${label}, ${count}`}
+      accessibilityState={{ expanded: locked ? undefined : expanded }}
     >
       <View style={styles.inner}>
-        <IconButton icon={icon} size={20} iconColor={color} style={styles.leadingIcon} />
+        <View style={styles.leadingIcon} pointerEvents="none">
+          <Icon source={icon} size={20} color={color} />
+        </View>
         <Text variant="titleSmall" style={[styles.label, { color }]}>
           {label}
         </Text>
         <View style={[styles.countPill, { backgroundColor: theme.colors.skeleton }]}>
           <Text style={[styles.countText, { color: theme.colors.onSurfaceVariant }]}>{count}</Text>
         </View>
-        <IconButton
-          icon={locked ? 'chevron-right' : expanded ? 'chevron-up' : 'chevron-down'}
-          size={20}
-          iconColor={theme.colors.onSurfaceVariant}
-          style={styles.trailingIcon}
-        />
+        <View style={styles.trailingIcon} pointerEvents="none">
+          <Icon
+            source={locked ? 'chevron-right' : expanded ? 'chevron-up' : 'chevron-down'}
+            size={20}
+            color={theme.colors.onSurfaceVariant}
+          />
+        </View>
       </View>
     </TouchableRipple>
   );
@@ -73,7 +77,10 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   leadingIcon: {
-    margin: 0,
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   label: {
     flex: 1,
@@ -92,6 +99,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   trailingIcon: {
-    margin: 0,
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

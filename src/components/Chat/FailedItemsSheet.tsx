@@ -4,7 +4,7 @@
 // same `MediaPreviewSendItem` shape — failed items are just send-items that
 // didn't make it through `sendMessage`.
 
-import { GlassCard } from '@/components/ui';
+import { GlassCard, ScrimBackdrop } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { useVideoThumbnail } from '@/utils/videoThumbnail';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -12,13 +12,13 @@ import {
   FlatList,
   Image,
   Modal,
-  Platform,
   Pressable,
   StyleSheet,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { Text } from 'react-native-paper';
+import Animated, { SlideInDown } from 'react-native-reanimated';
 import type { MediaPreviewSendItem } from './MediaPreview';
 
 export interface FailedSendItem {
@@ -96,11 +96,20 @@ export const FailedItemsSheet = ({
       visible={visible}
       transparent
       statusBarTranslucent
-      animationType={Platform.OS === 'ios' ? 'slide' : 'fade'}
+      animationType="fade"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable onPress={() => undefined}>
+      <View style={styles.root}>
+        <Pressable
+          style={styles.backdrop}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close failed items"
+        >
+          <ScrimBackdrop pointerEvents="none" />
+        </Pressable>
+        {visible ? (
+        <Animated.View entering={SlideInDown.springify().damping(30).stiffness(350)} accessibilityViewIsModal>
         <GlassCard role="floating" style={styles.sheetGlass} contentStyle={styles.sheetContent}>
           <View style={styles.handle} />
           <View style={styles.headerRow}>
@@ -112,7 +121,12 @@ export const FailedItemsSheet = ({
                 Tap an item to retry, or trim oversized videos to fit.
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
+            <TouchableOpacity
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close failed items"
+              style={styles.closeButton}
+            >
               <Ionicons name="close" size={24} color={theme.colors.onSurface} />
             </TouchableOpacity>
           </View>
@@ -148,11 +162,13 @@ export const FailedItemsSheet = ({
                   <View style={styles.rowActions}>
                     {canTrim && (
                       <TouchableOpacity
-                        style={[styles.actionBtn, { backgroundColor: 'rgba(228,83,83,0.14)' }]}
+                        style={[styles.actionBtn, { backgroundColor: theme.colors.dangerContainer }]}
                         onPress={() => onTrimAndRetry(item)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Trim and retry item ${item.batchIndex + 1}`}
                       >
-                        <Ionicons name="cut-outline" size={16} color="#E45353" />
-                        <Text style={[styles.actionBtnText, { color: '#E45353' }]}>Trim</Text>
+                        <Ionicons name="cut-outline" size={16} color={theme.colors.onDangerContainer} />
+                        <Text style={[styles.actionBtnText, { color: theme.colors.onDangerContainer }]}>Trim</Text>
                       </TouchableOpacity>
                     )}
                     <TouchableOpacity
@@ -161,9 +177,11 @@ export const FailedItemsSheet = ({
                         { backgroundColor: theme.colors.primaryContainer ?? 'rgba(53,198,255,0.14)' },
                       ]}
                       onPress={() => onRetry(item)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Retry item ${item.batchIndex + 1}`}
                     >
-                      <Ionicons name="refresh" size={16} color={theme.colors.primary} />
-                      <Text style={[styles.actionBtnText, { color: theme.colors.primary }]}>Retry</Text>
+                      <Ionicons name="refresh" size={16} color={theme.colors.onPrimaryContainer} />
+                      <Text style={[styles.actionBtnText, { color: theme.colors.onPrimaryContainer }]}>Retry</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -175,6 +193,8 @@ export const FailedItemsSheet = ({
             <TouchableOpacity
               style={[styles.retryAll, { backgroundColor: theme.colors.primary }]}
               onPress={onRetryAll}
+              accessibilityRole="button"
+              accessibilityLabel={`Retry all ${items.length} failed items`}
             >
               <Ionicons name="refresh" size={16} color={theme.colors.onPrimary} />
               <Text style={[styles.retryAllText, { color: theme.colors.onPrimary }]}>
@@ -183,18 +203,19 @@ export const FailedItemsSheet = ({
             </TouchableOpacity>
           )}
         </GlassCard>
-        </Pressable>
-      </Pressable>
+        </Animated.View>
+        ) : null}
+      </View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  backdrop: {
+  root: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.5)',
   },
+  backdrop: { ...StyleSheet.absoluteFillObject },
   sheetGlass: {
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
@@ -221,6 +242,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
+  closeButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -268,6 +290,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   actionBtn: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,

@@ -132,7 +132,7 @@ export const trimVideoInteractive = (
     // killing it. Only one editor can be on screen at a time, so if we are
     // here the previous one is already gone; settle it as cancelled, tear its
     // listeners down, and continue.
-    console.warn('Reclaiming a stale trim slot — previous editor never reported completion.');
+    console.warn('Reclaiming a stale trim slot. Previous editor never reported completion.');
     try {
       closeEditor();
     } catch {

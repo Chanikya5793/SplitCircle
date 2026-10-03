@@ -24,7 +24,17 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 export const PendingPairingGate = () => {
-  const { user, signOutUser } = useAuth();
+  const { user, sessionAuthenticated } = useAuth();
+  // Unmount the subscription and its revocation history on sign-out. Keeping
+  // the gate mounted across sessions made the next login's initial null
+  // snapshot look like a revoked device and immediately signed users out.
+  return user && sessionAuthenticated
+    ? <AuthenticatedPairingGate key={user.userId} userId={user.userId} />
+    : null;
+};
+
+const AuthenticatedPairingGate = ({ userId }: { userId: string }) => {
+  const { signOutUser } = useAuth();
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [ownRecord, setOwnRecord] = useState<PairedDevice | null | undefined>(undefined);
   const [signingOut, setSigningOut] = useState(false);
@@ -40,15 +50,15 @@ export const PendingPairingGate = () => {
   }, []);
 
   useEffect(() => {
-    if (!user || !deviceId) {
+    if (!deviceId) {
       setOwnRecord(undefined);
       return;
     }
 
-    return subscribeToOwnPairedDevice(user.userId, deviceId, (device) => {
+    return subscribeToOwnPairedDevice(userId, deviceId, (device) => {
       setOwnRecord(device);
     });
-  }, [user, deviceId]);
+  }, [userId, deviceId]);
 
   const isPending = ownRecord?.pairingStatus === 'pending_confirmation';
   // A record that existed and is now GONE means denied/revoked — sign out.

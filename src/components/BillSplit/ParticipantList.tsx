@@ -4,6 +4,7 @@ import { spacing } from '@/theme';
 import { formatCurrency, getCurrencySymbol } from '@/utils/currency';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { resolveInitials } from '@/utils/identity';
+import { avatarColorsForKey } from '@/utils/avatarColors';
 import React, { useCallback } from 'react';
 import { StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Checkbox, Text } from 'react-native-paper';
@@ -33,8 +34,8 @@ export const ParticipantRow = React.memo(({
   onSharesChange,
   onAdjustmentChange,
 }: ParticipantRowProps) => {
-  const { theme } = useTheme();
-  const avatarColor = theme.colors.chart[index % theme.colors.chart.length];
+  const { theme, isDark } = useTheme();
+  const avatar = avatarColorsForKey(p.id, isDark);
 
   const [localExact, setLocalExact] = React.useState<string | null>(null);
   const [localPercentage, setLocalPercentage] = React.useState<string | null>(null);
@@ -64,6 +65,7 @@ switch (activeMethod) {
             keyboardType="decimal-pad"
             placeholder="0.00"
             placeholderTextColor={theme.colors.muted}
+            accessibilityLabel={`Exact amount for ${p.name} in ${currency}`}
         />
         </View>
     );
@@ -81,6 +83,7 @@ switch (activeMethod) {
             keyboardType="decimal-pad"
             placeholder="0"
             placeholderTextColor={theme.colors.muted}
+            accessibilityLabel={`Percentage for ${p.name}`}
         />
         <Text style={[styles.suffix, { color: theme.colors.muted }]}>%</Text>
         </View>
@@ -90,6 +93,8 @@ switch (activeMethod) {
         <View style={styles.shareControls}>
         <TouchableOpacity
             style={[styles.shareBtn, { backgroundColor: theme.colors.pressed }]}
+            accessibilityRole="button"
+            accessibilityLabel={`Decrease shares for ${p.name}`}
             onPress={() => {
             selectionHaptic();
             onSharesChange(p.id, Math.max(0, p.shares - 1).toString());
@@ -102,6 +107,8 @@ switch (activeMethod) {
         <Text style={[styles.shareValue, { color: theme.colors.onSurface }]}>{p.shares}</Text>
         <TouchableOpacity
             style={[styles.shareBtn, { backgroundColor: theme.colors.pressed }]}
+            accessibilityRole="button"
+            accessibilityLabel={`Increase shares for ${p.name}`}
             onPress={() => {
             selectionHaptic();
             onSharesChange(p.id, (p.shares + 1).toString());
@@ -126,6 +133,7 @@ switch (activeMethod) {
             keyboardType="numeric"
             placeholder="0.00"
             placeholderTextColor={theme.colors.muted}
+            accessibilityLabel={`Adjustment for ${p.name} in ${currency}`}
         />
         </View>
     );
@@ -140,9 +148,14 @@ return (
     layout={Layout.springify()}
 >
     <View style={[styles.row, { opacity: p.included ? 1 : 0.45 }]}>
-    <TouchableOpacity onPress={handleToggle} style={styles.leftSection} activeOpacity={0.7}>
-        <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
-        <Text style={styles.initials}>{resolveInitials(p.name)}</Text>
+    <TouchableOpacity
+        onPress={handleToggle}
+        style={styles.leftSection}
+        activeOpacity={0.7}
+        accessible={false}
+    >
+        <View style={[styles.avatar, { backgroundColor: avatar.background }]}>
+        <Text style={[styles.initials, { color: avatar.foreground }]}>{resolveInitials(p.name)}</Text>
         </View>
         <View style={styles.nameCol}>
         <Text
@@ -165,11 +178,20 @@ return (
 
     <View style={styles.rightSection}>
         {renderInputForMethod()}
-        <Checkbox
-        status={p.included ? 'checked' : 'unchecked'}
+        <TouchableOpacity
         onPress={handleToggle}
-        color={theme.colors.primary}
-        />
+        accessibilityRole="checkbox"
+        accessibilityLabel={`${p.name} in split`}
+        accessibilityState={{ checked: p.included }}
+        style={styles.checkboxTarget}
+        >
+            <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                <Checkbox
+                status={p.included ? 'checked' : 'unchecked'}
+                color={theme.colors.primary}
+                />
+            </View>
+        </TouchableOpacity>
     </View>
     </View>
 </Animated.View>
@@ -210,7 +232,13 @@ return (
     <Text variant="titleSmall" style={{ color: theme.colors.muted, fontWeight: '600' }}>
         Split between
     </Text>
-    <TouchableOpacity onPress={onSelectAll} activeOpacity={0.7}>
+    <TouchableOpacity
+        onPress={onSelectAll}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={allSelected ? 'Deselect all participants' : 'Select all participants'}
+        style={styles.selectAllButton}
+    >
         <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>
         {allSelected ? 'Deselect All' : 'Select All'}
         </Text>
@@ -272,7 +300,6 @@ alignItems: 'center',
 justifyContent: 'center',
 },
 initials: {
-color: '#FFF',
 fontWeight: '700',
 fontSize: 14,
 },
@@ -305,6 +332,7 @@ fontWeight: '500',
 },
 input: {
 width: 72,
+minHeight: 44,
 borderWidth: 1,
 borderRadius: 8,
 paddingHorizontal: 10,
@@ -319,9 +347,9 @@ alignItems: 'center',
 gap: 10,
 },
 shareBtn: {
-width: 30,
-height: 30,
-borderRadius: 15,
+width: 44,
+height: 44,
+borderRadius: 22,
 alignItems: 'center',
 justifyContent: 'center',
 },
@@ -334,5 +362,15 @@ fontSize: 16,
 fontWeight: '700',
 minWidth: 20,
 textAlign: 'center',
+},
+selectAllButton: {
+minHeight: 44,
+justifyContent: 'center',
+},
+checkboxTarget: {
+width: 44,
+height: 44,
+alignItems: 'center',
+justifyContent: 'center',
 },
 });

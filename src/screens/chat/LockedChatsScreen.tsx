@@ -1,3 +1,4 @@
+import { EmptyState } from '@/components/ui/EmptyState';
 // LockedChatsScreen — dedicated destination for locked conversations. It is
 // only ever reached AFTER a successful Face ID / passcode unlock from the chat
 // list's "Locked" folder row (which marks the shared unlock session). To keep
@@ -7,12 +8,11 @@
 
 import { ChatThreadRow } from '@/components/ChatThreadRow';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GlassBackButton } from '@/components/ui';
+import { FloatingDetailHeader, floatingDetailHeaderHeight } from '@/components/ui';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
-import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
 import { getChatThreadTitle } from '@/navigation/screenTitles';
 import { isChatArchived } from '@/services/archiveService';
@@ -20,14 +20,12 @@ import { isLockSessionUnlocked } from '@/services/chatLockService';
 import { partitionChats } from '@/utils/chatOrganization';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useMemo } from 'react';
-import { AppState, FlatList, StyleSheet, View } from 'react-native';
-import { Text } from 'react-native-paper';
+import { AppState, FlatList, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export const LockedChatsScreen = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
-  const { theme, isDark } = useTheme();
   const { threads } = useChat();
   const { groups } = useGroups();
   const { user } = useAuth();
@@ -72,26 +70,11 @@ export const LockedChatsScreen = () => {
     });
   };
 
-  const HEADER_TOP_PAD = insets.top + 18;
-  const HEADER_HEIGHT = HEADER_TOP_PAD + 44 + 12;
+  const headerHeight = floatingDetailHeaderHeight(insets.top);
 
   return (
     <LiquidBackground>
-      <View
-        style={[
-          styles.headerRow,
-          { paddingTop: HEADER_TOP_PAD },
-          { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' },
-        ]}
-      >
-        <View style={styles.headerBtn}>
-          <GlassBackButton />
-        </View>
-        <Text numberOfLines={1} style={[styles.titleText, { color: theme.colors.onSurface }]}>
-          Locked chats
-        </Text>
-        <View style={styles.headerBtn} />
-      </View>
+      <FloatingDetailHeader title="Locked chats" />
 
       <FlatList
         data={lockedThreads}
@@ -101,12 +84,14 @@ export const LockedChatsScreen = () => {
         )}
         contentContainerStyle={[
           styles.list,
-          { paddingTop: HEADER_HEIGHT + 12, paddingBottom: insets.bottom + 24 },
+          { paddingTop: headerHeight + 12, paddingBottom: insets.bottom + 24 },
         ]}
         ListEmptyComponent={
-          <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
-            No locked chats.
-          </Text>
+          <EmptyState
+            icon="lock-outline"
+            title="No locked chats"
+            hint="Long-press a chat and choose Lock chat to protect it."
+          />
         }
       />
     </LiquidBackground>
@@ -114,22 +99,7 @@ export const LockedChatsScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  headerRow: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  titleText: { flex: 1, fontSize: 18, fontWeight: '700', textAlign: 'center' },
   list: { padding: 16 },
-  empty: { textAlign: 'center', marginTop: 32 },
 });
 
 export default LockedChatsScreen;

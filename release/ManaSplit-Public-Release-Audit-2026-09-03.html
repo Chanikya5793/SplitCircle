@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ManaSplit Public Release Audit | September 3, 2026</title>
+  <style>
+    :root { --ink:#210837; --plum:#42145f; --gold:#dfa13e; --paper:#fbf7f0; --white:#fffdf9; --muted:#6f6575; --line:#ddd3c8; --red:#a73131; --amber:#9a5c00; --green:#256844; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:var(--paper); font:15px/1.65 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width:min(1160px, calc(100% - 40px)); margin:auto; }
+    header { padding:76px 0 48px; border-bottom:1px solid var(--line); }
+    .mark { width:54px; height:54px; margin-bottom:28px; }
+    .eyebrow { margin:0 0 12px; color:var(--plum); font-size:12px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
+    h1 { max-width:850px; margin:0; font-size:clamp(44px,7vw,82px); line-height:.96; letter-spacing:-.055em; }
+    .lede { max-width:760px; margin:24px 0 0; color:var(--muted); font-size:19px; }
+    .meta { display:flex; flex-wrap:wrap; gap:10px; margin-top:28px; }
+    .pill { padding:7px 11px; border:1px solid var(--line); border-radius:999px; background:var(--white); font-size:12px; font-weight:700; }
+    section { padding:54px 0; border-bottom:1px solid var(--line); }
+    h2 { margin:0 0 24px; font-size:32px; line-height:1.08; letter-spacing:-.035em; }
+    h3 { margin:0 0 8px; font-size:18px; }
+    p { margin:0 0 14px; }
+    .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+    .kpi { min-height:142px; padding:22px; border:1px solid var(--line); border-radius:22px; background:var(--white); }
+    .kpi strong { display:block; margin-bottom:8px; font-size:34px; line-height:1; }
+    .kpi span { color:var(--muted); }
+    .banner { padding:26px; border-radius:24px; color:white; background:var(--plum); }
+    .banner strong { color:#f3bd5e; }
+    .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; }
+    .card { padding:24px; border:1px solid var(--line); border-radius:22px; background:var(--white); }
+    .severity { display:inline-block; margin-bottom:12px; padding:5px 9px; border-radius:999px; font-size:11px; font-weight:850; letter-spacing:.08em; text-transform:uppercase; }
+    .critical { color:#fff; background:var(--red); }
+    .high { color:#fff; background:var(--amber); }
+    .contained { color:#fff; background:var(--green); }
+    .medium { color:var(--ink); background:#ead8b8; }
+    table { width:100%; border-collapse:collapse; background:var(--white); border:1px solid var(--line); }
+    th, td { padding:14px 16px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    th { color:var(--muted); font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+    code { padding:2px 5px; border-radius:6px; color:var(--plum); background:#efe7f2; font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    ul { margin:10px 0 0; padding-left:20px; }
+    li { margin:6px 0; }
+    .status { font-weight:800; white-space:nowrap; }
+    .yes { color:var(--green); } .no { color:var(--red); }
+    .evidence { color:var(--muted); font-size:13px; }
+    footer { padding:44px 0 72px; color:var(--muted); }
+    @media (max-width:800px) { .kpis,.grid { grid-template-columns:1fr; } table { display:block; overflow-x:auto; } header { padding-top:48px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <img class="mark" src="../website/assets/muggu.svg" alt="ManaSplit" />
+    <p class="eyebrow">Public release audit</p>
+    <h1>Build 239 is ready in TestFlight. The listing still needs its final evidence.</h1>
+    <p class="lede">This audit separates live App Store Connect state, signed binary evidence, public launch infrastructure, and the operational and policy work still required before submission.</p>
+    <div class="meta"><span class="pill">Updated September 3, 2026</span><span class="pill">ui-revamp</span><span class="pill">Firebase: splitcircle-c9e46</span><span class="pill">ASC ID: 6760814898</span></div>
+  </header>
+
+  <section>
+    <div class="kpis">
+      <div class="kpi"><strong>7</strong><span>new server-authorized safety and mutation functions active</span></div>
+      <div class="kpi"><strong>5</strong><span>release evidence and operational gates remain</span></div>
+      <div class="kpi"><strong>39</strong><span>active Cloud Functions verified in production</span></div>
+      <div class="kpi"><strong>0.0.239</strong><span>signed build uploaded and Ready to Submit</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="banner"><strong>Decision:</strong> keep build 0.0.239 out of App Review until release screenshots, reviewer access, privacy and rating answers, support routing, and physical-device smoke evidence are complete. The required Guideline 1.2 controls and server authorization repairs are in this build and live backend.</div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Live App Store Connect audit</p>
+    <h2>The app record is accessible, but not submission-ready.</h2>
+    <table>
+      <thead><tr><th>Area</th><th>Live state on September 3</th><th>Required next step</th></tr></thead>
+      <tbody>
+        <tr><td>Version</td><td>iOS 1.0, Prepare for Submission</td><td>Keep editable until every gate below is complete.</td></tr>
+        <tr><td>Build</td><td>No build selected. TestFlight build 0.0.239 is processed and Ready to Submit.</td><td>Select it only after the remaining listing, reviewer, and device-evidence gates are complete.</td></tr>
+        <tr><td>Product page</td><td>No iPhone screenshots. Promotional text, description, keywords, support URL, marketing URL, and copyright are blank.</td><td>Upload sanitized release screenshots and save the prepared English metadata.</td></tr>
+        <tr><td>App information</td><td>Name is ManaSplit. Subtitle, categories, content rights, and age rating are unset.</td><td>Use Finance and Social Networking, declare content rights, and complete the current questionnaire conservatively.</td></tr>
+        <tr><td>Privacy</td><td>Privacy policy URLs are blank and data collection questions have not been started.</td><td>Use the verified public policy URLs and publish the inclusive data-practice answers.</td></tr>
+        <tr><td>Pricing and availability</td><td>No starting price and no availability territories are configured.</td><td>Set the app to Free and choose only supportable territories.</td></tr>
+        <tr><td>Review access</td><td>Sign-in is required, but username, password, contact information, notes, and attachment are blank.</td><td>Create a durable populated demo account and provide complete review instructions.</td></tr>
+        <tr><td>Account readiness</td><td>Free and Paid Apps agreements, banking, tax forms, and Digital Services Act compliance are Active.</td><td>No account-level remediation is currently indicated.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <p class="eyebrow">Immediate containment</p>
+    <h2>Two externally reachable paths were closed.</h2>
+    <div class="grid">
+      <article class="card"><span class="severity contained">Contained</span><h3>Firebase Storage was public</h3><p>The production bucket accepted unauthenticated reads and writes under a time-based rule through December 22, 2030. New rules now require authentication and group or chat membership, cap profile images at 10 MB, receipts at 25 MB, and chat media at 110 MB, and deny all unspecified paths.</p><p class="evidence"><code>storage.rules</code>, production ruleset <code>909c18d3-def8-4e60-ba06-b3eb39324330</code>, deployed 2026-09-01 Central time.</p></article>
+      <article class="card"><span class="severity contained">Contained</span><h3>Group invite bypass</h3><p>A signed-in user who learned a group document ID could add themselves without the invite code. The client already uses <code>joinGroupByInviteCode</code>, so the legacy direct-join branch was removed from Firestore authorization and deployed without rebuilding the app.</p><p class="evidence"><code>firestore.rules</code> group update rule and <code>functions/src/index.ts</code> callable join path.</p></article>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Security repair status</p>
+    <h2>The release-blocking authorization work is complete.</h2>
+    <div class="grid">
+      <article class="card"><span class="severity contained">Contained</span><h3>UGC safety controls</h3><p>Build 0.0.239 includes sensitive-content filtering, in-app message reporting, and user block or unblock controls. Reports are written through a server-only callable with authenticated rate limits and a non-public review queue.</p></article>
+      <article class="card"><span class="severity contained">Contained</span><h3>Group administration</h3><p>Role and membership changes now pass through the <code>mutateGroupMember</code> callable. Firestore permits a member to remove only their own membership directly and no longer accepts client-authored role changes.</p></article>
+      <article class="card"><span class="severity contained">Contained</span><h3>Realtime messaging and calls</h3><p>Message queues, calls, receipts, typing grants, and chat access are now server-authorized with participant checks, block-state enforcement, payload limits, and durable rate limits. Direct client creation of calls and other users' queues is denied.</p></article>
+      <article class="card"><span class="severity high">Open risk</span><h3>App Check and paid-provider controls</h3><p>The new public mutation surfaces have durable per-user quotas. App Check is not enforced in build 0.0.239, and paid security-provider paths still need explicit reachability review, budget alerts, and formal risk acceptance before submission.</p></article>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Bill-risk review</p>
+    <h2>Scaling is capped, request economics are not.</h2>
+    <table>
+      <thead><tr><th>Surface</th><th>Existing protection</th><th>Exposure</th><th>Required control</th></tr></thead>
+      <tbody>
+        <tr><td>Cloud Functions</td><td>Authentication on sensitive callables; max scale 20</td><td>Authenticated automation can still generate provider and database spend</td><td>App Check, per-UID quotas, global budgets and alerts, provider request caps</td></tr>
+        <tr><td>Storage</td><td class="status yes">Now scoped and size bounded</td><td>Member-authorized large uploads can still consume quota</td><td>Per-user daily byte and object limits, lifecycle cleanup, budget alerts</td></tr>
+        <tr><td>RTDB messaging</td><td class="status yes">Server-authorized and size bounded</td><td>Authenticated abuse remains possible within quotas</td><td>Monitor quota denials, add App Check when compatible, maintain abuse suspension</td></tr>
+        <tr><td>Security providers</td><td>Secrets in server secret manager; authenticated use</td><td>Web Risk and monitoring calls can be multiplied</td><td>Durable scan window, URL-result cache, provider budget ceiling</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <p class="eyebrow">Dependency and binary evidence</p>
+    <h2>Inventory, not automatic upgrades.</h2>
+    <table>
+      <thead><tr><th>Area</th><th>Evidence</th><th>Interpretation</th></tr></thead>
+      <tbody>
+        <tr><td>Root npm graph</td><td>Critical advisories reduced to zero</td><td>Remaining Expo and React Native toolchain advisories require reachability analysis and should not be force-upgraded across framework compatibility boundaries.</td></tr>
+        <tr><td>Functions npm graph</td><td>High and critical advisories reduced to zero</td><td>Production server dependencies were hardened and the full function and rules suite passed after the lockfile changes.</td></tr>
+        <tr><td>Release IPA</td><td>Version 0.0.5, build 0.0.239, minimum iOS 17.0, SDK iPhoneOS 27.0</td><td>The archive and notification extension signatures, production entitlements, export-compliance flag, and matching build numbers were verified. Physical calling, push, and nearby-radio acceptance remain separate evidence.</td></tr>
+        <tr><td>Privacy manifest</td><td>Required-reason APIs declared; collected-data array empty</td><td>The manifest is present, but App Store privacy labels must still disclose data transmitted for accounts, expenses, messages, media, location, calls, and delivery.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <p class="eyebrow">Public launch system</p>
+    <h2>The complete public site is deployed.</h2>
+    <div class="grid">
+      <article class="card"><h3>Brand and marketing</h3><p>Flagship responsive homepage, real ManaSplit brand assets, product narratives, press kit, SEO metadata, sitemap, robots policy, custom 404, and a restrained interactive woven-circle motif.</p></article>
+      <article class="card"><h3>Trust and compliance</h3><p>Privacy Policy, Terms of Use, Support, account deletion, Security disclosure, Community Standards, security.txt, strict transport security, CSP, permissions policy, referrer policy, and content-type protection.</p></article>
+      <article class="card"><h3>Release package</h3><p>Exact English metadata, privacy-label map, classification, age-rating guidance, reviewer notes, screenshot production plan, public URLs, and a submission checklist.</p></article>
+      <article class="card"><h3>Deployment state</h3><p><a href="https://manasplit.pages.dev/">manasplit.pages.dev</a> is live on Cloudflare Pages. The registered <code>manasplit.com</code> domain still serves a GoDaddy placeholder and uses iCloud Mail. Preserve the MX records when connecting the site and test every published alias.</p></article>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Evidence boundaries</p>
+    <h2>What this pass does and does not prove.</h2>
+    <ul>
+      <li><strong>Proved:</strong> live Storage, Firestore, and Realtime Database rule deployment; seven new active safety functions; static-site deployment; public URL and response-header checks; signed IPA metadata and entitlements; and successful App Store Connect upload.</li>
+      <li><strong>Automated validation:</strong> TypeScript passed; 654 app unit tests, 475 service tests, 30 DOM tests, and 76 function and Firebase rules tests passed. HTML validation and all public site route checks passed.</li>
+      <li><strong>Live-console proof:</strong> App Store Connect, TestFlight build 0.0.239, agreements, banking, tax, and Digital Services Act status were inspected on September 3, 2026. Build 0.0.239 is Ready to Submit. No version was added for review.</li>
+      <li><strong>Not proved:</strong> Non-expiring reviewer credentials, physical push and call acceptance, two-device nearby delivery, support email delivery, final screenshots, completed privacy and rating questionnaires, or Apple approval.</li>
+      <li><strong>Action boundary:</strong> final submission is a consequential external action. Review the exact build and metadata, then approve the final Submit for Review action when every blocker is green.</li>
+    </ul>
+  </section>
+
+  <footer>Prepared from the live project, current branch, production Firebase state, App Store Connect, and signed build 0.0.239. The build was uploaded, but no review submission or pull request was created.</footer>
+</main>
+</body>
+</html>

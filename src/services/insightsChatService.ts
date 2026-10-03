@@ -17,11 +17,7 @@ import type { Group } from '@/models';
 import { noteTurn } from '@/services/aiFeedbackService';
 import { runAgenticTurn } from '@/services/aiPipelineService';
 import * as threadStore from '@/services/aiThreadStore';
-import {
-  processAssistantTurn,
-  type ConversationState,
-  type ProposedAction,
-} from '@/services/assistantService';
+import { processAssistantTurn, type ConversationState, type ProposedAction } from '@/services/assistantService';
 import { tryPccPrompt } from '@/services/insightsAiService';
 import { answerExpenseLocally } from '@/services/onDeviceAiService';
 import { classifyMessage } from '@/utils/assistantChat';
@@ -42,11 +38,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { stripModelDecorations } from '@/utils/aiText';
 import { questionContext } from '@/utils/statsInsights';
-import {
-  generateOnDeviceText,
-  getOnDeviceAiAvailability,
-  getOnDeviceContextSize,
-} from '../../modules/splitcircle-ai';
+import { generateOnDeviceText, getOnDeviceAiAvailability, getOnDeviceContextSize } from '../../modules/splitcircle-ai';
 
 export const INSIGHTS_SURFACE = 'insights';
 export const PERSONAL_SCOPE = 'personal';
@@ -59,7 +51,7 @@ const PCC_BUDGET = 24000;
 
 const INSTRUCTIONS =
   "You are SplitCircle's spending-insights assistant, chatting about a group's " +
-  'expense statistics. You are given FACTS blocks as JSON — every number in ' +
+  'expense statistics. You are given FACTS blocks as JSON. Every number in ' +
   'them is final. Rules:\n' +
   '- Answer the CURRENT question directly and conversationally.\n' +
   '- Quote numbers only from the FACTS blocks; NEVER compute, total, or invent numbers.\n' +
@@ -95,7 +87,12 @@ export function actionPayloadOf(payload: unknown): ActionPayload | null {
 /** Intents that delegate to the assistant's write machinery. `navigate` stays
  * out — the insights overlay has no navigation stack of its own. */
 const WRITE_INTENTS = new Set([
-  'add_expense', 'settle_up', 'delete_expense', 'edit_expense', 'delete_settlement', 'set_budget',
+  'add_expense',
+  'settle_up',
+  'delete_expense',
+  'edit_expense',
+  'delete_settlement',
+  'set_budget',
   'memory_add',
 ]);
 
@@ -138,8 +135,7 @@ export async function setEnginePref(pref: EnginePref): Promise<void> {
   }
 }
 
-const budgetTokens = (): number =>
-  Math.max(1536, (getOnDeviceContextSize() || DEFAULT_CONTEXT) - RESPONSE_RESERVE);
+const budgetTokens = (): number => Math.max(1536, (getOnDeviceContextSize() || DEFAULT_CONTEXT) - RESPONSE_RESERVE);
 
 const contextChip = (nowMs: number): AiThreadMessage => {
   const d = new Date(nowMs);
@@ -188,7 +184,10 @@ export async function openInsightsThread(args: {
           factsHash,
           messages: [...swept.messages, contextChip(now)],
         };
-        return { thread: await threadStore.saveThread(drifted), driftDetected: true };
+        return {
+          thread: await threadStore.saveThread(drifted),
+          driftDetected: true,
+        };
       }
       return {
         thread: swept === existing ? existing : await threadStore.saveThread(swept),
@@ -234,7 +233,12 @@ export async function sendInsightsMessage(args: {
   group?: Group;
   currentUserId?: string;
   /** Personal scope: cross-group rows for the agentic personal tools (doc 24). */
-  personalGroups?: { groupId: string; name: string; currency: string; expenses?: Group['expenses'] }[];
+  personalGroups?: {
+    groupId: string;
+    name: string;
+    currency: string;
+    expenses?: Group['expenses'];
+  }[];
   /** The group's chat id (doc 24 P5) — unlocks on-device-only chat_search. */
   chatId?: string;
   /** True when this thread was resumed against changed data. */
@@ -264,7 +268,7 @@ export async function sendInsightsMessage(args: {
       role: 'assistant',
       text:
         `Hey! I'm here to talk through ${args.group?.name ?? 'your'} spending. ` +
-        'Ask me why a category changed, about a month, a member, or a merchant — ' +
+        'Ask me why a category changed, about a month, a member, or a merchant. ' +
         'or say "summary" for exact totals.',
       createdAt: Date.now(),
     };
@@ -279,8 +283,8 @@ export async function sendInsightsMessage(args: {
       id: threadStore.newMessageId(),
       role: 'assistant',
       text: fresh
-        ? `${fresh.title} — ${fresh.body}`
-        : "That's everything notable I see in the current data — ask about a " +
+        ? `${fresh.title} · ${fresh.body}`
+        : "That's everything notable I see in the current data. Ask about a " +
           'specific category, member, month, or merchant, or say "summary" for exact totals.',
       source: fresh ? 'deterministic' : undefined,
       createdAt: Date.now(),
@@ -316,15 +320,16 @@ export async function sendInsightsMessage(args: {
     const midFlow = !!(prevState.pending || prevState.lastProposed);
     const intent = classifyMessage(
       args.userText,
-      args.group.members.map((m) => ({ userId: m.userId, displayName: m.displayName })),
+      args.group.members.map((m) => ({
+        userId: m.userId,
+        displayName: m.displayName,
+      })),
     );
     if (WRITE_INTENTS.has(intent) || midFlow) {
       const turn = await processAssistantTurn(args.userText, args.group, args.currentUserId, prevState);
       assistantStatePatch = turn.state;
       const payload: ActionPayload | undefined =
-        turn.action && turn.action.type !== 'navigate'
-          ? { action: turn.action, state: 'pending' }
-          : undefined;
+        turn.action && turn.action.type !== 'navigate' ? { action: turn.action, state: 'pending' } : undefined;
       reply = {
         id: threadStore.newMessageId(),
         role: 'assistant',
@@ -376,9 +381,7 @@ export async function sendInsightsMessage(args: {
   // aggregates ride along (doc 23 enrichment) so the model isn't limited to
   // the top-5 summary facts. Runs only when the agentic pipeline declined.
   if (!reply) {
-    const extraFacts = args.group
-      ? questionContext(args.userText, args.group.expenses ?? [], args.group.members ?? [], now)
-      : null;
+    const extraFacts = args.group ? questionContext(args.userText, args.group.expenses ?? [], args.group.members ?? [], now) : null;
     const assembleWith = (budget: number, instructions = INSTRUCTIONS) =>
       assembleInsightsPrompt({
         instructions,
@@ -388,9 +391,7 @@ export async function sendInsightsMessage(args: {
         messages: [...args.thread.messages, userMsg],
         userText: args.userText,
         budgetTokens: budget,
-        driftNote: args.drifted
-          ? 'The group data has changed since this conversation started — the facts below are current.'
-          : '',
+        driftNote: args.drifted ? 'The group data has changed since this conversation started. The facts below are current.' : '',
       });
 
     const assembled = assembleWith(budgetTokens());
@@ -436,9 +437,7 @@ export async function sendInsightsMessage(args: {
     // an honest fallback — a repeat is never shipped as an answer.
     if (repeatsRecent(text, args.thread.messages)) {
       try {
-        const retry = await generateOnDeviceText(
-          assembleWith(budgetTokens(), INSTRUCTIONS + RETRY_NUDGE).prompt,
-        );
+        const retry = await generateOnDeviceText(assembleWith(budgetTokens(), INSTRUCTIONS + RETRY_NUDGE).prompt);
         const retryText = stripModelDecorations(retry);
         if (retryText && !repeatsRecent(retryText, args.thread.messages)) {
           text = retryText;
@@ -454,7 +453,7 @@ export async function sendInsightsMessage(args: {
           id: threadStore.newMessageId(),
           role: 'assistant',
           text:
-            "I've covered that already — try asking about a specific category, " +
+            "I've covered that already. Try asking about a specific category, " +
             'member, month, or merchant, or say "summary" for exact totals.',
           createdAt: Date.now(),
         };
@@ -474,9 +473,7 @@ export async function sendInsightsMessage(args: {
 
   let thread: AiThread = {
     ...args.thread,
-    ...(assistantStatePatch != null
-      ? { meta: { ...args.thread.meta, assistantState: assistantStatePatch } }
-      : {}),
+    ...(assistantStatePatch != null ? { meta: { ...args.thread.meta, assistantState: assistantStatePatch } } : {}),
     messages: [...args.thread.messages, userMsg, reply],
   };
   thread = await rollupIfNeeded(thread, args.facts);
@@ -540,8 +537,7 @@ async function rollupIfNeeded(thread: AiThread, facts: string): Promise<AiThread
   if (fold.length === 0) return thread;
   try {
     const result = await generateOnDeviceText(
-      (thread.summary ? `EARLIER SUMMARY:\n${thread.summary}\n\n` : '') +
-        `CONVERSATION:\n${transcriptBlock(fold)}`,
+      (thread.summary ? `EARLIER SUMMARY:\n${thread.summary}\n\n` : '') + `CONVERSATION:\n${transcriptBlock(fold)}`,
       'You summarize a conversation between a user and a spending-insights ' +
         'assistant in 3-4 short factual sentences: what was asked, what was ' +
         'concluded, any suggestions made. Plain text only, no preamble.',
@@ -563,22 +559,24 @@ async function rollupIfNeeded(thread: AiThread, facts: string): Promise<AiThread
 /** Model-written 3–5 word title after the first real exchange (once). */
 async function ensureTitle(thread: AiThread): Promise<AiThread> {
   if (thread.meta?.titled === true) return thread;
-  const hasExchange =
-    thread.messages.some((m) => m.role === 'user') &&
-    thread.messages.filter((m) => m.role === 'assistant').length >= 2; // seed + one reply
+  const hasExchange = thread.messages.some((m) => m.role === 'user') && thread.messages.filter((m) => m.role === 'assistant').length >= 2; // seed + one reply
   if (!hasExchange) return thread;
   try {
     const result = await generateOnDeviceText(
       transcriptBlock(thread.messages.slice(-6)),
       'Write a 3-5 word title for this conversation about group spending. ' +
-        'Reply with the title only — plain words, no quotes, no punctuation, no emoji.',
+        'Reply with the title only. Plain words, no quotes, no punctuation, no emoji.',
       { deterministic: true },
     );
     const title = stripModelDecorations(result)
       .replace(/^title:\s*/i, '')
       .replace(/["'.]/g, '')
       .slice(0, 40);
-    return { ...thread, title: title || thread.title, meta: { ...thread.meta, titled: true } };
+    return {
+      ...thread,
+      title: title || thread.title,
+      meta: { ...thread.meta, titled: true },
+    };
   } catch {
     return { ...thread, meta: { ...thread.meta, titled: true } };
   }

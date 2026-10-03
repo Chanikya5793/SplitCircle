@@ -105,7 +105,7 @@ const discardIdentityOrphanedByReinstall = async (): Promise<void> => {
       // (CLAUDE.md), and this function exists specifically to repair a prior
       // "messages appear blank, permanently" bug — if it fires, or fails, in
       // the field that has to leave a trace.
-      console.error('Signal identity outlived its sessions (reinstall) — regenerating');
+      console.error('Signal identity outlived its sessions (reinstall). Regenerating');
       await wipeSignalState();
       cachedSignalDeviceId = null;
       await AsyncStorage.removeItem(SIGNAL_DEVICE_ID_KEY);

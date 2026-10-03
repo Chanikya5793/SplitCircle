@@ -1,8 +1,9 @@
+import { AppTextInput } from '@/components/ui/AppTextInput';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GuardedScreen } from '@/components/ui';
+import { GuardedScreen, ScrimBackdrop, SelectableChip } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { Group } from '@/models';
@@ -38,7 +39,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { appAlert } from '@/utils/appAlert';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import { Button, Icon, IconButton, Switch, Text } from 'react-native-paper';
+import { Button, Icon, Switch, Text } from 'react-native-paper';
 import { ALL_EXPENSE_CATEGORIES } from '@/utils/categoryMatch';
 
 // Same canonical set as everywhere else (utils/categoryMatch.ts), ordered
@@ -170,43 +171,44 @@ const toggleInList = (list: number[], value: number): number[] => {
 };
 
 const SwipeableBillCard = ({
-    editColor,
     onEdit,
     onDelete,
     children,
 }: {
-    editColor: string;
     onEdit: () => void;
     onDelete: () => void;
     children: React.ReactNode;
 }) => {
     const swipeableRef = useRef<Swipeable>(null);
+    const { theme } = useTheme();
 
     const renderRightActions = () => (
         <View style={styles.rowActions}>
             <RectButton
-                style={[styles.rowActionButton, { backgroundColor: editColor }]}
+                style={[styles.rowActionButton, { backgroundColor: theme.colors.primary }]}
                 onPress={() => {
                     lightHaptic();
                     swipeableRef.current?.close();
                     onEdit();
                 }}
                 accessibilityLabel="Edit recurring bill"
+                accessibilityRole="button"
             >
-                <IconButton icon="pencil" iconColor="#fff" size={22} style={{ margin: 0 }} />
-                <Text style={styles.rowActionText}>Edit</Text>
+                <Icon source="pencil" color={theme.colors.onPrimary} size={22} />
+                <Text style={[styles.rowActionText, { color: theme.colors.onPrimary }]}>Edit</Text>
             </RectButton>
             <RectButton
-                style={[styles.rowActionButton, { backgroundColor: '#FF3B30' }]}
+                style={[styles.rowActionButton, { backgroundColor: theme.colors.danger }]}
                 onPress={() => {
                     errorHaptic();
                     swipeableRef.current?.close();
                     onDelete();
                 }}
                 accessibilityLabel="Delete recurring bill"
+                accessibilityRole="button"
             >
-                <IconButton icon="trash-can-outline" iconColor="#fff" size={22} style={{ margin: 0 }} />
-                <Text style={styles.rowActionText}>Delete</Text>
+                <Icon source="trash-can-outline" color={theme.colors.onDanger} size={22} />
+                <Text style={[styles.rowActionText, { color: theme.colors.onDanger }]}>Delete</Text>
             </RectButton>
         </View>
     );
@@ -280,6 +282,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
     const [selectedWeeksOfMonth, setSelectedWeeksOfMonth] = useState<number[]>([
         Math.floor((new Date().getDate() - 1) / 7) + 1,
     ]);
+    const [monthOptionsExpanded, setMonthOptionsExpanded] = useState(false);
     const [selectedMonthsOfYear, setSelectedMonthsOfYear] = useState<number[]>(ALL_MONTHS);
 
     const isCustomPreset = selectedPreset === 'custom';
@@ -313,6 +316,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
     }, [group.groupId]);
 
     const resetForm = () => {
+        setMonthOptionsExpanded(false);
         setEditingBillId(null);
         setEditingStartAt(null);
         setTitle('');
@@ -342,7 +346,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
             setBills(data);
         } catch (error) {
             console.error('Error loading recurring bills:', error);
-            appAlert('Error', 'Failed to load recurring bills');
+            appAlert('Could not load recurring bills', 'Pull down to try again.');
         } finally {
             setLoading(false);
         }
@@ -398,6 +402,25 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
         return normalizeRecurrenceRule(baseRule, startAt);
     };
 
+    // Preview uses exactly the same normalization and occurrence lookup as save.
+    const previewNow = Date.now();
+    const previewStartAt = editingStartAt ?? previewNow;
+    const previewRule = buildRecurrenceRule(previewStartAt);
+    const previewNextAt = modalVisible && editingBillId
+        ? findNextOccurrenceAt(previewRule, previewStartAt, previewNow - 1) ?? previewStartAt
+        : previewNow;
+    const previewExistingBill = bills.find((bill) => bill.billId === editingBillId);
+    const previewHasRotation = rotationEnabled && rotationOrder.length >= 2;
+    const previewSameOrder = previewHasRotation && previewExistingBill?.rotation
+        && previewExistingBill.rotation.order.join(',') === rotationOrder.join(',');
+    const previewPayer = resolveRotationPayer({
+        paidBy,
+        rotation: previewHasRotation ? {
+            order: rotationOrder,
+            index: previewSameOrder ? previewExistingBill!.rotation!.index : 0,
+        } : undefined,
+    });
+
     const buildParticipantShares = (billAmount: number) => {
         const members = group.members.filter((member) => selectedParticipantIds.includes(member.userId));
         if (!members.length) return [];
@@ -416,7 +439,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
 
     const handleCreate = async () => {
         if (!title.trim() || !amount.trim() || !paidBy) {
-            appAlert('Missing Fields', 'Please fill in title, amount, and paid-by.');
+            appAlert('Missing fields', 'Please fill in title, amount, and paid by.');
             return;
         }
 
@@ -449,7 +472,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     hasRotation &&
                     existingBill?.rotation &&
                     existingBill.rotation.order.join(',') === rotationOrder.join(',');
-                await updateRecurringBill(editingBillId, {
+                await updateRecurringBill(editingBillId, group.groupId, {
                     title: title.trim(),
                     amount: billAmount,
                     category: category.trim() || 'Other',
@@ -469,7 +492,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     dayOfWeek: selectedWeekdays[0],
                     dayOfMonth: parseDayList(dayOfMonthInput, new Date().getDate())[0],
                     isActive: existingBill?.isActive,
-                });
+                }, group.currency);
             } else {
                 await createRecurringBill({
                     groupId: group.groupId,
@@ -488,7 +511,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     frequency: frequency as any,
                     dayOfWeek: selectedWeekdays[0],
                     dayOfMonth: parseDayList(dayOfMonthInput, new Date().getDate())[0],
-                });
+                }, group.currency);
             }
 
             await syncRecurringBillsForGroupWithFallback(group.groupId);
@@ -498,7 +521,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
             resetForm();
         } catch (error) {
             console.error('Error saving recurring bill:', error);
-            appAlert('Error', 'Failed to save recurring bill');
+            appAlert('Could not save recurring bill', 'Your changes were not saved. Try again.');
         } finally {
             setIsSubmitting(false);
         }
@@ -538,7 +561,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
     const handleToggle = async (bill: RecurringBill) => {
         try {
             lightHaptic();
-            await toggleRecurringBillStatus(bill.billId, !bill.isActive);
+            await toggleRecurringBillStatus(bill, !bill.isActive, group.currency);
             setBills((prev) => prev.map((entry) => (
                 entry.billId === bill.billId
                     ? { ...entry, isActive: !entry.isActive }
@@ -546,7 +569,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
             )));
         } catch (error) {
             console.error('Error toggling bill:', error);
-            appAlert('Error', 'Failed to update bill status');
+            appAlert('Could not update recurring bill', 'Its current status was restored. Try again.');
             await loadBills();
         }
     };
@@ -562,12 +585,12 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     text: 'Skip',
                     onPress: async () => {
                         try {
-                            await skipOccurrence(bill, bill.nextDueAt);
+                            await skipOccurrence(bill, bill.nextDueAt, group.currency);
                             lightHaptic();
                             await loadBills();
                         } catch (error) {
                             console.error('Error skipping occurrence:', error);
-                            appAlert('Error', 'Failed to skip the next occurrence');
+                            appAlert('Could not skip occurrence', 'The next expense is still scheduled. Try again.');
                         }
                     },
                 },
@@ -576,19 +599,19 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
     };
 
     const handleDelete = (bill: RecurringBill) => {
-        appAlert('Delete Bill', 'Are you sure you want to delete this recurring bill?', [
+        appAlert('Delete recurring bill?', `Delete “${bill.title}”? Future expenses from this schedule will stop. Existing expenses will remain.`, [
             { text: 'Cancel', style: 'cancel' },
             {
                 text: 'Delete',
                 style: 'destructive',
                 onPress: async () => {
                     try {
-                        await deleteRecurringBill(bill.billId);
+                        await deleteRecurringBill(bill.billId, group.groupId);
                         errorHaptic();
                         setBills((prev) => prev.filter((entry) => entry.billId !== bill.billId));
                     } catch (error) {
                         console.error('Error deleting bill:', error);
-                        appAlert('Error', 'Failed to delete recurring bill');
+                        appAlert('Could not delete recurring bill', 'The schedule is still active. Try again.');
                     }
                 },
             },
@@ -665,13 +688,18 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                         bills.map((bill) => (
                             <SwipeableBillCard
                                 key={bill.billId}
-                                editColor={theme.colors.primary}
                                 onEdit={() => handleEdit(bill)}
                                 onDelete={() => handleDelete(bill)}
                             >
                                 <GlassView style={styles.billCard}>
                                     {/* Header: title + amount on the left, active toggle on the right */}
-                                    <View style={styles.billHeader}>
+                                    <Pressable
+                                        style={styles.billHeader}
+                                        onPress={() => handleToggle(bill)}
+                                        accessibilityRole="switch"
+                                        accessibilityLabel={`${bill.title} recurring bill`}
+                                        accessibilityState={{ checked: bill.isActive }}
+                                    >
                                         <View style={{ flex: 1, paddingRight: 12 }}>
                                             <Text variant="titleMedium" style={{ fontWeight: '700', color: theme.colors.onSurface }}>
                                                 {bill.title}
@@ -689,8 +717,11 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                             value={bill.isActive}
                                             onValueChange={() => handleToggle(bill)}
                                             color={theme.colors.primary}
+                                            pointerEvents="none"
+                                            accessibilityElementsHidden
+                                            importantForAccessibility="no-hide-descendants"
                                         />
-                                    </View>
+                                    </Pressable>
 
                                     {/* Meta lines */}
                                     <View style={styles.billMeta}>
@@ -704,7 +735,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                         </Text>
                                         {(bill.pendingOccurrences?.length ?? 0) > 0 && (
                                             <Text style={{ color: theme.colors.primary, marginTop: 4 }}>
-                                                {bill.pendingOccurrences!.length} occurrence{bill.pendingOccurrences!.length === 1 ? '' : 's'} waiting for an amount — confirm from the group chat
+                                                {bill.pendingOccurrences!.length} occurrence{bill.pendingOccurrences!.length === 1 ? '' : 's'} waiting for an amount. Confirm from the group chat
                                             </Text>
                                         )}
                                     </View>
@@ -762,7 +793,14 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                     pointerEvents="box-none"
                 >
-                    <Pressable style={styles.sheetBackdrop} onPress={closeModal} accessibilityLabel="Dismiss form" />
+                    <Pressable
+                        style={styles.sheetBackdrop}
+                        onPress={closeModal}
+                        accessibilityRole="button"
+                        accessibilityLabel="Dismiss recurring bill form"
+                    >
+                        <ScrimBackdrop pointerEvents="none" />
+                    </Pressable>
                     <Animated.View
                         onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}
                         style={{ transform: [{ translateY: sheetTranslateY }] }}
@@ -770,7 +808,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                         <GlassView role="floating" style={styles.sheet} intensity={80}>
                             <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)' }]} />
                             <Text variant="titleLarge" style={{ fontWeight: '700', color: theme.colors.onSurface, textAlign: 'center', marginBottom: 12 }}>
-                                {editingBillId ? 'Edit Recurring Bill' : 'New Recurring Bill'}
+                                {editingBillId ? 'Edit recurring bill' : 'New recurring bill'}
                             </Text>
                             <ScrollView
                                 style={{ maxHeight: screenHeight * 0.62 }}
@@ -780,25 +818,23 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                             >
 
                             <FloatingLabelInput label="Title" value={title} onChangeText={setTitle} />
-                            <FloatingLabelInput
-                                label={amountMode === 'variable' ? 'Typical amount' : 'Amount'}
+                            <AppTextInput
+                                label={`${amountMode === 'variable' ? 'Typical amount' : 'Amount'} (${group.currency || 'USD'})`}
                                 value={amount}
                                 onChangeText={setAmount}
                                 keyboardType="decimal-pad"
                             />
 
-                            <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Amount Type</Text>
+                            <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Amount type</Text>
                             <View style={styles.wrapRow}>
                                 {(['fixed', 'variable'] as const).map((mode) => (
-                                    <TouchableOpacity
+                                    <SelectableChip
                                         key={mode}
+                                        label={mode === 'fixed' ? 'Fixed' : 'Variable'}
+                                        selected={amountMode === mode}
                                         onPress={() => setAmountMode(mode)}
-                                        style={[styles.chip, amountMode === mode && { backgroundColor: theme.colors.primary }]}
-                                    >
-                                        <Text style={{ color: amountMode === mode ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                            {mode === 'fixed' ? 'Fixed' : 'Variable'}
-                                        </Text>
-                                    </TouchableOpacity>
+                                        accessibilityRole="radio"
+                                    />
                                 ))}
                             </View>
                             {amountMode === 'variable' && (
@@ -810,23 +846,23 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                             <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Category</Text>
                             <View style={styles.wrapRow}>
                                 {BILL_CATEGORIES.map((cat) => (
-                                    <TouchableOpacity
+                                    <SelectableChip
                                         key={cat}
+                                        label={cat}
+                                        selected={category === cat}
                                         onPress={() => setCategory(cat)}
-                                        style={[styles.chip, category === cat && { backgroundColor: theme.colors.primary }]}
-                                    >
-                                        <Text style={{ color: category === cat ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                            {cat}
-                                        </Text>
-                                    </TouchableOpacity>
+                                        accessibilityRole="radio"
+                                    />
                                 ))}
                             </View>
 
                             <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Repeat</Text>
                             <View style={styles.wrapRow}>
                                 {FREQUENCY_PRESETS.map(({ key, label }) => (
-                                    <TouchableOpacity
+                                    <SelectableChip
                                         key={key}
+                                        label={label}
+                                        selected={selectedPreset === key}
                                         onPress={() => {
                                             setSelectedPreset(key);
                                             if (key !== 'custom') {
@@ -845,12 +881,8 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                                 setSelectedMonthsOfYear(config.defaultMonthsOfYear ?? ALL_MONTHS);
                                             }
                                         }}
-                                        style={[styles.chip, selectedPreset === key && { backgroundColor: theme.colors.primary }]}
-                                    >
-                                        <Text style={{ color: selectedPreset === key ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                            {label}
-                                        </Text>
-                                    </TouchableOpacity>
+                                        accessibilityRole="radio"
+                                    />
                                 ))}
                             </View>
 
@@ -862,16 +894,16 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
 
                             {!isCustomPreset && (
                                 <Text style={[styles.helperText, { color: theme.colors.onSurfaceVariant }]}>
-                                    Quick preset mode: only relevant options are shown. Switch to Custom for full control.
+                                    Choose Custom to set a different schedule.
                                 </Text>
                             )}
 
                             {selectedPreset === 'custom' && (
                                 <>
-                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Repeat Every</Text>
+                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Repeat every</Text>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                                         <FloatingLabelInput
-                                            label="Interval (N)"
+                                            label="Every"
                                             value={intervalInput}
                                             onChangeText={setIntervalInput}
                                             keyboardType="number-pad"
@@ -879,41 +911,37 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                         />
                                         <View style={[styles.wrapRow, { flex: 3 }]}>
                                             {(['daily', 'weekly', 'monthly', 'yearly'] as const).map((value) => (
-                                                <TouchableOpacity
+                                                <SelectableChip
                                                     key={value}
+                                                    label={value === 'daily' ? (intervalInput === '1' ? 'Day' : 'Days')
+                                                        : value === 'weekly' ? (intervalInput === '1' ? 'Week' : 'Weeks')
+                                                        : value === 'monthly' ? (intervalInput === '1' ? 'Month' : 'Months')
+                                                        : (intervalInput === '1' ? 'Year' : 'Years')}
+                                                    selected={frequency === value}
                                                     onPress={() => setFrequency(value)}
-                                                    style={[styles.chip, frequency === value && { backgroundColor: theme.colors.primary }]}
-                                                >
-                                                    <Text style={{ color: frequency === value ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                                        {value === 'daily' ? (intervalInput === '1' ? 'Day' : 'Days')
-                                                            : value === 'weekly' ? (intervalInput === '1' ? 'Week' : 'Weeks')
-                                                            : value === 'monthly' ? (intervalInput === '1' ? 'Month' : 'Months')
-                                                            : (intervalInput === '1' ? 'Year' : 'Years')}
-                                                    </Text>
-                                                </TouchableOpacity>
+                                                    accessibilityRole="radio"
+                                                />
                                             ))}
                                         </View>
                                     </View>
                                     <Text style={[styles.helperText, { color: theme.colors.onSurfaceVariant }]}>
-                                        Example: N=2 + Months means every 2 months. N=1 + Years means yearly.
+                                        Choose how often this bill repeats.
                                     </Text>
                                 </>
                             )}
 
                             {canEditMonthlyPattern && (
                                 <>
-                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Monthly Pattern</Text>
+                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Repeat on</Text>
                                     <View style={styles.wrapRow}>
                                         {(['dayOfMonth', 'weekdaysOfMonth'] as const).map((value) => (
-                                            <TouchableOpacity
+                                            <SelectableChip
                                                 key={value}
+                                                label={value === 'dayOfMonth' ? 'Dates of the month' : 'Days of the week'}
+                                                selected={monthlyPattern === value}
                                                 onPress={() => setMonthlyPattern(value)}
-                                                style={[styles.chip, monthlyPattern === value && { backgroundColor: theme.colors.primary }]}
-                                            >
-                                                <Text style={{ color: monthlyPattern === value ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                                    {value === 'dayOfMonth' ? 'By Day Number' : 'By Week + Weekday'}
-                                                </Text>
-                                            </TouchableOpacity>
+                                                accessibilityRole="radio"
+                                            />
                                         ))}
                                     </View>
                                 </>
@@ -928,23 +956,22 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                 />
                             )}
 
+                            {canEditDayOfMonth && parseDayList(dayOfMonthInput, new Date().getDate()).some((day) => day > 28) ? (
+                                <Text style={[styles.helperText, { color: theme.colors.onSurfaceVariant }]}>Months without a selected day are skipped.</Text>
+                            ) : null}
+
                             {(canEditWeeklyDays || (canEditWeeksOfMonth && monthlyPattern === 'weekdaysOfMonth')) && (
                                 <>
                                     <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Weekdays</Text>
                                     <View style={styles.wrapRow}>
                                         {WEEKDAY_LABELS.map((label, day) => (
-                                            <TouchableOpacity
+                                            <SelectableChip
                                                 key={label}
+                                                label={label}
+                                                selected={selectedWeekdays.includes(day)}
                                                 onPress={() => setSelectedWeekdays((prev) => toggleInList(prev, day))}
-                                                style={[
-                                                    styles.chip,
-                                                    selectedWeekdays.includes(day) && { backgroundColor: theme.colors.primary },
-                                                ]}
-                                            >
-                                                <Text style={{ color: selectedWeekdays.includes(day) ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                                    {label}
-                                                </Text>
-                                            </TouchableOpacity>
+                                                accessibilityRole="checkbox"
+                                            />
                                         ))}
                                     </View>
                                 </>
@@ -952,70 +979,92 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
 
                             {canEditWeeksOfMonth && (
                                 <>
-                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Weeks in Month</Text>
+                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Which weeks?</Text>
                                     <View style={styles.wrapRow}>
                                         {[1, 2, 3, 4, 5].map((week) => (
-                                            <TouchableOpacity
+                                            <SelectableChip
                                                 key={week}
+                                                label={`Week ${week}`}
+                                                selected={selectedWeeksOfMonth.includes(week)}
                                                 onPress={() => setSelectedWeeksOfMonth((prev) => toggleInList(prev, week))}
-                                                style={[
-                                                    styles.chip,
-                                                    selectedWeeksOfMonth.includes(week) && { backgroundColor: theme.colors.primary },
-                                                ]}
-                                            >
-                                                <Text style={{ color: selectedWeeksOfMonth.includes(week) ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                                    Week {week}
-                                                </Text>
-                                            </TouchableOpacity>
+                                                accessibilityRole="checkbox"
+                                            />
                                         ))}
                                     </View>
                                 </>
                             )}
 
                             {canEditMonthsOfYear && (
+                                <Button
+                                    icon={monthOptionsExpanded ? 'chevron-up' : 'chevron-down'}
+                                    accessibilityState={{ expanded: monthOptionsExpanded }}
+                                    onPress={() => setMonthOptionsExpanded((expanded) => !expanded)}
+                                >Choose months</Button>
+                            )}
+                            {canEditMonthsOfYear && monthOptionsExpanded && (
                                 <>
-                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Months in Year</Text>
+                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Which months?</Text>
                                     <Text style={[styles.helperText, { color: theme.colors.onSurfaceVariant }]}>
-                                        Optional filter. Keep all months selected for default behavior.
+                                        Choose the months when this bill should repeat.
                                     </Text>
                                     <View style={styles.wrapRow}>
                                         {MONTH_LABELS.map((label, index) => {
                                             const month = index + 1;
                                             const selected = selectedMonthsOfYear.includes(month);
                                             return (
-                                                <TouchableOpacity
+                                                <SelectableChip
                                                     key={label}
+                                                    label={label}
+                                                    selected={selected}
                                                     onPress={() => setSelectedMonthsOfYear((prev) => toggleInList(prev, month))}
-                                                    style={[styles.chip, selected && { backgroundColor: theme.colors.primary }]}
-                                                >
-                                                    <Text style={{ color: selected ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                                        {label}
-                                                    </Text>
-                                                </TouchableOpacity>
+                                                    accessibilityRole="checkbox"
+                                                />
                                             );
                                         })}
                                     </View>
                                 </>
                             )}
 
-                            <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Paid By</Text>
+                            <View accessibilityLiveRegion="polite" style={{ gap: 6, paddingVertical: 12 }}>
+                                <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>Schedule preview</Text>
+                                <Text style={{ color: theme.colors.onSurface }}>{getRecurrenceSummary(previewRule)}</Text>
+                                <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                                    {editingBillId
+                                        ? `Next occurrence: ${new Date(previewNextAt).toLocaleDateString()}`
+                                        : 'First occurrence is due when saved.'}
+                                </Text>
+                                {previewPayer ? <Text style={{ color: theme.colors.onSurfaceVariant }}>Next payer: {memberMap[previewPayer] ?? 'Unknown'}</Text> : null}
+                            </View>
+
+                            <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Paid by</Text>
                             <View style={styles.wrapRow}>
                                 {group.members.map((member) => (
-                                    <TouchableOpacity
+                                    <SelectableChip
                                         key={member.userId}
+                                        label={resolveDisplayName(member)}
+                                        selected={paidBy === member.userId}
                                         onPress={() => setPaidBy(member.userId)}
-                                        style={[styles.chip, paidBy === member.userId && { backgroundColor: theme.colors.primary }]}
-                                    >
-                                        <Text style={{ color: paidBy === member.userId ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                            {resolveDisplayName(member)}
-                                        </Text>
-                                    </TouchableOpacity>
+                                        accessibilityRole="radio"
+                                    />
                                 ))}
                             </View>
 
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
+                            <Pressable
+                                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 48, marginTop: 12 }}
+                                onPress={() => {
+                                    lightHaptic();
+                                    const value = !rotationEnabled;
+                                    setRotationEnabled(value);
+                                    if (value && rotationOrder.length === 0) {
+                                        setRotationOrder(paidBy ? [paidBy] : []);
+                                    }
+                                }}
+                                accessibilityRole="switch"
+                                accessibilityLabel="Rotate payer"
+                                accessibilityState={{ checked: rotationEnabled }}
+                            >
                                 <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant, marginTop: 0, marginBottom: 0 }]}>
-                                    Rotate Payer
+                                    Rotate payer
                                 </Text>
                                 <Switch
                                     value={rotationEnabled}
@@ -1027,20 +1076,25 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                         }
                                     }}
                                     color={theme.colors.primary}
+                                    pointerEvents="none"
+                                    accessibilityElementsHidden
+                                    importantForAccessibility="no-hide-descendants"
                                 />
-                            </View>
+                            </Pressable>
                             {rotationEnabled && (
                                 <>
                                     <Text style={[styles.helperText, { color: theme.colors.onSurfaceVariant }]}>
-                                        Tap members in turn order — each generated occurrence moves to the next person. Skipped occurrences don't consume a turn.
+                                        Tap members in turn order. Each generated occurrence moves to the next person. Skipped occurrences do not consume a turn.
                                     </Text>
                                     <View style={styles.wrapRow}>
                                         {group.members.map((member) => {
                                             const position = rotationOrder.indexOf(member.userId);
                                             const selected = position >= 0;
                                             return (
-                                                <TouchableOpacity
+                                                <SelectableChip
                                                     key={member.userId}
+                                                    label={`${selected ? `${position + 1}. ` : ''}${resolveDisplayName(member)}`}
+                                                    selected={selected}
                                                     onPress={() => {
                                                         lightHaptic();
                                                         setRotationOrder((prev) => (
@@ -1049,12 +1103,8 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                                                 : [...prev, member.userId]
                                                         ));
                                                     }}
-                                                    style={[styles.chip, selected && { backgroundColor: theme.colors.primary }]}
-                                                >
-                                                    <Text style={{ color: selected ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                                        {selected ? `${position + 1}. ` : ''}{resolveDisplayName(member)}
-                                                    </Text>
-                                                </TouchableOpacity>
+                                                    accessibilityRole="checkbox"
+                                                />
                                             );
                                         })}
                                     </View>
@@ -1071,19 +1121,17 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                 {group.members.map((member) => {
                                     const selected = selectedParticipantIds.includes(member.userId);
                                     return (
-                                        <TouchableOpacity
+                                        <SelectableChip
                                             key={member.userId}
+                                            label={resolveDisplayName(member)}
+                                            selected={selected}
                                             onPress={() => setSelectedParticipantIds((prev) => (
                                                 prev.includes(member.userId)
                                                     ? prev.filter((id) => id !== member.userId)
                                                     : [...prev, member.userId]
                                             ))}
-                                            style={[styles.chip, selected && { backgroundColor: theme.colors.primary }]}
-                                        >
-                                            <Text style={{ color: selected ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                                {resolveDisplayName(member)}
-                                            </Text>
-                                        </TouchableOpacity>
+                                            accessibilityRole="checkbox"
+                                        />
                                     );
                                 })}
                             </View>
@@ -1152,10 +1200,9 @@ const styles = StyleSheet.create({
         width: 84,
     },
     rowActionText: {
-        color: '#fff',
         fontSize: 12,
         fontWeight: '600',
-        marginTop: -4,
+        marginTop: 2,
     },
     emptyCard: {
         padding: 32,
@@ -1202,7 +1249,6 @@ const styles = StyleSheet.create({
     },
     sheetBackdrop: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.5)',
     },
     sheet: {
         borderTopLeftRadius: 28,
@@ -1251,15 +1297,5 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: 8,
-    },
-    chip: {
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        borderRadius: 18,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: 'rgba(128,128,128,0.35)',
-        // Theme-neutral system fill — reads on both light and dark glass, unlike
-        // the old rgba(0,0,0,0.08) that vanished in dark mode.
-        backgroundColor: 'rgba(120,120,128,0.16)',
     },
 });

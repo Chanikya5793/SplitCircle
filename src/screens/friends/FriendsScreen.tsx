@@ -31,7 +31,7 @@ import { Animated, StyleSheet, View } from 'react-native';
 import Reanimated from 'react-native-reanimated';
 import { appAlert } from '@/utils/appAlert';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import { Avatar, IconButton, Text } from 'react-native-paper';
+import { Avatar, Icon, IconButton, Text } from 'react-native-paper';
 import { Shield } from '@/components/ui';
 import { TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -65,40 +65,41 @@ const SwipeableFriendRow = ({
   isPinned,
   onTogglePin,
   onRemove,
-  primaryColor,
   children,
 }: {
   isPinned: boolean;
   onTogglePin: () => void;
   onRemove: () => void;
-  primaryColor: string;
   children: ReactNode;
 }) => {
   const swipeableRef = useRef<Swipeable>(null);
+  const { theme } = useTheme();
 
   const renderRightActions = () => (
     <View style={styles.rowActionContainer}>
       <RectButton
-        style={[styles.rowActionButton, { backgroundColor: primaryColor }]}
+        style={[styles.rowActionButton, { backgroundColor: theme.colors.primary }]}
         accessibilityLabel={isPinned ? 'Unpin friend' : 'Pin friend'}
+        accessibilityRole="button"
         onPress={() => {
           swipeableRef.current?.close();
           onTogglePin();
         }}
       >
-        <IconButton icon={isPinned ? 'pin' : 'pin-outline'} iconColor="#fff" size={22} style={{ margin: 0 }} />
-        <Text style={styles.rowActionText}>{isPinned ? 'Unpin' : 'Pin'}</Text>
+        <Icon source={isPinned ? 'pin' : 'pin-outline'} color={theme.colors.onPrimary} size={22} />
+        <Text style={[styles.rowActionText, { color: theme.colors.onPrimary }]}>{isPinned ? 'Unpin' : 'Pin'}</Text>
       </RectButton>
       <RectButton
-        style={[styles.rowActionButton, { backgroundColor: '#FF3B30' }]}
+        style={[styles.rowActionButton, { backgroundColor: theme.colors.danger }]}
         accessibilityLabel="Remove friend"
+        accessibilityRole="button"
         onPress={() => {
           swipeableRef.current?.close();
           onRemove();
         }}
       >
-        <IconButton icon="trash-can-outline" iconColor="#fff" size={22} style={{ margin: 0 }} />
-        <Text style={styles.rowActionText}>Remove</Text>
+        <Icon source="trash-can-outline" color={theme.colors.onDanger} size={22} />
+        <Text style={[styles.rowActionText, { color: theme.colors.onDanger }]}>Remove</Text>
       </RectButton>
     </View>
   );
@@ -289,7 +290,7 @@ export const FriendsScreen = () => {
       // buries the bug.
       appAlert(
         'Could not open chat',
-        error instanceof Error ? error.message : 'Something went wrong opening this chat.',
+        'The conversation could not be prepared. Try again from this person’s row.',
       );
     }
   };
@@ -313,7 +314,7 @@ export const FriendsScreen = () => {
       console.error('Failed to start call to friend', error);
       appAlert(
         'Could not place call',
-        error instanceof Error ? error.message : 'Something went wrong starting this call.',
+        'The call could not start. Check your connection and try again.',
       );
     }
   };
@@ -364,46 +365,48 @@ export const FriendsScreen = () => {
         isPinned={!!row.friend.isPinned}
         onTogglePin={() => togglePin(row)}
         onRemove={() => handleRemove(row)}
-        primaryColor={theme.colors.primary}
       >
       <GlassView style={styles.rowCard}>
-        <TouchableRipple
-          onPress={() => openDirectChat(row)}
-          onLongPress={() => handleRemove(row)}
-          borderless
-          {...touchableProps}
-        >
-          <Reanimated.View style={[styles.row, pressHighlightStyle]}>
-            {/* Avatar opens the friend profile — previously FriendInfoScreen
-                had no entry point from this list at all. */}
-            <TouchableRipple
-              onPress={() => {
-                lightHaptic();
-                navigation.navigate(ROUTES.APP.FRIEND_INFO, {
-                  userId: row.friend.userId,
-                  displayName: row.displayName,
-                  photoURL: row.photoURL,
-                  backTitle: ROOT_SCREEN_TITLES.friends,
-                });
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={`View ${row.displayName}'s profile`}
-              borderless
-              style={{ borderRadius: 24 }}
-            >
-              {row.photoURL ? (
-                <Avatar.Image size={48} source={{ uri: row.photoURL }} />
-              ) : (
-                <Avatar.Text
-                  size={48}
-                  label={resolveInitials(row.displayName)}
-                  style={{ backgroundColor: theme.colors.primary }}
-                  color={theme.colors.onPrimary}
-        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
-      />
-              )}
-            </TouchableRipple>
-            <View style={styles.rowText}>
+        <Reanimated.View style={[styles.row, pressHighlightStyle]}>
+          {/* Avatar opens the friend profile — previously FriendInfoScreen
+              had no entry point from this list at all. */}
+          <TouchableRipple
+            onPress={() => {
+              lightHaptic();
+              navigation.navigate(ROUTES.APP.FRIEND_INFO, {
+                userId: row.friend.userId,
+                displayName: row.displayName,
+                photoURL: row.photoURL,
+                backTitle: ROOT_SCREEN_TITLES.friends,
+              });
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`View ${row.displayName}'s profile`}
+            borderless
+            style={{ borderRadius: 24 }}
+          >
+            {row.photoURL ? (
+              <Avatar.Image size={48} source={{ uri: row.photoURL }} />
+            ) : (
+              <Avatar.Text
+                size={48}
+                label={resolveInitials(row.displayName)}
+                style={{ backgroundColor: theme.colors.primary }}
+                color={theme.colors.onPrimary}
+                maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+              />
+            )}
+          </TouchableRipple>
+          <TouchableRipple
+            onPress={() => openDirectChat(row)}
+            onLongPress={() => handleRemove(row)}
+            borderless
+            style={styles.rowText}
+            accessibilityRole="button"
+            accessibilityLabel={`Open chat with ${row.displayName}, ${sum > 0 ? `owes you ${balanceText}` : sum < 0 ? `you owe ${balanceText}` : balanceText}`}
+            {...touchableProps}
+          >
+            <View>
               <Text variant="titleMedium" style={[styles.rowName, { color: theme.colors.onSurface }]} numberOfLines={1}>
                 {row.displayName}
               </Text>
@@ -411,7 +414,8 @@ export const FriendsScreen = () => {
                 {sum > 0 ? `Owes you ${balanceText}` : sum < 0 ? `You owe ${balanceText}` : balanceText}
               </Text>
             </View>
-            <View style={styles.rowActions}>
+          </TouchableRipple>
+          <View style={styles.rowActions}>
               <IconButton
                 icon={row.friend.isPinned ? 'pin' : 'pin-outline'}
                 size={20}
@@ -430,9 +434,8 @@ export const FriendsScreen = () => {
                 onPress={() => callFriend(row, 'video')}
                 accessibilityLabel="Video call"
               />
-            </View>
-          </Reanimated.View>
-        </TouchableRipple>
+          </View>
+        </Reanimated.View>
       </GlassView>
       </SwipeableFriendRow>
     );
@@ -469,7 +472,7 @@ export const FriendsScreen = () => {
             <GlassView style={styles.emptyCard}>
               <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>No friends yet</Text>
               <Text style={[styles.emptyBody, { color: theme.colors.onSurfaceVariant }]}>
-                You'll see people here once you share a group, split an expense, or add someone manually.
+                People appear here after you share a group or split an expense with them.
               </Text>
             </GlassView>
           </View>
@@ -499,7 +502,7 @@ export const FriendsScreen = () => {
           <GlassView style={styles.emptyCard}>
             <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>No friends yet</Text>
             <Text style={[styles.emptyBody, { color: theme.colors.onSurfaceVariant }]}>
-              You’ll see people here once you share a group, split an expense, or add someone manually.
+              People appear here after you share a group or split an expense with them.
             </Text>
           </GlassView>
         ) : (
@@ -591,10 +594,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   rowActionText: {
-    color: '#fff',
     fontSize: 12,
     fontWeight: '600',
-    marginTop: -4,
+    marginTop: 2,
   },
   emptyCard: {
     borderRadius: 18,

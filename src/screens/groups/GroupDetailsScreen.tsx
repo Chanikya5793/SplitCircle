@@ -1,3 +1,4 @@
+import { EmptyState } from '@/components/ui/EmptyState';
 import { BalanceSummary } from '@/components/BalanceSummary';
 import { DebtsList } from '@/components/DebtsList';
 import { ActivityTypeFilter, DateRange, FilterSortSheet, SortField, SortOrder } from '@/components/FilterSortSheet';
@@ -252,8 +253,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
   const handleDeleteExpense = (expense: Expense) => {
     appAlert(
-      'Delete Expense',
-      `Are you sure you want to delete "${expense.title}"?`,
+      'Delete expense?',
+      `Delete "${expense.title}" for everyone in this group? It will be removed from the group’s history and cannot be restored.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -262,10 +263,10 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
           onPress: async () => {
             try {
               await deleteExpense(group.groupId, expense.expenseId);
-              errorHaptic();
+              successHaptic();
             } catch (error) {
               console.error('Failed to delete expense:', error);
-              appAlert('Error', 'Failed to delete expense');
+              appAlert('Could not delete expense', 'The expense is still in the group. Try again.');
             }
           },
         },
@@ -275,8 +276,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
   const handleDeleteSettlement = (settlement: Settlement) => {
     appAlert(
-      'Delete Settlement',
-      `Are you sure you want to delete this settlement?`,
+      'Delete settlement?',
+      'Delete this payment record for everyone in the group? Balances will be recalculated and this cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -285,10 +286,10 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
           onPress: async () => {
             try {
               await deleteSettlement(group.groupId, settlement.settlementId);
-              errorHaptic();
+              successHaptic();
             } catch (error) {
               console.error('Failed to delete settlement:', error);
-              appAlert('Error', 'Failed to delete settlement');
+              appAlert('Could not delete settlement', 'The payment record is still in the group. Try again.');
             }
           },
         },
@@ -643,9 +644,11 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               <TouchableRipple
                 onPress={handleClearFilters}
                 style={[styles.filterButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+                accessibilityRole="button"
+                accessibilityLabel="Clear activity filters"
               >
                 <View style={[styles.filterButtonContent, { paddingHorizontal: 12 }]}>
-                  <IconButton icon="close" size={16} iconColor={theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
+                  <Icon source="close" size={16} color={theme.colors.onSurfaceVariant} />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '600' }}>
                     Clear
                   </Text>
@@ -655,15 +658,17 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
             <TouchableRipple
               onPress={() => setShowFilterSheet(true)}
               style={[styles.filterButton, { backgroundColor: activeFilters > 0 ? theme.colors.primaryContainer : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)') }]}
+              accessibilityRole="button"
+              accessibilityLabel={activeFilters > 0 ? `Activity filters, ${activeFilters} active` : 'Activity filters'}
             >
               <View style={styles.filterButtonContent}>
-                <IconButton icon="filter-variant" size={16} iconColor={activeFilters > 0 ? theme.colors.primary : theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
+                <Icon source="filter-variant" size={16} color={activeFilters > 0 ? theme.colors.primary : theme.colors.onSurfaceVariant} />
                 <Text variant="labelMedium" style={{ color: activeFilters > 0 ? theme.colors.primary : theme.colors.onSurfaceVariant, fontWeight: '600' }}>
                   Filters
                 </Text>
                 {activeFilters > 0 && (
                   <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary }]}>
-                    <Text variant="labelSmall" style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
+                    <Text variant="labelSmall" style={{ color: theme.colors.onPrimary, fontWeight: 'bold' }}>
                       {activeFilters}
                     </Text>
                   </View>
@@ -680,14 +685,24 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
           </View>
         ) : sortedActivities.length === 0 ? (
           <GlassView style={styles.emptyCard}>
-            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No activity yet.</Text>
+            <EmptyState icon="receipt" title={activeFilters > 0 ? 'No matching activity' : 'Your group starts here'}
+              hint={activeFilters > 0 ? 'Try a different date, category or activity type.' : 'Add an expense to see shared costs and settlements here.'}
+              actionLabel={activeFilters > 0 ? 'Clear filters' : undefined}
+              onAction={activeFilters > 0 ? handleClearFilters : undefined} />
           </GlassView>
         ) : (
           yearGroupedActivities.map((yearSection, yearIndex) => (
             <View key={yearSection.year}>
               {/* Collapsed Year Header (only show when year IS collapsed) */}
               {collapsedYears.has(yearSection.year) && (
-                <TouchableRipple onPress={() => toggleYear(yearSection.year)} style={styles.yearHeaderCompact} borderless>
+                <TouchableRipple
+                  onPress={() => toggleYear(yearSection.year)}
+                  style={styles.yearHeaderCompact}
+                  borderless
+                  accessibilityRole="button"
+                  accessibilityLabel={`${yearSection.yearLabel}, ${yearSection.totalItems} items`}
+                  accessibilityState={{ expanded: false }}
+                >
                   <View style={styles.collapsibleHeader}>
                     <Icon source="chevron-right" size={16} color={theme.colors.onSurface} />
                     <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
@@ -706,14 +721,16 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                   {/* Combined Header Row: Month on LEFT, Year on RIGHT */}
                   <View style={styles.combinedHeaderRow}>
                     {/* Month (Left side) */}
-                    <TouchableRipple onPress={() => toggleMonth(monthSection.monthKey)} style={styles.monthHeaderCompact} borderless>
+                    <TouchableRipple
+                      onPress={() => toggleMonth(monthSection.monthKey)}
+                      style={styles.monthHeaderCompact}
+                      borderless
+                      accessibilityRole="button"
+                      accessibilityLabel={`${monthSection.monthLabel}, ${monthSection.items.length} items`}
+                      accessibilityState={{ expanded: !collapsedMonths.has(monthSection.monthKey) }}
+                    >
                       <View style={styles.collapsibleHeader}>
-                        <IconButton
-                          icon={collapsedMonths.has(monthSection.monthKey) ? 'chevron-right' : 'chevron-down'}
-                          size={16}
-                          iconColor={theme.colors.onSurfaceVariant}
-                          style={{ margin: 0 }}
-                        />
+                        <Icon source={collapsedMonths.has(monthSection.monthKey) ? 'chevron-right' : 'chevron-down'} size={16} color={theme.colors.onSurfaceVariant} />
                         <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '600' }}>
                           {monthSection.monthLabel}
                         </Text>
@@ -725,17 +742,19 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
                     {/* Year (Right side) - only show on first month of each year or if multiple years */}
                     {(monthIndex === 0 && (yearGroupedActivities.length > 1 || yearSection.yearLabel !== 'This Year')) && (
-                      <TouchableRipple onPress={() => toggleYear(yearSection.year)} style={styles.yearHeaderCompact} borderless>
+                      <TouchableRipple
+                        onPress={() => toggleYear(yearSection.year)}
+                        style={styles.yearHeaderCompact}
+                        borderless
+                        accessibilityRole="button"
+                        accessibilityLabel={`${yearSection.yearLabel}, ${yearSection.totalItems} items`}
+                        accessibilityState={{ expanded: !collapsedYears.has(yearSection.year) }}
+                      >
                         <View style={styles.collapsibleHeader}>
                           <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
                             {yearSection.yearLabel} · {yearSection.totalItems}
                           </Text>
-                          <IconButton
-                            icon={collapsedYears.has(yearSection.year) ? 'chevron-right' : 'chevron-down'}
-                            size={16}
-                            iconColor={theme.colors.onSurfaceVariant}
-                            style={{ margin: 0 }}
-                          />
+                          <Icon source={collapsedYears.has(yearSection.year) ? 'chevron-right' : 'chevron-down'} size={16} color={theme.colors.onSurfaceVariant} />
                         </View>
                       </TouchableRipple>
                     )}
@@ -829,6 +848,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               },
             ]}
             pointerEvents={isCompact ? 'none' : 'auto'}
+            accessibilityElementsHidden={isCompact}
+            importantForAccessibility={isCompact ? 'no-hide-descendants' : 'auto'}
             onLayout={(e) => setActionsHeight(e.nativeEvent.layout.height)}
           >
             <View style={styles.actionGrid}>
@@ -840,8 +861,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 borderless
               >
                 <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.success }]}>
-                  <Icon source="handshake" size={20} color="#fff" />
-                  <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Settle Up</Text>
+                  <Icon source="handshake" size={20} color={theme.colors.onSuccess} />
+                  <Text variant="labelLarge" style={{ color: theme.colors.onSuccess, fontWeight: '600' }}>Settle Up</Text>
                 </View>
               </TouchableRipple>
 
@@ -853,8 +874,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 borderless
               >
                 <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.primary }]}>
-                  <Icon source="plus" size={20} color="#fff" />
-                  <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Add Expense</Text>
+                  <Icon source="plus" size={20} color={theme.colors.onPrimary} />
+                  <Text variant="labelLarge" style={{ color: theme.colors.onPrimary, fontWeight: '600' }}>Add Expense</Text>
                 </View>
               </TouchableRipple>
             </View>
@@ -917,12 +938,14 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 },
               ]}
               pointerEvents={isCompact ? 'auto' : 'none'}
+              accessibilityElementsHidden={!isCompact}
+              importantForAccessibility={isCompact ? 'auto' : 'no-hide-descendants'}
             >
               <GlassCard role="floating" style={styles.androidDock} contentStyle={styles.androidDockContent} radius={50}>
                 <TouchableRipple accessibilityRole="button" accessibilityLabel="Settle up" onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.success }]} borderless>
                   <View style={styles.androidDockButtonInner}>
-                    <Icon source="handshake" size={18} color="#fff" />
-                    <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Settle</Text>
+                  <Icon source="handshake" size={18} color={theme.colors.onSuccess} />
+                  <Text variant="labelSmall" style={{ color: theme.colors.onSuccess, fontWeight: '700' }}>Settle</Text>
                   </View>
                 </TouchableRipple>
                 <TouchableRipple accessibilityRole="button" accessibilityLabel="Group stats" onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: groupDisplayName })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
@@ -945,8 +968,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 </TouchableRipple>
                 <TouchableRipple accessibilityRole="button" accessibilityLabel="Add expense" onPress={() => onAddExpense(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.primary }]} borderless>
                   <View style={styles.androidDockButtonInner}>
-                    <Icon source="plus" size={18} color="#fff" />
-                    <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Add</Text>
+                  <Icon source="plus" size={18} color={theme.colors.onPrimary} />
+                  <Text variant="labelSmall" style={{ color: theme.colors.onPrimary, fontWeight: '700' }}>Add</Text>
                   </View>
                 </TouchableRipple>
               </GlassCard>
@@ -1051,6 +1074,7 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
   },
   compactButtonInner: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1067,6 +1091,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   compactButtonSmallInner: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1108,6 +1133,7 @@ const styles = StyleSheet.create({
     flex: 1.25,
   },
   androidDockButtonInner: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1140,6 +1166,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   filterButtonContent: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 6,
@@ -1147,9 +1174,10 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   filterBadge: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
+    minWidth: 20,
+    minHeight: 20,
+    paddingHorizontal: 4,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 4,
@@ -1175,11 +1203,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   monthHeaderCompact: {
+    minHeight: 44,
     borderRadius: 50,
     paddingVertical: 4,
     paddingHorizontal: 8,
   },
   yearHeaderCompact: {
+    minHeight: 44,
     borderRadius: 50,
     paddingVertical: 4,
     paddingHorizontal: 8,

@@ -82,6 +82,13 @@ describe('accent primary contrast', () => {
     },
   );
 
+  it.each(ACCENT_IDS)('%s: outgoing inset text stays readable in both schemes', (id) => {
+    for (const scheme of ['light', 'dark'] as const) {
+      const accent = ACCENTS[id][scheme];
+      expect(contrast(accent.onPrimaryContainer, accent.primaryContainer)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it('regression: the pre-fix light-mode primaries fail this suite', () => {
     // Negative control — proves the test actually catches the bug it exists
     // for, not just that the current values happen to pass.

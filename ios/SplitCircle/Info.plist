@@ -23,7 +23,7 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.0.5</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleURLTypes</key>
@@ -51,7 +51,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSMinimumSystemVersion</key>
@@ -66,30 +66,24 @@
 		<true/>
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>ManaSplit uses Bluetooth to exchange messages with trusted nearby devices when the internet is unavailable, including Android phones.</string>
+	<string>ManaSplit uses Bluetooth to connect with trusted nearby devices for offline messaging. For example, exchange a message with a paired phone when the internet is unavailable.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_expo._tcp</string>
 		<string>_manasplit-mesh._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>Allow ManaSplit to access your camera</string>
+	<string>ManaSplit uses your camera for video calls, taking photos to send in chats, and scanning receipts. For example, photograph a dinner receipt to add it to a shared expense.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Unlock ManaSplit and its hidden privacy settings with Face ID.</string>
+	<string>ManaSplit uses Face ID to unlock protected chats and privacy settings. For example, confirm it is you before opening a locked chat.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>ManaSplit uses your local network to pair with trusted nearby contacts and exchange messages when the internet is unavailable.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Allow ManaSplit to use your location to share it with your friends.</string>
-	<key>NSLocationAlwaysUsageDescription</key>
-	<string>Allow ManaSplit to use your location to share live location.</string>
+	<string>ManaSplit uses your local network to find trusted nearby contacts and exchange messages when the internet is unavailable. For example, send a message to a paired device on the same Wi-Fi network.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Allow ManaSplit to use your location to share it with your friends.</string>
+	<string>ManaSplit uses your location while you choose a place to share in a chat. For example, select your current location and send its map pin to a group.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Allow ManaSplit to access your microphone</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Allow ManaSplit to save photos</string>
+	<string>ManaSplit uses your microphone for voice and video calls and voice messages. For example, record a voice message to send in a group chat.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Allow ManaSplit to access your photos</string>
+	<string>ManaSplit uses your photo library so you can choose photos and videos to send in chats, attach receipt photos to expenses, or set profile, group, and chat wallpaper images. For example, choose a dinner receipt to add to a shared expense.</string>
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>com.splitcircle.ask-ai</string>

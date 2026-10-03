@@ -17,6 +17,7 @@ import {
 import { Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StickyHeaderPill } from './StickyHeaderPill';
+import { readableHorizontalInsets, SCREEN_GUTTER } from './layout';
 
 export interface HeaderScroll {
   scrollY: Animated.Value;
@@ -76,7 +77,11 @@ export const StickyGlassHeader = ({
     <View pointerEvents="box-none" style={[styles.stickyHeader, { paddingTop: insets.top }]}>
       <Animated.View
         pointerEvents="box-none"
-        style={[styles.stickyInner, { paddingHorizontal: theme.spacing.md, transform: [{ translateY }] }]}
+        style={[
+          styles.stickyInner,
+          readableHorizontalInsets(insets.left, insets.right),
+          { transform: [{ translateY }] },
+        ]}
       >
         <StickyHeaderPill>
           <Text
@@ -94,7 +99,7 @@ export const StickyGlassHeader = ({
             {title}
           </Text>
         </StickyHeaderPill>
-        {right ? <View style={styles.stickyRight}>{right}</View> : null}
+        {right ? <View style={[styles.stickyRight, { right: insets.right + 12 }]}>{right}</View> : null}
       </Animated.View>
     </View>
   );
@@ -113,7 +118,7 @@ export const LargeTitle = ({ title, subtitle, right }: LargeTitleProps) => {
     <View
       style={[
         styles.largeTitleRow,
-        { paddingHorizontal: theme.spacing.md, marginBottom: theme.spacing.md },
+        { marginBottom: theme.spacing.md },
       ]}
     >
       <View style={styles.largeTitleCopy}>
@@ -179,8 +184,12 @@ export const ScreenScaffold = ({
         scrollEventThrottle={16}
         refreshControl={refreshControl}
         contentContainerStyle={[
-          { paddingTop: insets.top + theme.spacing.md, paddingBottom: insets.bottom + theme.spacing.xl },
           contentContainerStyle,
+          {
+            paddingTop: insets.top + theme.spacing.md,
+            paddingBottom: insets.bottom + theme.spacing.xl,
+            ...readableHorizontalInsets(insets.left, insets.right, SCREEN_GUTTER),
+          },
         ]}
         showsVerticalScrollIndicator={false}
       >
@@ -203,7 +212,7 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   stickyInner: {
-    height: 44,
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -214,7 +223,6 @@ const styles = StyleSheet.create({
   },
   stickyRight: {
     position: 'absolute',
-    right: 12,
   },
   largeTitleRow: {
     flexDirection: 'row',

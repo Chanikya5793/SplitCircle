@@ -93,7 +93,7 @@ export const describeRoutes = (
         return {
           id,
           name: NAMES[id],
-          detail: 'Needs permission — allow nearby devices in Settings',
+          detail: 'Allow nearby device access in Settings',
           tone: 'warning' as const,
           connected: false,
         };
@@ -103,8 +103,8 @@ export const describeRoutes = (
           id,
           name: NAMES[id],
           detail: id === 'lan'
-            ? 'Off — join a Wi-Fi network'
-            : 'Off — turn the radio on',
+            ? 'Join a Wi-Fi network on both phones'
+            : 'Turn Bluetooth on',
           tone: 'warning' as const,
           connected: false,
         };
@@ -112,7 +112,7 @@ export const describeRoutes = (
       return {
         id,
         name: NAMES[id],
-        detail: 'On — no phones found yet',
+        detail: 'Ready. No phones found yet.',
         tone: 'neutral' as const,
         connected: false,
       };

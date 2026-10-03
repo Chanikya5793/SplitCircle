@@ -30,30 +30,35 @@ export const SelectionToolbar = ({
   return (
     <View style={[styles.wrap, { paddingTop: topInset + 6 }]}>
       <GlassView role="floating" style={styles.bar} intensity={50}>
-        <TouchableOpacity onPress={onClose} hitSlop={10} style={styles.iconBtn}>
+        <TouchableOpacity
+          onPress={onClose}
+          style={styles.iconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Close message selection"
+        >
           <Ionicons name="close" size={22} color={theme.colors.primary} />
         </TouchableOpacity>
         <Text style={[styles.count, { color: theme.colors.onSurface }]}>{count} selected</Text>
         <View style={styles.actionsRow}>
           {canCopy && (
-            <TouchableOpacity onPress={() => onAction('copy')} style={styles.actionBtn} hitSlop={6}>
+            <TouchableOpacity onPress={() => onAction('copy')} style={styles.actionBtn} accessibilityRole="button" accessibilityLabel="Copy selected messages">
               <Ionicons name="copy-outline" size={20} color={theme.colors.primary} />
             </TouchableOpacity>
           )}
           {canStar && (
-            <TouchableOpacity onPress={() => onAction('star')} style={styles.actionBtn} hitSlop={6}>
+            <TouchableOpacity onPress={() => onAction('star')} style={styles.actionBtn} accessibilityRole="button" accessibilityLabel="Star selected messages">
               <Ionicons name="star-outline" size={20} color={theme.colors.primary} />
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={() => onAction('forward')} style={styles.actionBtn} hitSlop={6}>
+          <TouchableOpacity onPress={() => onAction('forward')} style={styles.actionBtn} accessibilityRole="button" accessibilityLabel="Forward selected messages">
             <Ionicons name="arrow-redo" size={20} color={theme.colors.primary} />
           </TouchableOpacity>
           {canDeleteForEveryone && (
-            <TouchableOpacity onPress={() => onAction('deleteForEveryone')} style={styles.actionBtn} hitSlop={6}>
+            <TouchableOpacity onPress={() => onAction('deleteForEveryone')} style={styles.actionBtn} accessibilityRole="button" accessibilityLabel="Delete selected messages for everyone">
               <Ionicons name="trash-bin-outline" size={20} color={theme.colors.error} />
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={() => onAction('delete')} style={styles.actionBtn} hitSlop={6}>
+          <TouchableOpacity onPress={() => onAction('delete')} style={styles.actionBtn} accessibilityRole="button" accessibilityLabel="Delete selected messages for me">
             <Ionicons name="trash-outline" size={20} color={theme.colors.error} />
           </TouchableOpacity>
         </View>
@@ -81,19 +86,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   iconBtn: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
   count: { flex: 1, fontSize: 16, fontWeight: '600', marginLeft: 4 },
   actionsRow: { flexDirection: 'row', gap: 4 },
   actionBtn: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 18,
+    borderRadius: 22,
   },
 });
 

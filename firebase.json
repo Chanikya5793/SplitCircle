@@ -1,10 +1,22 @@
 {
+    "auth": {
+        "providers": {
+            "emailPassword": true,
+            "googleSignIn": {
+                "oAuthBrandDisplayName": "ManaSplit",
+                "supportEmail": "chanikya.chowdary1@gmail.com"
+            }
+        }
+    },
     "firestore": {
         "rules": "firestore.rules",
         "indexes": "firestore.indexes.json"
     },
     "database": {
         "rules": "database.rules.json"
+    },
+    "storage": {
+        "rules": "storage.rules"
     },
     "functions": [
         {

@@ -20,6 +20,10 @@ export type OutboxOp =
       /** Local receipt image to upload at flush time (may be gone after relaunch). */
       fileUri?: string;
       fileName?: string;
+      /** Currency observed when the money values were entered. */
+      expectedCurrency?: string;
+      /** Server-issued capability required for a metered advanced split. */
+      authorization?: { operationId: string; authorizationId: string };
       createdAt: number;
       attempts?: number;
     }
@@ -28,6 +32,8 @@ export type OutboxOp =
       kind: 'settleUp';
       groupId: string;
       settlement: Settlement;
+      /** Currency observed when this settlement amount was entered. */
+      expectedCurrency?: string;
       createdAt: number;
       attempts?: number;
     };

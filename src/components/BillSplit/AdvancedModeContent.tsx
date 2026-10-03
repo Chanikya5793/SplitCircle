@@ -4,19 +4,28 @@ import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
 import { heavyHaptic, lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
 import { resolveInitials } from '@/utils/identity';
+import { avatarColorsForKey } from '@/utils/avatarColors';
+import { secureRandomInt } from '@/utils/secureRandom';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LayoutChangeEvent, Pressable, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Button, Icon, IconButton, Text } from 'react-native-paper';
-import Animated, { FadeIn, FadeInDown, runOnJS, SlideInDown, SlideInUp, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  runOnJS,
+  SlideInDown,
+  SlideInUp,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import type { RouletteWheelRef } from './RouletteWheel';
 import RouletteWheel from './RouletteWheel';
 import { computeKarma, listDatesBetween } from './splitMath';
 import type { AdvancedSplitMethod, GamifiedMode, ItemCategory, Participant, ReceiptItem, TimeSplitVariant } from './types';
 import type { WeightedRouletteWheelRef } from './WeightedRouletteWheel';
 import WeightedRouletteWheel, { generatePercentageOptions } from './WeightedRouletteWheel';
-
-const AVATAR_COLORS = ['#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626', '#7C3AED'];
 
 // Visible hairline border for inputs/steppers — the faint palette.border read
 // as "no border" against solid cards, so editors get a stronger, theme-aware one.
@@ -46,12 +55,7 @@ function parseCalendarDate(value: string): Date | null {
   const day = Number(dayText);
   const date = new Date(year, monthIndex, day);
 
-  if (
-    Number.isNaN(date.getTime())
-    || date.getFullYear() !== year
-    || date.getMonth() !== monthIndex
-    || date.getDate() !== day
-  ) {
+  if (Number.isNaN(date.getTime()) || date.getFullYear() !== year || date.getMonth() !== monthIndex || date.getDate() !== day) {
     return null;
   }
 
@@ -167,119 +171,130 @@ interface CalendarMonthGridProps {
   selectedDates?: Set<string>;
 }
 
-const CalendarMonthGrid = React.memo(({
-  accentColor,
-  enabledDates,
-  monthDate,
-  onPressDate,
-  rangeEnd,
-  rangeStart,
-  selectedDates,
-}: CalendarMonthGridProps) => {
-  const { isDark, theme } = useTheme();
-  const palette = isDark ? darkColors : colors;
-  const monthCells = useMemo(() => buildCalendarMonthCells(monthDate), [monthDate]);
-  const todayIso = useMemo(() => toCalendarIso(new Date()), []);
-  const normalizedRangeStart = rangeStart && rangeEnd ? (rangeStart <= rangeEnd ? rangeStart : rangeEnd) : rangeStart;
-  const normalizedRangeEnd = rangeStart && rangeEnd ? (rangeStart <= rangeEnd ? rangeEnd : rangeStart) : rangeEnd;
+const CalendarMonthGrid = React.memo(
+  ({ accentColor, enabledDates, monthDate, onPressDate, rangeEnd, rangeStart, selectedDates }: CalendarMonthGridProps) => {
+    const { isDark, theme } = useTheme();
+    const palette = isDark ? darkColors : colors;
+    const monthCells = useMemo(() => buildCalendarMonthCells(monthDate), [monthDate]);
+    const todayIso = useMemo(() => toCalendarIso(new Date()), []);
+    const normalizedRangeStart = rangeStart && rangeEnd ? (rangeStart <= rangeEnd ? rangeStart : rangeEnd) : rangeStart;
+    const normalizedRangeEnd = rangeStart && rangeEnd ? (rangeStart <= rangeEnd ? rangeEnd : rangeStart) : rangeEnd;
 
-  return (
-    <SolidCard style={styles.calendarMonthCard}>
-      <View style={styles.calendarMonthHeader}>
-        <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-          {getCalendarMonthLabel(monthDate)}
-        </Text>
-      </View>
+    return (
+      <SolidCard style={styles.calendarMonthCard}>
+        <View style={styles.calendarMonthHeader}>
+          <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+            {getCalendarMonthLabel(monthDate)}
+          </Text>
+        </View>
 
-      <View style={styles.calendarWeekHeader}>
-        {WEEKDAY_LABELS.map((label, index) => {
-          const isWeekendHeader = index === 0 || index === 6;
-          return (
-            <Text
-              key={`${label}-${index}`}
-              style={[
-                styles.calendarWeekLabel,
-                { color: isWeekendHeader ? `${accentColor}88` : palette.muted },
-              ]}
-            >
-              {label}
-            </Text>
-          );
-        })}
-      </View>
-
-      <View style={styles.calendarGrid}>
-        {monthCells.map((value, index) => {
-          if (!value) {
-            return <View key={`empty-${index}`} style={styles.calendarEmptyCell} />;
-          }
-
-          const dayNumber = Number(value.slice(-2));
-          const parsedDate = parseCalendarDate(value);
-          const dayOfWeek = parsedDate?.getDay() ?? 1;
-          const isWeekendCell = dayOfWeek === 0 || dayOfWeek === 6;
-          const isToday = value === todayIso;
-          const isEnabled = !enabledDates || enabledDates.has(value);
-          const isSelected = selectedDates?.has(value) ?? false;
-          const isRangeStart = Boolean(rangeStart && value === rangeStart);
-          const isRangeEnd = Boolean(rangeEnd && value === rangeEnd);
-          const isPendingStart = Boolean(rangeStart && !rangeEnd && value === rangeStart);
-          const isInRange = Boolean(
-            normalizedRangeStart
-            && normalizedRangeEnd
-            && value >= normalizedRangeStart
-            && value <= normalizedRangeEnd,
-          );
-          const showSolidSelection = isSelected || isRangeStart || isRangeEnd || isPendingStart;
-
-          return (
-            <TouchableOpacity
-              key={value}
-              disabled={!isEnabled}
-              style={styles.calendarCellWrap}
-              onPress={() => onPressDate(value)}
-            >
-              <View
+        <View style={styles.calendarWeekHeader}>
+          {WEEKDAY_LABELS.map((label, index) => {
+            const isWeekendHeader = index === 0 || index === 6;
+            return (
+              <Text
+                key={`${label}-${index}`}
                 style={[
-                  styles.calendarDayCell,
+                  styles.calendarWeekLabel,
                   {
-                    backgroundColor: showSolidSelection
-                      ? accentColor
-                      : isInRange
-                        ? `${accentColor}16`
-                        : isWeekendCell
-                          ? (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)')
-                          : 'transparent',
-                    borderColor: showSolidSelection
-                      ? accentColor
-                      : isInRange
-                        ? `${accentColor}44`
-                        : palette.border,
-                    opacity: isEnabled ? 1 : 0.3,
+                    color: isWeekendHeader ? `${accentColor}88` : palette.muted,
                   },
                 ]}
               >
-                <Text
+                {label}
+              </Text>
+            );
+          })}
+        </View>
+
+        <View style={styles.calendarGrid}>
+          {monthCells.map((value, index) => {
+            if (!value) {
+              return <View key={`empty-${index}`} style={styles.calendarEmptyCell} />;
+            }
+
+            const dayNumber = Number(value.slice(-2));
+            const parsedDate = parseCalendarDate(value);
+            const dayOfWeek = parsedDate?.getDay() ?? 1;
+            const isWeekendCell = dayOfWeek === 0 || dayOfWeek === 6;
+            const isToday = value === todayIso;
+            const isEnabled = !enabledDates || enabledDates.has(value);
+            const isSelected = selectedDates?.has(value) ?? false;
+            const isRangeStart = Boolean(rangeStart && value === rangeStart);
+            const isRangeEnd = Boolean(rangeEnd && value === rangeEnd);
+            const isPendingStart = Boolean(rangeStart && !rangeEnd && value === rangeStart);
+            const isInRange = Boolean(
+              normalizedRangeStart && normalizedRangeEnd && value >= normalizedRangeStart && value <= normalizedRangeEnd,
+            );
+            const showSolidSelection = isSelected || isRangeStart || isRangeEnd || isPendingStart;
+
+            return (
+              <TouchableOpacity
+                key={value}
+                disabled={!isEnabled}
+                style={styles.calendarCellWrap}
+                onPress={() => onPressDate(value)}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  parsedDate?.toLocaleDateString(undefined, {
+                    weekday: 'long',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                  }) ?? value
+                }
+                accessibilityState={{
+                  selected: showSolidSelection,
+                  disabled: !isEnabled,
+                }}
+              >
+                <View
                   style={[
-                    styles.calendarDayText,
+                    styles.calendarDayCell,
                     {
-                      color: showSolidSelection ? '#FFFFFF' : theme.colors.onSurface,
+                      backgroundColor: showSolidSelection
+                        ? accentColor
+                        : isInRange
+                          ? `${accentColor}16`
+                          : isWeekendCell
+                            ? isDark
+                              ? 'rgba(255,255,255,0.04)'
+                              : 'rgba(0,0,0,0.03)'
+                            : 'transparent',
+                      borderColor: showSolidSelection ? accentColor : isInRange ? `${accentColor}44` : palette.border,
+                      opacity: isEnabled ? 1 : 0.3,
                     },
                   ]}
                 >
-                  {dayNumber}
-                </Text>
-                {isToday && (
-                  <View style={[styles.calendarTodayDot, { backgroundColor: showSolidSelection ? '#FFFFFF' : accentColor }]} />
-                )}
-              </View>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-    </SolidCard>
-  );
-});
+                  <Text
+                    style={[
+                      styles.calendarDayText,
+                      {
+                        color: showSolidSelection ? theme.colors.onPrimary : theme.colors.onSurface,
+                      },
+                    ]}
+                  >
+                    {dayNumber}
+                  </Text>
+                  {isToday && (
+                    <View
+                      style={[
+                        styles.calendarTodayDot,
+                        {
+                          backgroundColor: showSolidSelection ? theme.colors.onPrimary : accentColor,
+                        },
+                      ]}
+                    />
+                  )}
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </SolidCard>
+    );
+  },
+);
 
 CalendarMonthGrid.displayName = 'CalendarMonthGrid';
 
@@ -315,11 +330,14 @@ const TimeValueSlider = ({
   const isDragging = useSharedValue(false);
   const lastSteppedValue = useSharedValue(clampedValue);
 
-  const onLayout = useCallback((event: LayoutChangeEvent) => {
-    const w = event.nativeEvent.layout.width;
-    trackWidth.value = w;
-    thumbX.value = fraction * w;
-  }, [fraction, thumbX, trackWidth]);
+  const onLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const w = event.nativeEvent.layout.width;
+      trackWidth.value = w;
+      thumbX.value = fraction * w;
+    },
+    [fraction, thumbX, trackWidth],
+  );
 
   // Sync external value changes when not dragging
   useEffect(() => {
@@ -329,17 +347,20 @@ const TimeValueSlider = ({
     }
   }, [clampedValue, fraction, isDragging, lastSteppedValue, thumbX, trackWidth]);
 
-  const emitValue = useCallback((x: number, withHaptic: boolean) => {
-    const w = trackWidth.value;
-    if (w <= 0) return;
-    const ratio = Math.max(0, Math.min(1, x / w));
-    const stepped = Math.round(ratio * range + minimumValue);
-    if (withHaptic && stepped !== lastSteppedValue.value) {
-      lightHaptic();
-    }
-    lastSteppedValue.value = stepped;
-    onValueChange(stepped);
-  }, [lastSteppedValue, minimumValue, onValueChange, range, trackWidth]);
+  const emitValue = useCallback(
+    (x: number, withHaptic: boolean) => {
+      const w = trackWidth.value;
+      if (w <= 0) return;
+      const ratio = Math.max(0, Math.min(1, x / w));
+      const stepped = Math.round(ratio * range + minimumValue);
+      if (withHaptic && stepped !== lastSteppedValue.value) {
+        lightHaptic();
+      }
+      lastSteppedValue.value = stepped;
+      onValueChange(stepped);
+    },
+    [lastSteppedValue, minimumValue, onValueChange, range, trackWidth],
+  );
 
   const emitComplete = useCallback(() => {
     onSlidingComplete?.();
@@ -364,13 +385,12 @@ const TimeValueSlider = ({
       isDragging.value = false;
     });
 
-  const tapGesture = Gesture.Tap()
-    .onEnd((event) => {
-      const tapX = Math.max(0, Math.min(trackWidth.value, event.x));
-      thumbX.value = tapX;
-      runOnJS(emitValue)(tapX, true);
-      runOnJS(emitComplete)();
-    });
+  const tapGesture = Gesture.Tap().onEnd((event) => {
+    const tapX = Math.max(0, Math.min(trackWidth.value, event.x));
+    thumbX.value = tapX;
+    runOnJS(emitValue)(tapX, true);
+    runOnJS(emitComplete)();
+  });
 
   const gesture = Gesture.Exclusive(panGesture, tapGesture);
 
@@ -401,23 +421,26 @@ const TimeValueSlider = ({
   );
 };
 
-const DecimalInput = React.memo(({ value, onChange, placeholder, placeholderTextColor, style, keyboardType = 'decimal-pad' }: any) => {
-  const [local, setLocal] = React.useState<string | null>(null);
-  return (
-    <TextInput
-      style={style}
-      value={local !== null ? local : (value > 0 ? value.toString() : '')}
-      onChangeText={(v) => {
-        setLocal(v);
-        onChange(v);
-      }}
-      onBlur={() => setLocal(null)}
-      keyboardType={keyboardType}
-      placeholder={placeholder}
-      placeholderTextColor={placeholderTextColor}
-    />
-  );
-});
+const DecimalInput = React.memo(
+  ({ value, onChange, placeholder, placeholderTextColor, style, keyboardType = 'decimal-pad', ...inputProps }: any) => {
+    const [local, setLocal] = React.useState<string | null>(null);
+    return (
+      <TextInput
+        {...inputProps}
+        style={style}
+        value={local !== null ? local : value > 0 ? value.toString() : ''}
+        onChangeText={(v) => {
+          setLocal(v);
+          onChange(v);
+        }}
+        onBlur={() => setLocal(null)}
+        keyboardType={keyboardType}
+        placeholder={placeholder}
+        placeholderTextColor={placeholderTextColor}
+      />
+    );
+  },
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // A. ITEMIZED RECEIPT SPLIT
@@ -433,175 +456,251 @@ interface ItemizedReceiptProps {
   currency: string;
 }
 
-const ItemizedReceiptMode = React.memo(({
-  items, onItemsChange, taxAmount, onTaxChange, tipAmount, onTipChange, participants, currency,
-}: ItemizedReceiptProps) => {
-  const { isDark, theme } = useTheme();
-  const palette = isDark ? darkColors : colors;
+const ItemizedReceiptMode = React.memo(
+  ({ items, onItemsChange, taxAmount, onTaxChange, tipAmount, onTipChange, participants, currency }: ItemizedReceiptProps) => {
+    const { isDark, theme } = useTheme();
+    const palette = isDark ? darkColors : colors;
 
-  // New items default to everyone who's in — the common case is "we shared it".
-  const includedIds = useMemo(() => participants.filter((p) => p.included).map((p) => p.id), [participants]);
-  const addItem = useCallback(() => {
-    lightHaptic();
-    onItemsChange([...items, { id: `item_${Date.now()}`, name: '', price: 0, assignedTo: [...includedIds] }]);
-  }, [items, onItemsChange, includedIds]);
+    // New items default to everyone who's in — the common case is "we shared it".
+    const includedIds = useMemo(() => participants.filter((p) => p.included).map((p) => p.id), [participants]);
+    const addItem = useCallback(() => {
+      lightHaptic();
+      onItemsChange([
+        ...items,
+        {
+          id: `item_${Date.now()}`,
+          name: '',
+          price: 0,
+          assignedTo: [...includedIds],
+        },
+      ]);
+    }, [items, onItemsChange, includedIds]);
 
-  const updateItem = useCallback((id: string, field: keyof ReceiptItem, value: string | number | string[]) => {
-    onItemsChange(items.map((it) => (it.id === id ? { ...it, [field]: value } : it)));
-  }, [items, onItemsChange]);
+    const updateItem = useCallback(
+      (id: string, field: keyof ReceiptItem, value: string | number | string[]) => {
+        onItemsChange(items.map((it) => (it.id === id ? { ...it, [field]: value } : it)));
+      },
+      [items, onItemsChange],
+    );
 
-  const removeItem = useCallback((id: string) => {
-    mediumHaptic();
-    onItemsChange(items.filter((it) => it.id !== id));
-  }, [items, onItemsChange]);
+    const removeItem = useCallback(
+      (id: string) => {
+        mediumHaptic();
+        onItemsChange(items.filter((it) => it.id !== id));
+      },
+      [items, onItemsChange],
+    );
 
-  const duplicateItem = useCallback((id: string) => {
-    mediumHaptic();
-    const itemIndex = items.findIndex((it) => it.id === id);
-    if (itemIndex === -1) return;
-    const original = items[itemIndex];
-    const duplicated = {
-      ...original,
-      id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      assignedTo: [...original.assignedTo], // deep copy arrays for perfect data isolation
-    };
-    const next = [...items];
-    next.splice(itemIndex + 1, 0, duplicated);
-    onItemsChange(next);
-  }, [items, onItemsChange]);
+    const duplicateItem = useCallback(
+      (id: string) => {
+        mediumHaptic();
+        const itemIndex = items.findIndex((it) => it.id === id);
+        if (itemIndex === -1) return;
+        const original = items[itemIndex];
+        const duplicated = {
+          ...original,
+          id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          assignedTo: [...original.assignedTo], // deep copy arrays for perfect data isolation
+        };
+        const next = [...items];
+        next.splice(itemIndex + 1, 0, duplicated);
+        onItemsChange(next);
+      },
+      [items, onItemsChange],
+    );
 
-  const toggleAssignment = useCallback((itemId: string, userId: string) => {
-    lightHaptic();
-    const item = items.find((it) => it.id === itemId);
-    if (!item) return;
-    const assigned = item.assignedTo.includes(userId)
-      ? item.assignedTo.filter((id) => id !== userId)
-      : [...item.assignedTo, userId];
-    updateItem(itemId, 'assignedTo', assigned);
-  }, [items, updateItem]);
+    const toggleAssignment = useCallback(
+      (itemId: string, userId: string) => {
+        lightHaptic();
+        const item = items.find((it) => it.id === itemId);
+        if (!item) return;
+        const assigned = item.assignedTo.includes(userId) ? item.assignedTo.filter((id) => id !== userId) : [...item.assignedTo, userId];
+        updateItem(itemId, 'assignedTo', assigned);
+      },
+      [items, updateItem],
+    );
 
-  const subtotal = items.reduce((s, it) => s + it.price, 0);
+    const subtotal = items.reduce((s, it) => s + it.price, 0);
 
-  return (
-    <View style={styles.section}>
-
-      {items.length === 0 && (
-        <SolidCard style={styles.receiptEmpty}>
-          <Icon source="receipt-text-outline" size={30} color={palette.muted} />
-          <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-            No items yet
-          </Text>
-          <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center', paddingHorizontal: 20 }}>
-            Add each line off the receipt and tap who shared it — or scan the receipt from the previous screen.
-          </Text>
-        </SolidCard>
-      )}
-
-      {items.map((item, idx) => (
-        <Animated.View key={item.id} entering={SlideInDown.delay(idx * 40).springify()}>
-          <SolidCard style={styles.itemCard}>
-            <View style={styles.itemRow}>
-              <TextInput
-                style={[styles.itemNameInput, { color: theme.colors.onSurface, borderColor: inputBorder(isDark) }]}
-                value={item.name}
-                onChangeText={(v) => updateItem(item.id, 'name', v)}
-                placeholder="Item name"
-                placeholderTextColor={palette.muted}
-              />
-              <View style={styles.itemPriceRow}>
-                <Text style={{ color: palette.muted }}>$</Text>
-                <DecimalInput
-                  style={[styles.itemPriceInput, { color: theme.colors.onSurface, borderColor: inputBorder(isDark) }]}
-                  value={item.price}
-                  onChange={(v: string) => updateItem(item.id, 'price', parseFloat(v) || 0)}
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
-                  placeholderTextColor={palette.muted}
-                />
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <IconButton icon="content-copy" size={18} iconColor={palette.muted} onPress={() => duplicateItem(item.id)} style={{ margin: 0, marginRight: -8 }} />
-                <IconButton icon="close-circle" size={18} iconColor={palette.muted} onPress={() => removeItem(item.id)} style={{ margin: 0 }} />
-              </View>
-            </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.assignRow}>
-              {participants.filter((p) => p.included).map((p, pi) => {
-                const isAssigned = item.assignedTo.includes(p.id);
-                return (
-                  <TouchableOpacity
-                    key={p.id}
-                    onPress={() => toggleAssignment(item.id, p.id)}
-                    style={[
-                      styles.assignChip,
-                      { backgroundColor: isAssigned ? `${theme.colors.primary}20` : 'transparent', borderColor: isAssigned ? theme.colors.primary : palette.border },
-                    ]}
-                  >
-                    <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[pi % AVATAR_COLORS.length] }]}>
-                      <Text style={styles.miniInitials}>{resolveInitials(p.name)}</Text>
-                    </View>
-                    <Text style={[styles.assignName, { color: isAssigned ? theme.colors.primary : palette.muted }]}>{p.name.split(' ')[0]}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+    return (
+      <View style={styles.section}>
+        {items.length === 0 && (
+          <SolidCard style={styles.receiptEmpty}>
+            <Icon source="receipt-text-outline" size={30} color={palette.muted} />
+            <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+              No items yet
+            </Text>
+            <Text
+              variant="bodySmall"
+              style={{
+                color: palette.muted,
+                textAlign: 'center',
+                paddingHorizontal: 20,
+              }}
+            >
+              Add each line off the receipt and tap who shared it. Or scan the receipt from the previous screen.
+            </Text>
           </SolidCard>
-        </Animated.View>
-      ))}
+        )}
 
-      <Button
-        mode="outlined"
-        icon="plus"
-        onPress={addItem}
-        style={[styles.addBtn, { borderColor: inputBorder(isDark) }]}
-        textColor={theme.colors.primary}
-      >
-        Add item
-      </Button>
-
-      {items.length > 0 && (
-        <>
-          <View style={styles.extraRow}>
-            <View style={styles.extraField}>
-              <Text variant="bodySmall" style={{ color: palette.muted }}>Tax</Text>
-              <View style={[styles.inputRow, styles.extraInputWrap, { borderColor: inputBorder(isDark) }]}>
-                <Text style={{ color: palette.muted }}>$</Text>
-                <DecimalInput
-                  style={[styles.extraInput, { color: theme.colors.onSurface }]}
-                  value={taxAmount}
-                  onChange={(v: string) => onTaxChange(parseFloat(v) || 0)}
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
+        {items.map((item, idx) => (
+          <Animated.View key={item.id} entering={SlideInDown.delay(idx * 40).springify()}>
+            <SolidCard style={styles.itemCard}>
+              <View style={styles.itemRow}>
+                <TextInput
+                  style={[
+                    styles.itemNameInput,
+                    {
+                      color: theme.colors.onSurface,
+                      borderColor: inputBorder(isDark),
+                    },
+                  ]}
+                  value={item.name}
+                  onChangeText={(v) => updateItem(item.id, 'name', v)}
+                  placeholder="Item name"
                   placeholderTextColor={palette.muted}
+                  accessibilityLabel={`Item ${idx + 1} name`}
                 />
+                <View style={styles.itemPriceRow}>
+                  <Text style={{ color: palette.muted }}>$</Text>
+                  <DecimalInput
+                    style={[
+                      styles.itemPriceInput,
+                      {
+                        color: theme.colors.onSurface,
+                        borderColor: inputBorder(isDark),
+                      },
+                    ]}
+                    value={item.price}
+                    onChange={(v: string) => updateItem(item.id, 'price', parseFloat(v) || 0)}
+                    keyboardType="decimal-pad"
+                    placeholder="0.00"
+                    placeholderTextColor={palette.muted}
+                    accessibilityLabel={`${item.name || `Item ${idx + 1}`} price in ${currency}`}
+                  />
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <IconButton
+                    icon="content-copy"
+                    size={18}
+                    iconColor={palette.muted}
+                    onPress={() => duplicateItem(item.id)}
+                    accessibilityLabel={`Duplicate ${item.name || `item ${idx + 1}`}`}
+                    style={styles.itemActionButton}
+                  />
+                  <IconButton
+                    icon="close-circle"
+                    size={18}
+                    iconColor={palette.muted}
+                    onPress={() => removeItem(item.id)}
+                    accessibilityLabel={`Remove ${item.name || `item ${idx + 1}`}`}
+                    style={styles.itemActionButton}
+                  />
+                </View>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.assignRow}>
+                {participants
+                  .filter((p) => p.included)
+                  .map((p) => {
+                    const isAssigned = item.assignedTo.includes(p.id);
+                    const avatar = avatarColorsForKey(p.id, isDark);
+                    return (
+                      <TouchableOpacity
+                        key={p.id}
+                        onPress={() => toggleAssignment(item.id, p.id)}
+                        accessibilityRole="checkbox"
+                        accessibilityLabel={`${p.name} shared ${item.name || `item ${idx + 1}`}`}
+                        accessibilityState={{ checked: isAssigned }}
+                        style={[
+                          styles.assignChip,
+                          {
+                            backgroundColor: isAssigned ? `${theme.colors.primary}20` : 'transparent',
+                            borderColor: isAssigned ? theme.colors.primary : palette.border,
+                          },
+                        ]}
+                      >
+                        <View style={[styles.miniAvatar, { backgroundColor: avatar.background }]}>
+                          <Text style={[styles.miniInitials, { color: avatar.foreground }]}>{resolveInitials(p.name)}</Text>
+                        </View>
+                        <Text
+                          style={[
+                            styles.assignName,
+                            {
+                              color: isAssigned ? theme.colors.primary : palette.muted,
+                            },
+                          ]}
+                        >
+                          {p.name.split(' ')[0]}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+              </ScrollView>
+            </SolidCard>
+          </Animated.View>
+        ))}
+
+        <Button
+          mode="outlined"
+          icon="plus"
+          onPress={addItem}
+          style={[styles.addBtn, { borderColor: inputBorder(isDark) }]}
+          textColor={theme.colors.primary}
+        >
+          Add item
+        </Button>
+
+        {items.length > 0 && (
+          <>
+            <View style={styles.extraRow}>
+              <View style={styles.extraField}>
+                <Text variant="bodySmall" style={{ color: palette.muted }}>
+                  Tax
+                </Text>
+                <View style={[styles.inputRow, styles.extraInputWrap, { borderColor: inputBorder(isDark) }]}>
+                  <Text style={{ color: palette.muted }}>$</Text>
+                  <DecimalInput
+                    style={[styles.extraInput, { color: theme.colors.onSurface }]}
+                    value={taxAmount}
+                    onChange={(v: string) => onTaxChange(parseFloat(v) || 0)}
+                    keyboardType="decimal-pad"
+                    placeholder="0.00"
+                    placeholderTextColor={palette.muted}
+                    accessibilityLabel={`Tax in ${currency}`}
+                  />
+                </View>
+              </View>
+              <View style={styles.extraField}>
+                <Text variant="bodySmall" style={{ color: palette.muted }}>
+                  Tip
+                </Text>
+                <View style={[styles.inputRow, styles.extraInputWrap, { borderColor: inputBorder(isDark) }]}>
+                  <Text style={{ color: palette.muted }}>$</Text>
+                  <DecimalInput
+                    style={[styles.extraInput, { color: theme.colors.onSurface }]}
+                    value={tipAmount}
+                    onChange={(v: string) => onTipChange(parseFloat(v) || 0)}
+                    keyboardType="decimal-pad"
+                    placeholder="0.00"
+                    placeholderTextColor={palette.muted}
+                    accessibilityLabel={`Tip in ${currency}`}
+                  />
+                </View>
               </View>
             </View>
-            <View style={styles.extraField}>
-              <Text variant="bodySmall" style={{ color: palette.muted }}>Tip</Text>
-              <View style={[styles.inputRow, styles.extraInputWrap, { borderColor: inputBorder(isDark) }]}>
-                <Text style={{ color: palette.muted }}>$</Text>
-                <DecimalInput
-                  style={[styles.extraInput, { color: theme.colors.onSurface }]}
-                  value={tipAmount}
-                  onChange={(v: string) => onTipChange(parseFloat(v) || 0)}
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
-                  placeholderTextColor={palette.muted}
-                />
-              </View>
-            </View>
-          </View>
 
-          <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-            Subtotal {formatCurrency(subtotal, currency)} · tax & tip are prorated by each person's share.
-          </Text>
-        </>
-      )}
-    </View>
-  );
-});
+            <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
+              Subtotal {formatCurrency(subtotal, currency)} · tax & tip are prorated by each person's share.
+            </Text>
+          </>
+        )}
+      </View>
+    );
+  },
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// B. INCOME-PROPORTIONAL
+// B. WEIGHTED SPLIT (legacy persistence key: `income`)
 // ═══════════════════════════════════════════════════════════════════════════════
 interface IncomeProps {
   participants: Participant[];
@@ -619,65 +718,107 @@ const IncomeProportionalMode = React.memo(({ participants, onWeightChange, onTog
   return (
     <View style={styles.section}>
       <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-        Enter each person's salary (or any weight) — the bill splits proportionally. Tap a name to include or exclude them.
+        Enter a relative weight for each person. Only the proportions are saved. Tap a name to include or exclude them.
       </Text>
 
       <SolidCard style={styles.groupCard}>
-      {participants.map((p, index) => {
-        const pct = totalWeight > 0 ? ((p.incomeWeight / totalWeight) * 100).toFixed(1) : '0';
-        // The WHOLE row toggles inclusion; the weight input is the one child
-        // that captures its own tap (so editing never flips the row).
-        return (
-          <Animated.View key={p.id} entering={FadeInDown.delay(index * 40).springify()}>
-            <Pressable
-              onPress={onToggle ? () => { lightHaptic(); onToggle(p.id); } : undefined}
-              accessibilityRole="button"
-              accessibilityState={{ selected: p.included }}
-              style={({ pressed }) => [
-                styles.incomeRow,
-                index === participants.length - 1 && styles.lastRow,
-                pressed && { opacity: 0.6 },
-              ]}
-            >
-              <View style={[
-                styles.miniAvatar,
-                { backgroundColor: p.included ? AVATAR_COLORS[index % AVATAR_COLORS.length] : palette.border },
-              ]}>
-                <Text style={styles.miniInitials}>{resolveInitials(p.name)}</Text>
+        {participants.map((p, index) => {
+          const pct = totalWeight > 0 ? ((p.incomeWeight / totalWeight) * 100).toFixed(1) : '0';
+          const avatar = avatarColorsForKey(p.id, isDark);
+          // The WHOLE row toggles inclusion; the weight input is the one child
+          // that captures its own tap (so editing never flips the row).
+          return (
+            <Animated.View key={p.id} entering={FadeInDown.delay(index * 40).springify()}>
+              <View style={[styles.incomeRow, index === participants.length - 1 && styles.lastRow]}>
+                <Pressable
+                  onPress={
+                    onToggle
+                      ? () => {
+                          lightHaptic();
+                          onToggle(p.id);
+                        }
+                      : undefined
+                  }
+                  accessibilityRole="checkbox"
+                  accessibilityLabel={`${p.name} in income split`}
+                  accessibilityState={{ checked: p.included }}
+                  style={({ pressed }) => [styles.incomeIdentity, pressed && { opacity: 0.6 }]}
+                >
+                  <View
+                    style={[
+                      styles.miniAvatar,
+                      {
+                        backgroundColor: p.included ? avatar.background : palette.border,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.miniInitials,
+                        {
+                          color: p.included ? avatar.foreground : theme.colors.onSurfaceVariant,
+                        },
+                      ]}
+                    >
+                      {resolveInitials(p.name)}
+                    </Text>
+                  </View>
+                  <Text
+                    style={[
+                      styles.incomeName,
+                      {
+                        color: p.included ? theme.colors.onSurface : palette.muted,
+                      },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {p.name}
+                  </Text>
+                </Pressable>
+                {p.included ? (
+                  <>
+                    <DecimalInput
+                      style={[
+                        styles.incomeInput,
+                        {
+                          color: theme.colors.onSurface,
+                          borderColor: inputBorder(isDark),
+                        },
+                      ]}
+                      value={p.incomeWeight > 0 ? p.incomeWeight : ''}
+                      onChange={(v: string) => onWeightChange(p.id, v)}
+                      keyboardType="numeric"
+                      placeholder="0"
+                      placeholderTextColor={palette.muted}
+                      accessibilityLabel={`Income weight for ${p.name}`}
+                    />
+                    <Text variant="bodySmall" style={[styles.incomePct, { color: palette.muted }]}>
+                      {pct}%
+                    </Text>
+                    <Text
+                      variant="bodySmall"
+                      style={{
+                        color: theme.colors.primary,
+                        fontWeight: '700',
+                        minWidth: 58,
+                        textAlign: 'right',
+                      }}
+                    >
+                      {formatCurrency(p.computedAmount, currency)}
+                    </Text>
+                  </>
+                ) : (
+                  <View style={styles.rowAddCue}>
+                    <Text variant="bodySmall" style={{ color: palette.muted }}>
+                      Not splitting
+                    </Text>
+                    <Icon source="plus-circle-outline" size={18} color={theme.colors.primary} />
+                  </View>
+                )}
               </View>
-              <Text
-                style={[styles.incomeName, { color: p.included ? theme.colors.onSurface : palette.muted }]}
-                numberOfLines={1}
-              >
-                {p.name}
-              </Text>
-              {p.included ? (
-                <>
-                  <DecimalInput
-                    style={[styles.incomeInput, { color: theme.colors.onSurface, borderColor: inputBorder(isDark) }]}
-                    value={p.incomeWeight > 0 ? p.incomeWeight : ''}
-                    onChange={(v: string) => onWeightChange(p.id, v)}
-                    keyboardType="numeric"
-                    placeholder="0"
-                    placeholderTextColor={palette.muted}
-                  />
-                  <Text variant="bodySmall" style={[styles.incomePct, { color: palette.muted }]}>
-                    {pct}%
-                  </Text>
-                  <Text variant="bodySmall" style={{ color: theme.colors.primary, fontWeight: '700', minWidth: 58, textAlign: 'right' }}>
-                    {formatCurrency(p.computedAmount, currency)}
-                  </Text>
-                </>
-              ) : (
-                <View style={styles.rowAddCue}>
-                  <Text variant="bodySmall" style={{ color: palette.muted }}>Not splitting</Text>
-                  <Icon source="plus-circle-outline" size={18} color={theme.colors.primary} />
-                </View>
-              )}
-            </Pressable>
-          </Animated.View>
-        );
-      })}
+            </Animated.View>
+          );
+        })}
       </SolidCard>
     </View>
   );
@@ -695,103 +836,162 @@ interface ConsumptionProps {
   currency: string;
 }
 
-const ConsumptionMode = React.memo(({ totalParts, onTotalPartsChange, participants, onPartsChange, onToggle, currency }: ConsumptionProps) => {
-  const { isDark, theme } = useTheme();
-  const palette = isDark ? darkColors : colors;
-  const consumed = participants.filter((p) => p.included).reduce((s, p) => s + p.partsConsumed, 0);
-  const stepperBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)';
-  const stepperBorder = { borderWidth: StyleSheet.hairlineWidth, borderColor: inputBorder(isDark) };
+const ConsumptionMode = React.memo(
+  ({ totalParts, onTotalPartsChange, participants, onPartsChange, onToggle, currency }: ConsumptionProps) => {
+    const { isDark, theme } = useTheme();
+    const palette = isDark ? darkColors : colors;
+    const consumed = participants.filter((p) => p.included).reduce((s, p) => s + p.partsConsumed, 0);
+    const stepperBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)';
+    const stepperBorder = {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: inputBorder(isDark),
+    };
 
-  return (
-    <View style={styles.section}>
-      <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-        Set the total parts, then how many each person had. Tap a name to include or exclude them.
-      </Text>
-
-      <SolidCard style={styles.groupCard}>
-      <View style={styles.totalPartsRow}>
-        <Text style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Total parts</Text>
-        <View style={styles.shareControls}>
-          <TouchableOpacity
-            style={[styles.shareBtn, stepperBorder, { backgroundColor: stepperBg }]}
-            onPress={() => { lightHaptic(); onTotalPartsChange(Math.max(1, totalParts - 1)); }}
-          >
-            <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>−</Text>
-          </TouchableOpacity>
-          <Text style={[styles.shareValue, { color: theme.colors.onSurface }]}>{totalParts}</Text>
-          <TouchableOpacity
-            style={[styles.shareBtn, stepperBorder, { backgroundColor: stepperBg }]}
-            onPress={() => { lightHaptic(); onTotalPartsChange(totalParts + 1); }}
-          >
-            <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {consumed > totalParts && (
-        <Text style={[styles.warningText, { color: colors.danger }]}>
-          Consumed parts ({consumed}) exceed total ({totalParts})
+    return (
+      <View style={styles.section}>
+        <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
+          Set the total parts, then how many each person had. Tap a name to include or exclude them.
         </Text>
-      )}
 
-      {participants.map((p, index) => (
-        <Animated.View key={p.id} entering={FadeInDown.delay(index * 40).springify()}>
-          <Pressable
-            onPress={onToggle ? () => { lightHaptic(); onToggle(p.id); } : undefined}
-            accessibilityRole="button"
-            accessibilityState={{ selected: p.included }}
-            style={({ pressed }) => [
-              styles.incomeRow,
-              index === participants.length - 1 && styles.lastRow,
-              pressed && { opacity: 0.6 },
-            ]}
-          >
-            <View style={[
-              styles.miniAvatar,
-              { backgroundColor: p.included ? AVATAR_COLORS[index % AVATAR_COLORS.length] : palette.border },
-            ]}>
-              <Text style={styles.miniInitials}>{resolveInitials(p.name)}</Text>
+        <SolidCard style={styles.groupCard}>
+          <View style={styles.totalPartsRow}>
+            <Text style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Total parts</Text>
+            <View style={styles.shareControls}>
+              <TouchableOpacity
+                style={[styles.shareBtn, stepperBorder, { backgroundColor: stepperBg }]}
+                onPress={() => {
+                  lightHaptic();
+                  onTotalPartsChange(Math.max(1, totalParts - 1));
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Decrease total parts"
+              >
+                <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>−</Text>
+              </TouchableOpacity>
+              <Text style={[styles.shareValue, { color: theme.colors.onSurface }]}>{totalParts}</Text>
+              <TouchableOpacity
+                style={[styles.shareBtn, stepperBorder, { backgroundColor: stepperBg }]}
+                onPress={() => {
+                  lightHaptic();
+                  onTotalPartsChange(totalParts + 1);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Increase total parts"
+              >
+                <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
+              </TouchableOpacity>
             </View>
-            <Text
-              style={[styles.incomeName, { color: p.included ? theme.colors.onSurface : palette.muted }]}
-              numberOfLines={1}
-            >
-              {p.name}
+          </View>
+
+          {consumed > totalParts && (
+            <Text style={[styles.warningText, { color: theme.colors.danger }]}>
+              Consumed parts ({consumed}) exceed total ({totalParts})
             </Text>
-            {p.included ? (
-              <>
-                <View style={styles.shareControls}>
-                  <TouchableOpacity
-                    style={[styles.shareBtn, stepperBorder, { backgroundColor: stepperBg }]}
-                    onPress={() => { lightHaptic(); onPartsChange(p.id, Math.max(0, p.partsConsumed - 1).toString()); }}
+          )}
+
+          {participants.map((p, index) => (
+            <Animated.View key={p.id} entering={FadeInDown.delay(index * 40).springify()}>
+              <View style={[styles.incomeRow, index === participants.length - 1 && styles.lastRow]}>
+                <Pressable
+                  onPress={
+                    onToggle
+                      ? () => {
+                          lightHaptic();
+                          onToggle(p.id);
+                        }
+                      : undefined
+                  }
+                  accessibilityRole="checkbox"
+                  accessibilityLabel={`${p.name} in split`}
+                  accessibilityState={{ checked: p.included }}
+                  style={({ pressed }) => [styles.incomeIdentity, pressed && { opacity: 0.6 }]}
+                >
+                  <View
+                    style={[
+                      styles.miniAvatar,
+                      {
+                        backgroundColor: p.included ? avatarColorsForKey(p.id, isDark).background : palette.border,
+                      },
+                    ]}
                   >
-                    <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>−</Text>
-                  </TouchableOpacity>
-                  <Text style={[styles.shareValue, { color: theme.colors.onSurface }]}>{p.partsConsumed}</Text>
-                  <TouchableOpacity
-                    style={[styles.shareBtn, stepperBorder, { backgroundColor: stepperBg }]}
-                    onPress={() => { lightHaptic(); onPartsChange(p.id, (p.partsConsumed + 1).toString()); }}
+                    <Text
+                      style={[
+                        styles.miniInitials,
+                        {
+                          color: p.included ? avatarColorsForKey(p.id, isDark).foreground : theme.colors.onSurfaceVariant,
+                        },
+                      ]}
+                    >
+                      {resolveInitials(p.name)}
+                    </Text>
+                  </View>
+                  <Text
+                    style={[
+                      styles.incomeName,
+                      {
+                        color: p.included ? theme.colors.onSurface : palette.muted,
+                      },
+                    ]}
+                    numberOfLines={1}
                   >
-                    <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
-                  </TouchableOpacity>
-                </View>
-                <Text variant="bodySmall" style={{ color: theme.colors.primary, fontWeight: '700', minWidth: 58, textAlign: 'right' }}>
-                  {formatCurrency(p.computedAmount, currency)}
-                </Text>
-              </>
-            ) : (
-              <View style={styles.rowAddCue}>
-                <Text variant="bodySmall" style={{ color: palette.muted }}>Not splitting</Text>
-                <Icon source="plus-circle-outline" size={18} color={theme.colors.primary} />
+                    {p.name}
+                  </Text>
+                </Pressable>
+                {p.included ? (
+                  <>
+                    <View style={styles.shareControls}>
+                      <TouchableOpacity
+                        style={[styles.shareBtn, stepperBorder, { backgroundColor: stepperBg }]}
+                        onPress={() => {
+                          lightHaptic();
+                          onPartsChange(p.id, Math.max(0, p.partsConsumed - 1).toString());
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Decrease parts for ${p.name}`}
+                      >
+                        <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>−</Text>
+                      </TouchableOpacity>
+                      <Text style={[styles.shareValue, { color: theme.colors.onSurface }]}>{p.partsConsumed}</Text>
+                      <TouchableOpacity
+                        style={[styles.shareBtn, stepperBorder, { backgroundColor: stepperBg }]}
+                        onPress={() => {
+                          lightHaptic();
+                          onPartsChange(p.id, (p.partsConsumed + 1).toString());
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Increase parts for ${p.name}`}
+                      >
+                        <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <Text
+                      variant="bodySmall"
+                      style={{
+                        color: theme.colors.primary,
+                        fontWeight: '700',
+                        minWidth: 58,
+                        textAlign: 'right',
+                      }}
+                    >
+                      {formatCurrency(p.computedAmount, currency)}
+                    </Text>
+                  </>
+                ) : (
+                  <View style={styles.rowAddCue}>
+                    <Text variant="bodySmall" style={{ color: palette.muted }}>
+                      Not splitting
+                    </Text>
+                    <Icon source="plus-circle-outline" size={18} color={theme.colors.primary} />
+                  </View>
+                )}
               </View>
-            )}
-          </Pressable>
-        </Animated.View>
-      ))}
-      </SolidCard>
-    </View>
-  );
-});
+            </Animated.View>
+          ))}
+        </SolidCard>
+      </View>
+    );
+  },
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // D. TIME-BASED / PRORATED
@@ -819,1107 +1019,1445 @@ const DURATION_PRESETS = [
   { label: '1 month', days: 30 },
 ];
 
-const TimeBasedMode = React.memo(({
-  participants,
-  onDaysChange,
-  onSetAllDays,
-  onStayDatesChange,
-  currency,
-  totalAmount,
-  timeSplitVariant,
-  onTimeSplitVariantChange,
-  timePeriodDays,
-  timePeriodStartDate,
-  timePeriodEndDate,
-  onTimePeriodRangeChange,
-}: TimeBasedProps) => {
-  const { isDark, theme } = useTheme();
-  const palette = isDark ? darkColors : colors;
-  const [inputMode, setInputMode] = useState<TimeInputMode>('days');
-  const [periodInputValue, setPeriodInputValue] = useState(timePeriodDays.toString());
-  const [periodCalendarMonth, setPeriodCalendarMonth] = useState(() => (
-    parseCalendarDate(timePeriodStartDate) ?? getCalendarMonthStart(new Date())
-  ));
-  const [participantCalendarMonth, setParticipantCalendarMonth] = useState(() => (
-    parseCalendarDate(timePeriodStartDate) ?? getCalendarMonthStart(new Date())
-  ));
-  const [expandedParticipantId, setExpandedParticipantId] = useState<string | null>(null);
+const TimeBasedMode = React.memo(
+  ({
+    participants,
+    onDaysChange,
+    onSetAllDays,
+    onStayDatesChange,
+    currency,
+    totalAmount,
+    timeSplitVariant,
+    onTimeSplitVariantChange,
+    timePeriodDays,
+    timePeriodStartDate,
+    timePeriodEndDate,
+    onTimePeriodRangeChange,
+  }: TimeBasedProps) => {
+    const { isDark, theme } = useTheme();
+    const palette = isDark ? darkColors : colors;
+    const [inputMode, setInputMode] = useState<TimeInputMode>('days');
+    const [periodInputValue, setPeriodInputValue] = useState(timePeriodDays.toString());
+    const [periodCalendarMonth, setPeriodCalendarMonth] = useState(
+      () => parseCalendarDate(timePeriodStartDate) ?? getCalendarMonthStart(new Date()),
+    );
+    const [participantCalendarMonth, setParticipantCalendarMonth] = useState(
+      () => parseCalendarDate(timePeriodStartDate) ?? getCalendarMonthStart(new Date()),
+    );
+    const [expandedParticipantId, setExpandedParticipantId] = useState<string | null>(null);
 
-  const included = participants.filter((participant) => participant.included);
-  const periodDays = Math.max(1, timePeriodDays);
-  const isStandardMode = timeSplitVariant === 'standard';
-  const periodDateOptions = useMemo(
-    () => listDatesBetween(timePeriodStartDate, timePeriodEndDate),
-    [timePeriodEndDate, timePeriodStartDate],
-  );
-  const periodDateSet = useMemo(() => new Set(periodDateOptions), [periodDateOptions]);
-  const participantCalendarMonthKey = useMemo(
-    () => getCalendarMonthKey(participantCalendarMonth),
-    [participantCalendarMonth],
-  );
-  const participantVisibleMonthDates = useMemo(
-    () => periodDateOptions.filter((dateValue) => dateValue.startsWith(participantCalendarMonthKey)),
-    [participantCalendarMonthKey, periodDateOptions],
-  );
-  const periodDateGroups = useMemo(
-    () => splitDatesByType(periodDateOptions),
-    [periodDateOptions],
-  );
-  const participantVisibleMonthDateGroups = useMemo(
-    () => splitDatesByType(participantVisibleMonthDates),
-    [participantVisibleMonthDates],
-  );
-  const periodStartMonth = useMemo(() => {
-    const parsed = parseCalendarDate(timePeriodStartDate);
-    return parsed ? getCalendarMonthStart(parsed) : null;
-  }, [timePeriodStartDate]);
-  const periodEndMonth = useMemo(() => {
-    const parsed = parseCalendarDate(timePeriodEndDate);
-    return parsed ? getCalendarMonthStart(parsed) : null;
-  }, [timePeriodEndDate]);
-  const baseMemberDailyCost = included.length > 0 ? totalAmount / periodDays / included.length : 0;
-  const totalMissingDays = included.reduce((sum, participant) => sum + Math.max(0, periodDays - participant.daysStayed), 0);
-  const redistributedPool = totalMissingDays * baseMemberDailyCost;
-  const totalPersonDays = included.reduce((sum, participant) => sum + participant.daysStayed, 0);
-  const averageStay = included.length > 0 ? totalPersonDays / included.length : 0;
-  const householdDailyCost = totalAmount / periodDays;
-  const occupiedDayCost = totalPersonDays > 0 ? totalAmount / totalPersonDays : 0;
-  const allZero = included.every((participant) => participant.daysStayed === 0);
-  const allSame = !allZero && included.every((participant) => participant.daysStayed === included[0].daysStayed);
-  const filledCount = included.filter((participant) => participant.daysStayed === periodDays).length;
+    const included = participants.filter((participant) => participant.included);
+    const periodDays = Math.max(1, timePeriodDays);
+    const isStandardMode = timeSplitVariant === 'standard';
+    const periodDateOptions = useMemo(
+      () => listDatesBetween(timePeriodStartDate, timePeriodEndDate),
+      [timePeriodEndDate, timePeriodStartDate],
+    );
+    const periodDateSet = useMemo(() => new Set(periodDateOptions), [periodDateOptions]);
+    const participantCalendarMonthKey = useMemo(() => getCalendarMonthKey(participantCalendarMonth), [participantCalendarMonth]);
+    const participantVisibleMonthDates = useMemo(
+      () => periodDateOptions.filter((dateValue) => dateValue.startsWith(participantCalendarMonthKey)),
+      [participantCalendarMonthKey, periodDateOptions],
+    );
+    const periodDateGroups = useMemo(() => splitDatesByType(periodDateOptions), [periodDateOptions]);
+    const participantVisibleMonthDateGroups = useMemo(() => splitDatesByType(participantVisibleMonthDates), [participantVisibleMonthDates]);
+    const periodStartMonth = useMemo(() => {
+      const parsed = parseCalendarDate(timePeriodStartDate);
+      return parsed ? getCalendarMonthStart(parsed) : null;
+    }, [timePeriodStartDate]);
+    const periodEndMonth = useMemo(() => {
+      const parsed = parseCalendarDate(timePeriodEndDate);
+      return parsed ? getCalendarMonthStart(parsed) : null;
+    }, [timePeriodEndDate]);
+    const baseMemberDailyCost = included.length > 0 ? totalAmount / periodDays / included.length : 0;
+    const totalMissingDays = included.reduce((sum, participant) => sum + Math.max(0, periodDays - participant.daysStayed), 0);
+    const redistributedPool = totalMissingDays * baseMemberDailyCost;
+    const totalPersonDays = included.reduce((sum, participant) => sum + participant.daysStayed, 0);
+    const averageStay = included.length > 0 ? totalPersonDays / included.length : 0;
+    const householdDailyCost = totalAmount / periodDays;
+    const occupiedDayCost = totalPersonDays > 0 ? totalAmount / totalPersonDays : 0;
+    const allZero = included.every((participant) => participant.daysStayed === 0);
+    const allSame = !allZero && included.every((participant) => participant.daysStayed === included[0].daysStayed);
+    const filledCount = included.filter((participant) => participant.daysStayed === periodDays).length;
 
-  useEffect(() => {
-    setPeriodInputValue(timePeriodDays.toString());
-  }, [timePeriodDays]);
+    useEffect(() => {
+      setPeriodInputValue(timePeriodDays.toString());
+    }, [timePeriodDays]);
 
-  useEffect(() => {
-    if (timePeriodStartDate) {
-      const nextMonth = parseCalendarDate(timePeriodStartDate);
-      if (nextMonth) {
-        setPeriodCalendarMonth(getCalendarMonthStart(nextMonth));
-        setParticipantCalendarMonth((current) => {
-          const currentMonth = getCalendarMonthStart(current);
-          const nextMonthStart = getCalendarMonthStart(nextMonth);
-          if (
-            periodEndMonth
-            && currentMonth.getTime() >= nextMonthStart.getTime()
-            && currentMonth.getTime() <= periodEndMonth.getTime()
-          ) {
-            return currentMonth;
-          }
-          return nextMonthStart;
-        });
+    useEffect(() => {
+      if (timePeriodStartDate) {
+        const nextMonth = parseCalendarDate(timePeriodStartDate);
+        if (nextMonth) {
+          setPeriodCalendarMonth(getCalendarMonthStart(nextMonth));
+          setParticipantCalendarMonth((current) => {
+            const currentMonth = getCalendarMonthStart(current);
+            const nextMonthStart = getCalendarMonthStart(nextMonth);
+            if (
+              periodEndMonth &&
+              currentMonth.getTime() >= nextMonthStart.getTime() &&
+              currentMonth.getTime() <= periodEndMonth.getTime()
+            ) {
+              return currentMonth;
+            }
+            return nextMonthStart;
+          });
+        }
       }
-    }
-  }, [periodEndMonth, timePeriodStartDate]);
+    }, [periodEndMonth, timePeriodStartDate]);
 
-  useEffect(() => {
-    setParticipantCalendarMonth((current) => {
-      const currentMonth = getCalendarMonthStart(current);
+    useEffect(() => {
+      setParticipantCalendarMonth((current) => {
+        const currentMonth = getCalendarMonthStart(current);
 
-      if (periodStartMonth && currentMonth.getTime() < periodStartMonth.getTime()) {
-        return periodStartMonth;
-      }
+        if (periodStartMonth && currentMonth.getTime() < periodStartMonth.getTime()) {
+          return periodStartMonth;
+        }
 
-      if (periodEndMonth && currentMonth.getTime() > periodEndMonth.getTime()) {
-        return periodEndMonth;
-      }
+        if (periodEndMonth && currentMonth.getTime() > periodEndMonth.getTime()) {
+          return periodEndMonth;
+        }
 
-      return currentMonth;
-    });
-  }, [periodEndMonth, periodStartMonth]);
+        return currentMonth;
+      });
+    }, [periodEndMonth, periodStartMonth]);
 
-  const applyPeriodDays = useCallback((value: string | number) => {
-    const parsedValue = typeof value === 'number' ? value : parseInt(value, 10);
-    if (Number.isNaN(parsedValue)) {
-      setPeriodInputValue(periodDays.toString());
-      return;
-    }
+    const applyPeriodDays = useCallback(
+      (value: string | number) => {
+        const parsedValue = typeof value === 'number' ? value : parseInt(value, 10);
+        if (Number.isNaN(parsedValue)) {
+          setPeriodInputValue(periodDays.toString());
+          return;
+        }
 
-    const normalized = Math.max(1, Math.round(parsedValue));
-    setPeriodInputValue(normalized.toString());
-    onSetAllDays(normalized);
-  }, [onSetAllDays, periodDays]);
+        const normalized = Math.max(1, Math.round(parsedValue));
+        setPeriodInputValue(normalized.toString());
+        onSetAllDays(normalized);
+      },
+      [onSetAllDays, periodDays],
+    );
 
-  const handlePeriodCalendarDayPress = useCallback((value: string) => {
-    lightHaptic();
+    const handlePeriodCalendarDayPress = useCallback(
+      (value: string) => {
+        lightHaptic();
 
-    if (!timePeriodStartDate || (timePeriodStartDate && timePeriodEndDate)) {
-      onTimePeriodRangeChange(value, '');
-      return;
-    }
+        if (!timePeriodStartDate || (timePeriodStartDate && timePeriodEndDate)) {
+          onTimePeriodRangeChange(value, '');
+          return;
+        }
 
-    if (value === timePeriodStartDate) {
-      onTimePeriodRangeChange(value, value);
-      return;
-    }
+        if (value === timePeriodStartDate) {
+          onTimePeriodRangeChange(value, value);
+          return;
+        }
 
-    if (value < timePeriodStartDate) {
-      onTimePeriodRangeChange(value, timePeriodStartDate);
-      return;
-    }
+        if (value < timePeriodStartDate) {
+          onTimePeriodRangeChange(value, timePeriodStartDate);
+          return;
+        }
 
-    onTimePeriodRangeChange(timePeriodStartDate, value);
-  }, [onTimePeriodRangeChange, timePeriodEndDate, timePeriodStartDate]);
+        onTimePeriodRangeChange(timePeriodStartDate, value);
+      },
+      [onTimePeriodRangeChange, timePeriodEndDate, timePeriodStartDate],
+    );
 
-  return (
-    <View style={styles.section}>
-      <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-        Set the full billing period once, then adjust each person's stayed days.
-      </Text>
+    return (
+      <View style={styles.section}>
+        <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
+          Set the full billing period once, then adjust each person's stayed days.
+        </Text>
 
-      <View style={styles.timeVariantRow}>
-        {([
-          { key: 'dynamic' as TimeSplitVariant, label: 'Dynamic', description: 'Prorates by entered stayed days.' },
-          { key: 'standard' as TimeSplitVariant, label: 'Standard', description: 'Keeps every bill day allocated, then redistributes missed days.' },
-        ]).map((option) => (
-          <TouchableOpacity
-            key={option.key}
-            style={[
-              styles.timeVariantChip,
-              {
-                backgroundColor: timeSplitVariant === option.key ? `${theme.colors.primary}20` : 'transparent',
-                borderColor: timeSplitVariant === option.key ? theme.colors.primary : palette.border,
-              },
-            ]}
-            onPress={() => {
-              mediumHaptic();
-              onTimeSplitVariantChange(option.key);
-            }}
-          >
-            <Text style={{ color: timeSplitVariant === option.key ? theme.colors.primary : theme.colors.onSurface, fontSize: 14, fontWeight: '800' }}>
-              {option.label}
-            </Text>
-            <Text style={{ color: palette.muted, fontSize: 11, lineHeight: 16, textAlign: 'center' }}>
-              {option.description}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <View style={styles.timeInputModeRow}>
-        {([
-          { key: 'days' as TimeInputMode, label: 'By Days', icon: 'counter' },
-          { key: 'dates' as TimeInputMode, label: 'By Dates', icon: 'calendar-range' },
-        ]).map((option) => (
-          <TouchableOpacity
-            key={option.key}
-            style={[
-              styles.timeInputModeChip,
-              {
-                backgroundColor: inputMode === option.key ? `${theme.colors.primary}20` : 'transparent',
-                borderColor: inputMode === option.key ? theme.colors.primary : palette.border,
-              },
-            ]}
-            onPress={() => {
-              lightHaptic();
-              setInputMode(option.key);
-            }}
-          >
-            <Icon source={option.icon} size={16} color={inputMode === option.key ? theme.colors.primary : palette.muted} />
-            <Text
-              style={{
-                color: inputMode === option.key ? theme.colors.primary : palette.muted,
-                fontSize: 13,
-                fontWeight: '700',
+        <View style={styles.timeVariantRow}>
+          {[
+            {
+              key: 'dynamic' as TimeSplitVariant,
+              label: 'Dynamic',
+              description: 'Prorates by entered stayed days.',
+            },
+            {
+              key: 'standard' as TimeSplitVariant,
+              label: 'Standard',
+              description: 'Keeps every bill day allocated, then redistributes missed days.',
+            },
+          ].map((option) => (
+            <TouchableOpacity
+              key={option.key}
+              style={[
+                styles.timeVariantChip,
+                {
+                  backgroundColor: timeSplitVariant === option.key ? `${theme.colors.primary}20` : 'transparent',
+                  borderColor: timeSplitVariant === option.key ? theme.colors.primary : palette.border,
+                },
+              ]}
+              onPress={() => {
+                mediumHaptic();
+                onTimeSplitVariantChange(option.key);
               }}
+              accessibilityRole="radio"
+              accessibilityLabel={`${option.label}. ${option.description}`}
+              accessibilityState={{ checked: timeSplitVariant === option.key }}
             >
-              {option.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <SolidCard style={styles.timePeriodCard}>
-        <View style={styles.timePeriodHeader}>
-          <View style={styles.timePeriodHeaderText}>
-            <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-              {inputMode === 'dates' ? 'Billing period' : 'Total days in this period'}
-            </Text>
-            <Text variant="bodySmall" style={{ color: palette.muted }}>
-              {inputMode === 'dates'
-                ? 'Pick a start and end date on the calendar below.'
-                : 'Set the period length, then adjust each person\'s stay.'}
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={[styles.timeFillAllBtn, { borderColor: theme.colors.primary }]}
-            onPress={() => {
-              applyPeriodDays(periodInputValue);
-            }}
-          >
-            <Icon source="account-sync" size={14} color={theme.colors.primary} />
-            <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
-              Set all to {periodDays}d
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={{
+                  color: timeSplitVariant === option.key ? theme.colors.primary : theme.colors.onSurface,
+                  fontSize: 14,
+                  fontWeight: '800',
+                }}
+              >
+                {option.label}
+              </Text>
+              <Text
+                style={{
+                  color: palette.muted,
+                  fontSize: 11,
+                  lineHeight: 16,
+                  textAlign: 'center',
+                }}
+              >
+                {option.description}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
-        {inputMode === 'days' && (
-          <>
-            <View style={styles.timePeriodControlsRow}>
-              <TouchableOpacity
-                style={[styles.shareBtn, styles.timePeriodStepBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
-                onPress={() => applyPeriodDays(periodDays - 1)}
-              >
-                <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>-</Text>
-              </TouchableOpacity>
-              <TextInput
-                style={[styles.timePeriodInput, { color: theme.colors.onSurface, borderColor: inputBorder(isDark) }]}
-                value={periodInputValue}
-                onChangeText={setPeriodInputValue}
-                onBlur={() => applyPeriodDays(periodInputValue)}
-                onSubmitEditing={() => applyPeriodDays(periodInputValue)}
-                keyboardType="number-pad"
-                placeholder="30"
-                placeholderTextColor={palette.muted}
-              />
-              <TouchableOpacity
-                style={[styles.shareBtn, styles.timePeriodStepBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
-                onPress={() => applyPeriodDays(periodDays + 1)}
-              >
-                <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
-              </TouchableOpacity>
-              <Text variant="bodySmall" style={{ color: palette.muted }}>
-                day{periodDays !== 1 ? 's' : ''}
-              </Text>
-            </View>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={styles.timePresetRow}>
-                {DURATION_PRESETS.map((preset) => (
-                  <TouchableOpacity
-                    key={preset.label}
-                    style={[
-                      styles.timePresetChip,
-                      {
-                        borderColor: preset.days === periodDays ? theme.colors.primary : palette.border,
-                        backgroundColor: preset.days === periodDays ? `${theme.colors.primary}18` : 'transparent',
-                      },
-                    ]}
-                    onPress={() => applyPeriodDays(preset.days)}
-                  >
-                    <Text
-                      style={{
-                        color: preset.days === periodDays ? theme.colors.primary : palette.muted,
-                        fontSize: 12,
-                        fontWeight: '600',
-                      }}
-                    >
-                      {preset.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </ScrollView>
-          </>
-        )}
-
-        {inputMode === 'dates' && (
-          <View style={styles.timeRangeSection}>
-            <View style={styles.timeRangeSelectedRow}>
-              <View style={[
-                styles.timeRangeSelectedChip,
+        <View style={styles.timeInputModeRow}>
+          {[
+            { key: 'days' as TimeInputMode, label: 'By days', icon: 'counter' },
+            {
+              key: 'dates' as TimeInputMode,
+              label: 'By dates',
+              icon: 'calendar-range',
+            },
+          ].map((option) => (
+            <TouchableOpacity
+              key={option.key}
+              style={[
+                styles.timeInputModeChip,
                 {
-                  borderColor: timePeriodStartDate
-                    ? theme.colors.primary
-                    : (!timePeriodStartDate && !timePeriodEndDate ? `${theme.colors.primary}80` : palette.border),
-                  backgroundColor: timePeriodStartDate ? `${theme.colors.primary}12` : 'transparent',
+                  backgroundColor: inputMode === option.key ? `${theme.colors.primary}20` : 'transparent',
+                  borderColor: inputMode === option.key ? theme.colors.primary : palette.border,
                 },
-              ]}>
-                <Text style={{ color: timePeriodStartDate ? theme.colors.primary : palette.muted, fontSize: 11, fontWeight: '700' }}>
-                  Start
-                </Text>
-                <Text style={{ color: timePeriodStartDate ? theme.colors.onSurface : palette.muted, fontSize: 14, fontWeight: '700' }}>
-                  {timePeriodStartDate ? getDateChipLabel(timePeriodStartDate) : 'Tap a date'}
-                </Text>
-              </View>
-              <Icon source="arrow-right" size={16} color={palette.muted} />
-              <View style={[
-                styles.timeRangeSelectedChip,
-                {
-                  borderColor: timePeriodEndDate
-                    ? theme.colors.primary
-                    : (timePeriodStartDate && !timePeriodEndDate ? `${theme.colors.primary}80` : palette.border),
-                  backgroundColor: timePeriodEndDate ? `${theme.colors.primary}12` : 'transparent',
-                },
-              ]}>
-                <Text style={{ color: timePeriodEndDate ? theme.colors.primary : palette.muted, fontSize: 11, fontWeight: '700' }}>
-                  End
-                </Text>
-                <Text style={{ color: timePeriodEndDate ? theme.colors.onSurface : palette.muted, fontSize: 14, fontWeight: '700' }}>
-                  {timePeriodEndDate
-                    ? getDateChipLabel(timePeriodEndDate)
-                    : (timePeriodStartDate ? 'Now tap end' : 'Tap a date')}
-                </Text>
-              </View>
-              {(timePeriodStartDate || timePeriodEndDate) && (
-                <TouchableOpacity
-                  style={[styles.timeMiniActionChip, { borderColor: palette.border }]}
-                  onPress={() => {
-                    mediumHaptic();
-                    onTimePeriodRangeChange('', '');
-                  }}
-                >
-                  <Icon source="close" size={14} color={palette.muted} />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {timePeriodStartDate && timePeriodEndDate && (
-              <View style={[styles.timeRangeDaysBadge, { backgroundColor: `${theme.colors.primary}14` }]}>
-                <Text style={{ color: theme.colors.primary, fontSize: 13, fontWeight: '700' }}>
-                  {periodDays} day{periodDays !== 1 ? 's' : ''} selected
-                </Text>
-              </View>
-            )}
-
-            <View style={styles.calendarNavRow}>
-              <TouchableOpacity
-                style={[styles.calendarNavButton, { borderColor: palette.border }]}
-                onPress={() => setPeriodCalendarMonth((prev) => addCalendarMonths(prev, -1))}
+              ]}
+              onPress={() => {
+                lightHaptic();
+                setInputMode(option.key);
+              }}
+              accessibilityRole="radio"
+              accessibilityLabel={option.label}
+              accessibilityState={{ checked: inputMode === option.key }}
+            >
+              <Icon source={option.icon} size={16} color={inputMode === option.key ? theme.colors.primary : palette.muted} />
+              <Text
+                style={{
+                  color: inputMode === option.key ? theme.colors.primary : palette.muted,
+                  fontSize: 13,
+                  fontWeight: '700',
+                }}
               >
-                <Icon source="chevron-left" size={18} color={theme.colors.onSurface} />
-              </TouchableOpacity>
+                {option.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <SolidCard style={styles.timePeriodCard}>
+          <View style={styles.timePeriodHeader}>
+            <View style={styles.timePeriodHeaderText}>
               <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-                {getCalendarMonthLabel(periodCalendarMonth)}
-              </Text>
-              <TouchableOpacity
-                style={[styles.calendarNavButton, { borderColor: palette.border }]}
-                onPress={() => setPeriodCalendarMonth((prev) => addCalendarMonths(prev, 1))}
-              >
-                <Icon source="chevron-right" size={18} color={theme.colors.onSurface} />
-              </TouchableOpacity>
-            </View>
-
-            <CalendarMonthGrid
-              accentColor={theme.colors.primary}
-              monthDate={periodCalendarMonth}
-              onPressDate={handlePeriodCalendarDayPress}
-              rangeEnd={timePeriodEndDate || undefined}
-              rangeStart={timePeriodStartDate || undefined}
-            />
-
-            {!timePeriodStartDate && !timePeriodEndDate && (
-              <Text variant="labelSmall" style={{ color: palette.muted, textAlign: 'center' }}>
-                Tap any date to start selecting the billing period.
-              </Text>
-            )}
-            {timePeriodStartDate && !timePeriodEndDate && (
-              <Text variant="labelSmall" style={{ color: theme.colors.primary, textAlign: 'center', fontWeight: '600' }}>
-                Now tap the last day of the billing period.
-              </Text>
-            )}
-          </View>
-        )}
-
-      </SolidCard>
-
-      <Animated.View entering={SlideInDown.springify()}>
-        <SolidCard style={styles.timeSummaryCard}>
-          <View style={styles.timeSummaryHeader}>
-            <View style={styles.timeSummaryHeaderText}>
-              <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-                {isStandardMode
-                  ? (allSame ? 'Standard mode is splitting the full period evenly' : 'Standard mode redistributes missed-day share')
-                  : (allSame ? 'Everyone is on the full stay right now' : `${included.length} people with custom stays`)}
+                {inputMode === 'dates' ? 'Billing period' : 'Total days in this period'}
               </Text>
               <Text variant="bodySmall" style={{ color: palette.muted }}>
-                {isStandardMode
-                  ? 'Each missed day hands that member\'s base daily share back to the rest of the group.'
-                  : (inputMode === 'dates'
-                    ? 'Dates are counted inclusively and capped to this billing period.'
-                    : 'Move the slider or type a value to update the split instantly.')}
+                {inputMode === 'dates'
+                  ? 'Pick a start and end date on the calendar below.'
+                  : "Set the period length, then adjust each person's stay."}
               </Text>
             </View>
-            <View style={[styles.timeSummaryBadge, { backgroundColor: `${theme.colors.primary}16` }]}>
-              <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '800' }}>
-                {filledCount}/{included.length} full stay
+            <TouchableOpacity
+              style={[styles.timeFillAllBtn, { borderColor: theme.colors.primary }]}
+              onPress={() => {
+                applyPeriodDays(periodInputValue);
+              }}
+            >
+              <Icon source="account-sync" size={14} color={theme.colors.primary} />
+              <Text
+                style={{
+                  color: theme.colors.primary,
+                  fontSize: 12,
+                  fontWeight: '700',
+                }}
+              >
+                Set all to {periodDays}d
               </Text>
-            </View>
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.timeMetricGrid}>
-            <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
-              <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>Period</Text>
-              <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>{periodDays}d</Text>
-            </View>
-            <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
-              <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>House/day</Text>
-              <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>
-                {formatCurrency(householdDailyCost, currency)}
-              </Text>
-            </View>
-            <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
-              <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>
-                {isStandardMode ? 'Base/member/day' : 'Occupied days'}
-              </Text>
-              <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>
-                {isStandardMode ? formatCurrency(baseMemberDailyCost, currency) : `${totalPersonDays}d`}
-              </Text>
-            </View>
-            <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
-              <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>
-                {isStandardMode ? 'Redistributed pool' : 'Occupied/day'}
-              </Text>
-              <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>
-                {isStandardMode
-                  ? formatCurrency(redistributedPool, currency)
-                  : (totalPersonDays > 0 ? formatCurrency(occupiedDayCost, currency) : '-')}
-              </Text>
-            </View>
-          </View>
-
-          <Text variant="bodySmall" style={{ color: palette.muted, paddingHorizontal: 14, paddingBottom: 14 }}>
-            {isStandardMode
-              ? `Missing days across the group: ${totalMissingDays} day${totalMissingDays === 1 ? '' : 's'}`
-              : `Average stay: ${included.length > 0 ? averageStay.toFixed(1) : '0.0'} day${averageStay === 1 ? '' : 's'}`}
-          </Text>
-        </SolidCard>
-      </Animated.View>
-
-      {allZero && (
-        <Animated.View entering={SlideInUp.duration(300)}>
-          <SolidCard style={styles.timeEmptyCard}>
-            <View style={styles.timeEmptyContent}>
-              <Icon source="calendar-clock" size={32} color={palette.muted} />
-              <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center', paddingHorizontal: 16 }}>
-                No one has any days set yet. Use the {inputMode === 'dates' ? 'calendar' : 'slider'} below to set how long each person stayed.
-              </Text>
-              {inputMode === 'days' && (
+          {inputMode === 'days' && (
+            <>
+              <View style={styles.timePeriodControlsRow}>
                 <TouchableOpacity
-                  style={[styles.timeFillAllBtn, { borderColor: theme.colors.primary }]}
-                  onPress={() => {
-                    successHaptic();
-                    onSetAllDays(periodDays);
-                  }}
+                  style={[
+                    styles.shareBtn,
+                    styles.timePeriodStepBtn,
+                    {
+                      backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+                    },
+                  ]}
+                  onPress={() => applyPeriodDays(periodDays - 1)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Decrease billing period days"
                 >
-                  <Icon source="account-check" size={14} color={theme.colors.primary} />
-                  <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
-                    Everyone stayed the full {periodDays} days
-                  </Text>
+                  <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>-</Text>
                 </TouchableOpacity>
-              )}
-            </View>
-          </SolidCard>
-        </Animated.View>
-      )}
+                <TextInput
+                  style={[
+                    styles.timePeriodInput,
+                    {
+                      color: theme.colors.onSurface,
+                      borderColor: inputBorder(isDark),
+                    },
+                  ]}
+                  value={periodInputValue}
+                  onChangeText={setPeriodInputValue}
+                  onBlur={() => applyPeriodDays(periodInputValue)}
+                  onSubmitEditing={() => applyPeriodDays(periodInputValue)}
+                  keyboardType="number-pad"
+                  placeholder="30"
+                  placeholderTextColor={palette.muted}
+                />
+                <TouchableOpacity
+                  style={[
+                    styles.shareBtn,
+                    styles.timePeriodStepBtn,
+                    {
+                      backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+                    },
+                  ]}
+                  onPress={() => applyPeriodDays(periodDays + 1)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Increase billing period days"
+                >
+                  <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
+                </TouchableOpacity>
+                <Text variant="bodySmall" style={{ color: palette.muted }}>
+                  day{periodDays !== 1 ? 's' : ''}
+                </Text>
+              </View>
 
-      {included.map((participant, index) => {
-        const splitPct = totalAmount > 0 ? (participant.computedAmount / totalAmount) * 100 : 0;
-        const periodPct = (participant.daysStayed / periodDays) * 100;
-        const costPerStayedDay = participant.daysStayed > 0 ? participant.computedAmount / participant.daysStayed : 0;
-        const missingDays = Math.max(0, periodDays - participant.daysStayed);
-        const redistributedAmount = participant.computedAmount - (participant.daysStayed * baseMemberDailyCost);
-        const avatarColor = AVATAR_COLORS[index % AVATAR_COLORS.length];
-        const selectedDateSet = new Set(
-          participant.selectedStayDates ?? (periodDateOptions.length === participant.daysStayed ? periodDateOptions : []),
-        );
-        const hasManualDaysWithoutDates = selectedDateSet.size === 0 && participant.daysStayed > 0;
-        const isExpanded = expandedParticipantId === participant.id;
-        const canGoToPreviousParticipantMonth = !periodStartMonth
-          || participantCalendarMonth.getTime() > periodStartMonth.getTime();
-        const canGoToNextParticipantMonth = !periodEndMonth
-          || participantCalendarMonth.getTime() < periodEndMonth.getTime();
-        const visibleMonthDates = isExpanded ? participantVisibleMonthDates : [];
-        const selectedVisibleMonthCount = visibleMonthDates.filter((dateValue) => selectedDateSet.has(dateValue)).length;
-        const isVisibleMonthFullySelected = visibleMonthDates.length > 0
-          && selectedVisibleMonthCount === visibleMonthDates.length;
-        const monthToggleLabel = isVisibleMonthFullySelected ? 'Clear month' : 'Select month';
-
-        // Global-scope toggle state (all period dates)
-        const selectedAllWeekdayCount = periodDateGroups.weekdays.filter((dateValue) => selectedDateSet.has(dateValue)).length;
-        const selectedAllWeekdayNoFridayCount = periodDateGroups.weekdaysNoFriday
-          .filter((dateValue) => selectedDateSet.has(dateValue)).length;
-        const selectedAllWeekendCount = periodDateGroups.weekends.filter((dateValue) => selectedDateSet.has(dateValue)).length;
-        const selectedAllLongWeekendCount = periodDateGroups.longWeekends
-          .filter((dateValue) => selectedDateSet.has(dateValue)).length;
-        const areAllWeekdaysSelected = periodDateGroups.weekdays.length > 0
-          && selectedAllWeekdayCount === periodDateGroups.weekdays.length;
-        const areAllWeekdaysNoFridaySelected = periodDateGroups.weekdaysNoFriday.length > 0
-          && selectedAllWeekdayNoFridayCount === periodDateGroups.weekdaysNoFriday.length;
-        const areAllWeekendsSelected = periodDateGroups.weekends.length > 0
-          && selectedAllWeekendCount === periodDateGroups.weekends.length;
-        const areAllLongWeekendsSelected = periodDateGroups.longWeekends.length > 0
-          && selectedAllLongWeekendCount === periodDateGroups.longWeekends.length;
-        const allWeekdayToggleLabel = areAllWeekdaysSelected ? 'Remove all weekdays' : 'Add all weekdays';
-        const allWeekdayNoFridayToggleLabel = areAllWeekdaysNoFridaySelected ? 'Remove all Mon–Thu' : 'Add all Mon–Thu';
-        const allWeekendToggleLabel = areAllWeekendsSelected ? 'Remove all weekends' : 'Add all weekends';
-        const allLongWeekendToggleLabel = areAllLongWeekendsSelected ? 'Remove all long wkends' : 'Add all long wkends';
-
-        // Per-visible-month toggle state
-        const selectedVisibleWeekdayCount = participantVisibleMonthDateGroups.weekdays.filter((dateValue) => selectedDateSet.has(dateValue)).length;
-        const selectedVisibleWeekdayNoFridayCount = participantVisibleMonthDateGroups.weekdaysNoFriday
-          .filter((dateValue) => selectedDateSet.has(dateValue)).length;
-        const selectedVisibleWeekendCount = participantVisibleMonthDateGroups.weekends.filter((dateValue) => selectedDateSet.has(dateValue)).length;
-        const selectedVisibleLongWeekendCount = participantVisibleMonthDateGroups.longWeekends
-          .filter((dateValue) => selectedDateSet.has(dateValue)).length;
-        const areVisibleWeekdaysSelected = participantVisibleMonthDateGroups.weekdays.length > 0
-          && selectedVisibleWeekdayCount === participantVisibleMonthDateGroups.weekdays.length;
-        const areVisibleWeekdaysNoFridaySelected = participantVisibleMonthDateGroups.weekdaysNoFriday.length > 0
-          && selectedVisibleWeekdayNoFridayCount === participantVisibleMonthDateGroups.weekdaysNoFriday.length;
-        const areVisibleWeekendsSelected = participantVisibleMonthDateGroups.weekends.length > 0
-          && selectedVisibleWeekendCount === participantVisibleMonthDateGroups.weekends.length;
-        const areVisibleLongWeekendsSelected = participantVisibleMonthDateGroups.longWeekends.length > 0
-          && selectedVisibleLongWeekendCount === participantVisibleMonthDateGroups.longWeekends.length;
-        const visibleWeekdayToggleLabel = areVisibleWeekdaysSelected ? 'Remove weekdays' : 'Add weekdays';
-        const visibleWeekdayNoFridayToggleLabel = areVisibleWeekdaysNoFridaySelected ? 'Remove Mon–Thu' : 'Add Mon–Thu';
-        const visibleWeekendToggleLabel = areVisibleWeekendsSelected ? 'Remove weekends' : 'Add weekends';
-        const visibleLongWeekendToggleLabel = areVisibleLongWeekendsSelected ? 'Remove long wkends' : 'Add long wkends';
-
-        return (
-          <Animated.View key={participant.id} entering={SlideInDown.delay(index * 50).springify()}>
-            <SolidCard style={[
-              styles.timeParticipantCard,
-              {
-                borderLeftWidth: 3,
-                borderLeftColor: participant.daysStayed === 0
-                  ? palette.border
-                  : participant.daysStayed === periodDays
-                    ? avatarColor
-                    : `${avatarColor}88`,
-              },
-            ]}>
-              <View style={styles.timeCardInner}>
-                <View style={styles.timeRowTop}>
-                  <View style={styles.timeRowNameGroup}>
-                    <View style={[styles.miniAvatar, { backgroundColor: avatarColor }]}>
-                      <Text style={styles.miniInitials}>{resolveInitials(participant.name)}</Text>
-                    </View>
-                    <View style={styles.timeParticipantTitleBlock}>
-                      <Text style={{ color: theme.colors.onSurface, fontWeight: '700', fontSize: 15 }} numberOfLines={1}>
-                        {participant.name}
-                      </Text>
-                      <Text variant="bodySmall" style={{ color: palette.muted }}>
-                        {participant.daysStayed}/{periodDays} day{participant.daysStayed === 1 ? '' : 's'} in period
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={{ color: theme.colors.primary, fontWeight: '800', fontSize: 18 }}>
-                    {formatCurrency(participant.computedAmount, currency)}
-                  </Text>
-                </View>
-
-                <View style={styles.timeProgressBarWrap}>
-                  <View style={[styles.timeProgressBarTrack, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}>
-                    <View
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={styles.timePresetRow}>
+                  {DURATION_PRESETS.map((preset) => (
+                    <TouchableOpacity
+                      key={preset.label}
                       style={[
-                        styles.timeProgressBarFill,
+                        styles.timePresetChip,
                         {
-                          width: `${Math.min(100, periodPct)}%`,
-                          backgroundColor: participant.daysStayed === periodDays
-                            ? avatarColor
-                            : participant.daysStayed === 0
-                              ? 'transparent'
-                              : `${avatarColor}99`,
+                          borderColor: preset.days === periodDays ? theme.colors.primary : palette.border,
+                          backgroundColor: preset.days === periodDays ? `${theme.colors.primary}18` : 'transparent',
                         },
                       ]}
-                    />
-                  </View>
-                  <Text style={{ color: palette.muted, fontSize: 11, fontWeight: '700', minWidth: 32, textAlign: 'right' }}>
-                    {periodPct.toFixed(0)}%
+                      onPress={() => applyPeriodDays(preset.days)}
+                      accessibilityRole="radio"
+                      accessibilityLabel={`${preset.label}, ${preset.days} days`}
+                      accessibilityState={{
+                        checked: preset.days === periodDays,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: preset.days === periodDays ? theme.colors.primary : palette.muted,
+                          fontSize: 12,
+                          fontWeight: '600',
+                        }}
+                      >
+                        {preset.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </ScrollView>
+            </>
+          )}
+
+          {inputMode === 'dates' && (
+            <View style={styles.timeRangeSection}>
+              <View style={styles.timeRangeSelectedRow}>
+                <View
+                  style={[
+                    styles.timeRangeSelectedChip,
+                    {
+                      borderColor: timePeriodStartDate
+                        ? theme.colors.primary
+                        : !timePeriodStartDate && !timePeriodEndDate
+                          ? `${theme.colors.primary}80`
+                          : palette.border,
+                      backgroundColor: timePeriodStartDate ? `${theme.colors.primary}12` : 'transparent',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      color: timePeriodStartDate ? theme.colors.primary : palette.muted,
+                      fontSize: 11,
+                      fontWeight: '700',
+                    }}
+                  >
+                    Start
+                  </Text>
+                  <Text
+                    style={{
+                      color: timePeriodStartDate ? theme.colors.onSurface : palette.muted,
+                      fontSize: 14,
+                      fontWeight: '700',
+                    }}
+                  >
+                    {timePeriodStartDate ? getDateChipLabel(timePeriodStartDate) : 'Tap a date'}
                   </Text>
                 </View>
-
-                <View style={styles.timeMetaRow}>
-                  <View style={[styles.timeMetaChip, { borderColor: palette.border }]}>
-                    <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '600' }}>
-                      {splitPct.toFixed(0)}% of split
-                    </Text>
-                  </View>
-                  <View style={[styles.timeMetaChip, { borderColor: palette.border }]}>
-                    <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '600' }}>
-                      {isStandardMode
-                        ? `${missingDays} missed day${missingDays === 1 ? '' : 's'}`
-                        : `${periodPct.toFixed(0)}% of period`}
-                    </Text>
-                  </View>
-                  {(participant.daysStayed > 0 || isStandardMode) && (
-                    <View style={[styles.timeMetaChip, { borderColor: palette.border }]}>
-                      <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '600' }}>
-                        {isStandardMode
-                          ? `${redistributedAmount >= 0 ? '+' : ''}${formatCurrency(redistributedAmount, currency)} backfill`
-                          : `${formatCurrency(costPerStayedDay, currency)}/day`}
-                      </Text>
-                    </View>
-                  )}
+                <Icon source="arrow-right" size={16} color={palette.muted} />
+                <View
+                  style={[
+                    styles.timeRangeSelectedChip,
+                    {
+                      borderColor: timePeriodEndDate
+                        ? theme.colors.primary
+                        : timePeriodStartDate && !timePeriodEndDate
+                          ? `${theme.colors.primary}80`
+                          : palette.border,
+                      backgroundColor: timePeriodEndDate ? `${theme.colors.primary}12` : 'transparent',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      color: timePeriodEndDate ? theme.colors.primary : palette.muted,
+                      fontSize: 11,
+                      fontWeight: '700',
+                    }}
+                  >
+                    End
+                  </Text>
+                  <Text
+                    style={{
+                      color: timePeriodEndDate ? theme.colors.onSurface : palette.muted,
+                      fontSize: 14,
+                      fontWeight: '700',
+                    }}
+                  >
+                    {timePeriodEndDate ? getDateChipLabel(timePeriodEndDate) : timePeriodStartDate ? 'Now tap end' : 'Tap a date'}
+                  </Text>
                 </View>
-
-                {inputMode === 'days' && (
-                  <>
-                    <View style={styles.timeDaysInputRow}>
-                      <TouchableOpacity
-                        style={[styles.shareBtn, styles.timePeriodStepBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
-                        onPress={() => {
-                          lightHaptic();
-                          onDaysChange(participant.id, Math.max(0, participant.daysStayed - 1).toString());
-                        }}
-                      >
-                        <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>-</Text>
-                      </TouchableOpacity>
-                      <TextInput
-                        style={[styles.timeDaysInput, { color: theme.colors.onSurface, borderColor: inputBorder(isDark) }]}
-                        value={participant.daysStayed.toString()}
-                        onChangeText={(value) => onDaysChange(participant.id, value)}
-                        keyboardType="number-pad"
-                        placeholder="0"
-                        placeholderTextColor={palette.muted}
-                      />
-                      <TouchableOpacity
-                        style={[styles.shareBtn, styles.timePeriodStepBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
-                        onPress={() => {
-                          lightHaptic();
-                          onDaysChange(participant.id, Math.min(periodDays, participant.daysStayed + 1).toString());
-                        }}
-                      >
-                        <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
-                      </TouchableOpacity>
-                      <Text variant="bodySmall" style={{ color: palette.muted, marginLeft: 4 }}>
-                        day{participant.daysStayed !== 1 ? 's' : ''}
-                      </Text>
-                      {participant.daysStayed === periodDays && (
-                        <View style={[styles.timeInlinePill, { backgroundColor: `${theme.colors.primary}16` }]}>
-                          <Text style={{ color: theme.colors.primary, fontSize: 11, fontWeight: '800' }}>
-                            Full stay
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-
-                    <TimeValueSlider
-                      accentColor={avatarColor}
-                      isDark={isDark}
-                      maximumValue={periodDays}
-                      minimumValue={0}
-                      onValueChange={(nextValue) => onDaysChange(participant.id, nextValue.toString())}
-                      onSlidingComplete={() => lightHaptic()}
-                      value={participant.daysStayed}
-                    />
-
-                    <View style={styles.timeSliderLabels}>
-                      <Text variant="labelSmall" style={{ color: palette.muted }}>0d</Text>
-                      <Text variant="labelSmall" style={{ color: palette.muted }}>
-                        {periodDays}d max
-                      </Text>
-                    </View>
-                  </>
+                {(timePeriodStartDate || timePeriodEndDate) && (
+                  <TouchableOpacity
+                    style={[styles.timeMiniActionChip, { borderColor: palette.border }]}
+                    onPress={() => {
+                      mediumHaptic();
+                      onTimePeriodRangeChange('', '');
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear selected date range"
+                  >
+                    <Icon source="close" size={14} color={palette.muted} />
+                  </TouchableOpacity>
                 )}
+              </View>
 
-                {inputMode === 'dates' && (
-                  <View style={styles.timeDateContainer}>
-                    {periodDateOptions.length > 0 ? (
-                      <>
-                        <View style={styles.timeParticipantDateHeader}>
-                          <View style={styles.timeParticipantDateSummary}>
-                            <Text variant="labelSmall" style={{ color: palette.muted }}>
-                              {selectedDateSet.size > 0
-                                ? `${selectedDateSet.size} selected day${selectedDateSet.size === 1 ? '' : 's'}`
-                                : hasManualDaysWithoutDates
-                                  ? `${participant.daysStayed} day${participant.daysStayed === 1 ? '' : 's'} set manually`
-                                  : 'No selected days yet'}
-                            </Text>
-                            <Text variant="bodySmall" style={{ color: palette.muted }}>
-                              {hasManualDaysWithoutDates
-                                ? 'Tap exact days below to replace the manual count with real dates.'
-                                : 'Tap exact days from the billing range below.'}
-                            </Text>
-                          </View>
-                          <View style={styles.timeParticipantDateActions}>
-                            <TouchableOpacity
-                              style={[styles.timeMiniActionChip, { borderColor: palette.border }]}
-                              onPress={() => {
-                                lightHaptic();
-                                if (!isExpanded) {
-                                  const anchorDate = participant.selectedStayDates?.[0]
-                                    ?? timePeriodStartDate
-                                    ?? timePeriodEndDate;
-                                  const anchorMonth = anchorDate ? parseCalendarDate(anchorDate) : null;
-                                  if (anchorMonth) {
-                                    setParticipantCalendarMonth(getCalendarMonthStart(anchorMonth));
-                                  }
-                                }
-                                setExpandedParticipantId(isExpanded ? null : participant.id);
-                              }}
-                            >
-                              <Icon
-                                source={isExpanded ? 'calendar-collapse-horizontal' : 'calendar-month'}
-                                size={14}
-                                color={theme.colors.primary}
-                              />
-                              <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
-                                {isExpanded ? 'Hide' : 'Calendar'}
-                              </Text>
-                              {!isExpanded && selectedDateSet.size > 0 && (
-                                <View style={[styles.calendarBadge, { backgroundColor: avatarColor }]}>
-                                  <Text style={{ color: '#FFF', fontSize: 9, fontWeight: '800' }}>
-                                    {selectedDateSet.size}
-                                  </Text>
-                                </View>
-                              )}
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={[styles.timeMiniActionChip, {
-                                borderColor: selectedDateSet.size === periodDateOptions.length ? avatarColor : palette.border,
-                                backgroundColor: selectedDateSet.size === periodDateOptions.length ? `${avatarColor}12` : 'transparent',
-                              }]}
-                              onPress={() => {
-                                mediumHaptic();
-                                onStayDatesChange(participant.id, periodDateOptions);
-                              }}
-                            >
-                              <Text style={{ color: selectedDateSet.size === periodDateOptions.length ? avatarColor : palette.muted, fontSize: 12, fontWeight: '700' }}>All days</Text>
-                            </TouchableOpacity>
-                            {periodDateGroups.weekdays.length > 0 && (
-                              <TouchableOpacity
-                                style={[
-                                  styles.timeMiniActionChip,
-                                  {
-                                    borderColor: areAllWeekdaysSelected ? avatarColor : palette.border,
-                                    backgroundColor: areAllWeekdaysSelected ? `${avatarColor}12` : 'transparent',
-                                  },
-                                ]}
-                                onPress={() => {
-                                  const nextDates = areAllWeekdaysSelected
-                                    ? removeScopedDates(selectedDateSet, periodDateGroups.weekdays)
-                                    : addScopedDates(selectedDateSet, periodDateGroups.weekdays);
-                                  mediumHaptic();
-                                  onStayDatesChange(participant.id, nextDates);
-                                }}
-                              >
-                                <Text
-                                  style={{
-                                    color: areAllWeekdaysSelected ? avatarColor : palette.muted,
-                                    fontSize: 12,
-                                    fontWeight: '700',
-                                  }}
-                                >
-                                  {allWeekdayToggleLabel}
-                                </Text>
-                              </TouchableOpacity>
-                            )}
-                            {periodDateGroups.weekdaysNoFriday.length > 0 && (
-                              <TouchableOpacity
-                                style={[
-                                  styles.timeMiniActionChip,
-                                  {
-                                    borderColor: areAllWeekdaysNoFridaySelected ? avatarColor : palette.border,
-                                    backgroundColor: areAllWeekdaysNoFridaySelected ? `${avatarColor}12` : 'transparent',
-                                  },
-                                ]}
-                                onPress={() => {
-                                  const nextDates = areAllWeekdaysNoFridaySelected
-                                    ? removeScopedDates(selectedDateSet, periodDateGroups.weekdaysNoFriday)
-                                    : addScopedDates(selectedDateSet, periodDateGroups.weekdaysNoFriday);
-                                  mediumHaptic();
-                                  onStayDatesChange(participant.id, nextDates);
-                                }}
-                              >
-                                <Text
-                                  style={{
-                                    color: areAllWeekdaysNoFridaySelected ? avatarColor : palette.muted,
-                                    fontSize: 12,
-                                    fontWeight: '700',
-                                  }}
-                                >
-                                  {allWeekdayNoFridayToggleLabel}
-                                </Text>
-                              </TouchableOpacity>
-                            )}
-                            {periodDateGroups.weekends.length > 0 && (
-                              <TouchableOpacity
-                                style={[
-                                  styles.timeMiniActionChip,
-                                  {
-                                    borderColor: areAllWeekendsSelected ? avatarColor : palette.border,
-                                    backgroundColor: areAllWeekendsSelected ? `${avatarColor}12` : 'transparent',
-                                  },
-                                ]}
-                                onPress={() => {
-                                  const nextDates = areAllWeekendsSelected
-                                    ? removeScopedDates(selectedDateSet, periodDateGroups.weekends)
-                                    : addScopedDates(selectedDateSet, periodDateGroups.weekends);
-                                  mediumHaptic();
-                                  onStayDatesChange(participant.id, nextDates);
-                                }}
-                              >
-                                <Text
-                                  style={{
-                                    color: areAllWeekendsSelected ? avatarColor : palette.muted,
-                                    fontSize: 12,
-                                    fontWeight: '700',
-                                  }}
-                                >
-                                  {allWeekendToggleLabel}
-                                </Text>
-                              </TouchableOpacity>
-                            )}
-                            {periodDateGroups.longWeekends.length > 0 && (
-                              <TouchableOpacity
-                                style={[
-                                  styles.timeMiniActionChip,
-                                  {
-                                    borderColor: areAllLongWeekendsSelected ? avatarColor : palette.border,
-                                    backgroundColor: areAllLongWeekendsSelected ? `${avatarColor}12` : 'transparent',
-                                  },
-                                ]}
-                                onPress={() => {
-                                  const nextDates = areAllLongWeekendsSelected
-                                    ? removeScopedDates(selectedDateSet, periodDateGroups.longWeekends)
-                                    : addScopedDates(selectedDateSet, periodDateGroups.longWeekends);
-                                  mediumHaptic();
-                                  onStayDatesChange(participant.id, nextDates);
-                                }}
-                              >
-                                <Text
-                                  style={{
-                                    color: areAllLongWeekendsSelected ? avatarColor : palette.muted,
-                                    fontSize: 12,
-                                    fontWeight: '700',
-                                  }}
-                                >
-                                  {allLongWeekendToggleLabel}
-                                </Text>
-                              </TouchableOpacity>
-                            )}
-                            <TouchableOpacity
-                              style={[styles.timeMiniActionChip, { borderColor: palette.border }]}
-                              onPress={() => {
-                                mediumHaptic();
-                                onStayDatesChange(participant.id, []);
-                              }}
-                            >
-                              <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '700' }}>Clear</Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
+              {timePeriodStartDate && timePeriodEndDate && (
+                <View style={[styles.timeRangeDaysBadge, { backgroundColor: `${theme.colors.primary}14` }]}>
+                  <Text
+                    style={{
+                      color: theme.colors.primary,
+                      fontSize: 13,
+                      fontWeight: '700',
+                    }}
+                  >
+                    {periodDays} day{periodDays !== 1 ? 's' : ''} selected
+                  </Text>
+                </View>
+              )}
 
-                        {isExpanded && (
-                          <View style={styles.timeParticipantCalendarStack}>
-                            <View style={styles.calendarNavRow}>
-                              <TouchableOpacity
-                                disabled={!canGoToPreviousParticipantMonth}
-                                style={[
-                                  styles.calendarNavButton,
-                                  {
-                                    borderColor: palette.border,
-                                    opacity: canGoToPreviousParticipantMonth ? 1 : 0.35,
-                                  },
-                                ]}
-                                onPress={() => {
-                                  if (!canGoToPreviousParticipantMonth) return;
-                                  setParticipantCalendarMonth((current) => addCalendarMonths(current, -1));
-                                }}
-                              >
-                                <Icon source="chevron-left" size={18} color={theme.colors.onSurface} />
-                              </TouchableOpacity>
-                              <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-                                {getCalendarMonthLabel(participantCalendarMonth)}
-                              </Text>
-                              <TouchableOpacity
-                                disabled={!canGoToNextParticipantMonth}
-                                style={[
-                                  styles.calendarNavButton,
-                                  {
-                                    borderColor: palette.border,
-                                    opacity: canGoToNextParticipantMonth ? 1 : 0.35,
-                                  },
-                                ]}
-                                onPress={() => {
-                                  if (!canGoToNextParticipantMonth) return;
-                                  setParticipantCalendarMonth((current) => addCalendarMonths(current, 1));
-                                }}
-                              >
-                                <Icon source="chevron-right" size={18} color={theme.colors.onSurface} />
-                              </TouchableOpacity>
-                            </View>
+              <View style={styles.calendarNavRow}>
+                <TouchableOpacity
+                  style={[styles.calendarNavButton, { borderColor: palette.border }]}
+                  onPress={() => setPeriodCalendarMonth((prev) => addCalendarMonths(prev, -1))}
+                  accessibilityRole="button"
+                  accessibilityLabel="Previous month"
+                >
+                  <Icon source="chevron-left" size={18} color={theme.colors.onSurface} />
+                </TouchableOpacity>
+                <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                  {getCalendarMonthLabel(periodCalendarMonth)}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.calendarNavButton, { borderColor: palette.border }]}
+                  onPress={() => setPeriodCalendarMonth((prev) => addCalendarMonths(prev, 1))}
+                  accessibilityRole="button"
+                  accessibilityLabel="Next month"
+                >
+                  <Icon source="chevron-right" size={18} color={theme.colors.onSurface} />
+                </TouchableOpacity>
+              </View>
 
-                            {visibleMonthDates.length > 0 && (
-                              <View style={styles.timeParticipantMonthActionRow}>
-                                <Text variant="bodySmall" style={{ color: palette.muted }}>
-                                  {selectedVisibleMonthCount}/{visibleMonthDates.length} this month
-                                </Text>
-                                <View style={styles.timeParticipantMonthActionButtons}>
-                                  <TouchableOpacity
-                                    style={[
-                                      styles.timeMiniActionChip,
-                                      {
-                                        borderColor: isVisibleMonthFullySelected ? avatarColor : palette.border,
-                                        backgroundColor: isVisibleMonthFullySelected ? `${avatarColor}12` : 'transparent',
-                                      },
-                                    ]}
-                                    onPress={() => {
-                                      const nextDates = isVisibleMonthFullySelected
-                                        ? removeScopedDates(selectedDateSet, visibleMonthDates)
-                                        : addScopedDates(selectedDateSet, visibleMonthDates);
-                                      mediumHaptic();
-                                      onStayDatesChange(participant.id, nextDates);
-                                    }}
-                                  >
-                                    <Text
-                                      style={{
-                                        color: isVisibleMonthFullySelected ? avatarColor : palette.muted,
-                                        fontSize: 12,
-                                        fontWeight: '700',
-                                      }}
-                                    >
-                                      {monthToggleLabel}
-                                    </Text>
-                                  </TouchableOpacity>
-                                  {participantVisibleMonthDateGroups.weekdays.length > 0 && (
-                                    <TouchableOpacity
-                                      style={[
-                                        styles.timeMiniActionChip,
-                                        {
-                                          borderColor: areVisibleWeekdaysSelected ? avatarColor : palette.border,
-                                          backgroundColor: areVisibleWeekdaysSelected ? `${avatarColor}12` : 'transparent',
-                                        },
-                                      ]}
-                                      onPress={() => {
-                                        const nextDates = areVisibleWeekdaysSelected
-                                          ? removeScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekdays)
-                                          : addScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekdays);
-                                        mediumHaptic();
-                                        onStayDatesChange(participant.id, nextDates);
-                                      }}
-                                    >
-                                      <Text
-                                        style={{
-                                          color: areVisibleWeekdaysSelected ? avatarColor : palette.muted,
-                                          fontSize: 12,
-                                          fontWeight: '700',
-                                        }}
-                                      >
-                                        {visibleWeekdayToggleLabel}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  )}
-                                  {participantVisibleMonthDateGroups.weekdaysNoFriday.length > 0 && (
-                                    <TouchableOpacity
-                                      style={[
-                                        styles.timeMiniActionChip,
-                                        {
-                                          borderColor: areVisibleWeekdaysNoFridaySelected ? avatarColor : palette.border,
-                                          backgroundColor: areVisibleWeekdaysNoFridaySelected ? `${avatarColor}12` : 'transparent',
-                                        },
-                                      ]}
-                                      onPress={() => {
-                                        const nextDates = areVisibleWeekdaysNoFridaySelected
-                                          ? removeScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekdaysNoFriday)
-                                          : addScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekdaysNoFriday);
-                                        mediumHaptic();
-                                        onStayDatesChange(participant.id, nextDates);
-                                      }}
-                                    >
-                                      <Text
-                                        style={{
-                                          color: areVisibleWeekdaysNoFridaySelected ? avatarColor : palette.muted,
-                                          fontSize: 12,
-                                          fontWeight: '700',
-                                        }}
-                                      >
-                                        {visibleWeekdayNoFridayToggleLabel}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  )}
-                                  {participantVisibleMonthDateGroups.weekends.length > 0 && (
-                                    <TouchableOpacity
-                                      style={[
-                                        styles.timeMiniActionChip,
-                                        {
-                                          borderColor: areVisibleWeekendsSelected ? avatarColor : palette.border,
-                                          backgroundColor: areVisibleWeekendsSelected ? `${avatarColor}12` : 'transparent',
-                                        },
-                                      ]}
-                                      onPress={() => {
-                                        const nextDates = areVisibleWeekendsSelected
-                                          ? removeScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekends)
-                                          : addScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekends);
-                                        mediumHaptic();
-                                        onStayDatesChange(participant.id, nextDates);
-                                      }}
-                                    >
-                                      <Text
-                                        style={{
-                                          color: areVisibleWeekendsSelected ? avatarColor : palette.muted,
-                                          fontSize: 12,
-                                          fontWeight: '700',
-                                        }}
-                                      >
-                                        {visibleWeekendToggleLabel}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  )}
-                                  {participantVisibleMonthDateGroups.longWeekends.length > 0 && (
-                                    <TouchableOpacity
-                                      style={[
-                                        styles.timeMiniActionChip,
-                                        {
-                                          borderColor: areVisibleLongWeekendsSelected ? avatarColor : palette.border,
-                                          backgroundColor: areVisibleLongWeekendsSelected ? `${avatarColor}12` : 'transparent',
-                                        },
-                                      ]}
-                                      onPress={() => {
-                                        const nextDates = areVisibleLongWeekendsSelected
-                                          ? removeScopedDates(selectedDateSet, participantVisibleMonthDateGroups.longWeekends)
-                                          : addScopedDates(selectedDateSet, participantVisibleMonthDateGroups.longWeekends);
-                                        mediumHaptic();
-                                        onStayDatesChange(participant.id, nextDates);
-                                      }}
-                                    >
-                                      <Text
-                                        style={{
-                                          color: areVisibleLongWeekendsSelected ? avatarColor : palette.muted,
-                                          fontSize: 12,
-                                          fontWeight: '700',
-                                        }}
-                                      >
-                                        {visibleLongWeekendToggleLabel}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  )}
-                                </View>
-                              </View>
-                            )}
+              <CalendarMonthGrid
+                accentColor={theme.colors.primary}
+                monthDate={periodCalendarMonth}
+                onPressDate={handlePeriodCalendarDayPress}
+                rangeEnd={timePeriodEndDate || undefined}
+                rangeStart={timePeriodStartDate || undefined}
+              />
 
-                            <CalendarMonthGrid
-                              accentColor={avatarColor}
-                              enabledDates={periodDateSet}
-                              monthDate={participantCalendarMonth}
-                              onPressDate={(dateValue) => {
-                                const nextDates = selectedDateSet.has(dateValue)
-                                  ? Array.from(selectedDateSet).filter((value) => value !== dateValue)
-                                  : [...Array.from(selectedDateSet), dateValue].sort();
-                                lightHaptic();
-                                onStayDatesChange(participant.id, nextDates);
-                              }}
-                              selectedDates={selectedDateSet}
-                            />
-                          </View>
-                        )}
-                      </>
-                    ) : (
-                      <View style={[styles.timeDateHintBox, { borderColor: palette.border }]}>
-                        <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center' }}>
-                          Choose the total billing period on the calendar above first, then each member can pick their stayed days from it.
-                        </Text>
-                      </View>
-                    )}
-                  </View>
+              {!timePeriodStartDate && !timePeriodEndDate && (
+                <Text variant="labelSmall" style={{ color: palette.muted, textAlign: 'center' }}>
+                  Tap any date to start selecting the billing period.
+                </Text>
+              )}
+              {timePeriodStartDate && !timePeriodEndDate && (
+                <Text
+                  variant="labelSmall"
+                  style={{
+                    color: theme.colors.primary,
+                    textAlign: 'center',
+                    fontWeight: '600',
+                  }}
+                >
+                  Now tap the last day of the billing period.
+                </Text>
+              )}
+            </View>
+          )}
+        </SolidCard>
+
+        <Animated.View entering={SlideInDown.springify()}>
+          <SolidCard style={styles.timeSummaryCard}>
+            <View style={styles.timeSummaryHeader}>
+              <View style={styles.timeSummaryHeaderText}>
+                <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                  {isStandardMode
+                    ? allSame
+                      ? 'Standard mode is splitting the full period evenly'
+                      : 'Standard mode redistributes missed-day share'
+                    : allSame
+                      ? 'Everyone is on the full stay right now'
+                      : `${included.length} people with custom stays`}
+                </Text>
+                <Text variant="bodySmall" style={{ color: palette.muted }}>
+                  {isStandardMode
+                    ? "Each missed day hands that member's base daily share back to the rest of the group."
+                    : inputMode === 'dates'
+                      ? 'Dates are counted inclusively and capped to this billing period.'
+                      : 'Move the slider or type a value to update the split instantly.'}
+                </Text>
+              </View>
+              <View style={[styles.timeSummaryBadge, { backgroundColor: `${theme.colors.primary}16` }]}>
+                <Text
+                  style={{
+                    color: theme.colors.primary,
+                    fontSize: 12,
+                    fontWeight: '800',
+                  }}
+                >
+                  {filledCount}/{included.length} full stay
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.timeMetricGrid}>
+              <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
+                <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>Period</Text>
+                <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>{periodDays}d</Text>
+              </View>
+              <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
+                <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>House/day</Text>
+                <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>
+                  {formatCurrency(householdDailyCost, currency)}
+                </Text>
+              </View>
+              <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
+                <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>
+                  {isStandardMode ? 'Base/member/day' : 'Occupied days'}
+                </Text>
+                <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>
+                  {isStandardMode ? formatCurrency(baseMemberDailyCost, currency) : `${totalPersonDays}d`}
+                </Text>
+              </View>
+              <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
+                <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>
+                  {isStandardMode ? 'Redistributed pool' : 'Occupied/day'}
+                </Text>
+                <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>
+                  {isStandardMode
+                    ? formatCurrency(redistributedPool, currency)
+                    : totalPersonDays > 0
+                      ? formatCurrency(occupiedDayCost, currency)
+                      : '-'}
+                </Text>
+              </View>
+            </View>
+
+            <Text
+              variant="bodySmall"
+              style={{
+                color: palette.muted,
+                paddingHorizontal: 14,
+                paddingBottom: 14,
+              }}
+            >
+              {isStandardMode
+                ? `Missing days across the group: ${totalMissingDays} day${totalMissingDays === 1 ? '' : 's'}`
+                : `Average stay: ${included.length > 0 ? averageStay.toFixed(1) : '0.0'} day${averageStay === 1 ? '' : 's'}`}
+            </Text>
+          </SolidCard>
+        </Animated.View>
+
+        {allZero && (
+          <Animated.View entering={SlideInUp.duration(300)}>
+            <SolidCard style={styles.timeEmptyCard}>
+              <View style={styles.timeEmptyContent}>
+                <Icon source="calendar-clock" size={32} color={palette.muted} />
+                <Text
+                  variant="bodySmall"
+                  style={{
+                    color: palette.muted,
+                    textAlign: 'center',
+                    paddingHorizontal: 16,
+                  }}
+                >
+                  No one has any days set yet. Use the {inputMode === 'dates' ? 'calendar' : 'slider'} below to set how long each person
+                  stayed.
+                </Text>
+                {inputMode === 'days' && (
+                  <TouchableOpacity
+                    style={[styles.timeFillAllBtn, { borderColor: theme.colors.primary }]}
+                    onPress={() => {
+                      successHaptic();
+                      onSetAllDays(periodDays);
+                    }}
+                  >
+                    <Icon source="account-check" size={14} color={theme.colors.primary} />
+                    <Text
+                      style={{
+                        color: theme.colors.primary,
+                        fontSize: 12,
+                        fontWeight: '700',
+                      }}
+                    >
+                      Everyone stayed the full {periodDays} days
+                    </Text>
+                  </TouchableOpacity>
                 )}
               </View>
             </SolidCard>
           </Animated.View>
-        );
-      })}
+        )}
 
-      {!allZero && included.length > 0 && (
-        <Text variant="labelSmall" style={{ color: palette.muted, textAlign: 'center', marginTop: 4 }}>
-          Equal split baseline: {formatCurrency(totalAmount / included.length, currency)}/person
-        </Text>
-      )}
-    </View>
-  );
-});
+        {included.map((participant, index) => {
+          const splitPct = totalAmount > 0 ? (participant.computedAmount / totalAmount) * 100 : 0;
+          const periodPct = (participant.daysStayed / periodDays) * 100;
+          const costPerStayedDay = participant.daysStayed > 0 ? participant.computedAmount / participant.daysStayed : 0;
+          const missingDays = Math.max(0, periodDays - participant.daysStayed);
+          const redistributedAmount = participant.computedAmount - participant.daysStayed * baseMemberDailyCost;
+          const avatar = avatarColorsForKey(participant.id, isDark);
+          const avatarColor = avatar.background;
+          const selectedDateSet = new Set(
+            participant.selectedStayDates ?? (periodDateOptions.length === participant.daysStayed ? periodDateOptions : []),
+          );
+          const hasManualDaysWithoutDates = selectedDateSet.size === 0 && participant.daysStayed > 0;
+          const isExpanded = expandedParticipantId === participant.id;
+          const canGoToPreviousParticipantMonth = !periodStartMonth || participantCalendarMonth.getTime() > periodStartMonth.getTime();
+          const canGoToNextParticipantMonth = !periodEndMonth || participantCalendarMonth.getTime() < periodEndMonth.getTime();
+          const visibleMonthDates = isExpanded ? participantVisibleMonthDates : [];
+          const selectedVisibleMonthCount = visibleMonthDates.filter((dateValue) => selectedDateSet.has(dateValue)).length;
+          const isVisibleMonthFullySelected = visibleMonthDates.length > 0 && selectedVisibleMonthCount === visibleMonthDates.length;
+          const monthToggleLabel = isVisibleMonthFullySelected ? 'Clear month' : 'Select month';
+
+          // Global-scope toggle state (all period dates)
+          const selectedAllWeekdayCount = periodDateGroups.weekdays.filter((dateValue) => selectedDateSet.has(dateValue)).length;
+          const selectedAllWeekdayNoFridayCount = periodDateGroups.weekdaysNoFriday.filter((dateValue) =>
+            selectedDateSet.has(dateValue),
+          ).length;
+          const selectedAllWeekendCount = periodDateGroups.weekends.filter((dateValue) => selectedDateSet.has(dateValue)).length;
+          const selectedAllLongWeekendCount = periodDateGroups.longWeekends.filter((dateValue) => selectedDateSet.has(dateValue)).length;
+          const areAllWeekdaysSelected =
+            periodDateGroups.weekdays.length > 0 && selectedAllWeekdayCount === periodDateGroups.weekdays.length;
+          const areAllWeekdaysNoFridaySelected =
+            periodDateGroups.weekdaysNoFriday.length > 0 && selectedAllWeekdayNoFridayCount === periodDateGroups.weekdaysNoFriday.length;
+          const areAllWeekendsSelected =
+            periodDateGroups.weekends.length > 0 && selectedAllWeekendCount === periodDateGroups.weekends.length;
+          const areAllLongWeekendsSelected =
+            periodDateGroups.longWeekends.length > 0 && selectedAllLongWeekendCount === periodDateGroups.longWeekends.length;
+          const allWeekdayToggleLabel = areAllWeekdaysSelected ? 'Remove all weekdays' : 'Add all weekdays';
+          const allWeekdayNoFridayToggleLabel = areAllWeekdaysNoFridaySelected ? 'Remove all Mon–Thu' : 'Add all Mon–Thu';
+          const allWeekendToggleLabel = areAllWeekendsSelected ? 'Remove all weekends' : 'Add all weekends';
+          const allLongWeekendToggleLabel = areAllLongWeekendsSelected ? 'Remove all long wkends' : 'Add all long wkends';
+
+          // Per-visible-month toggle state
+          const selectedVisibleWeekdayCount = participantVisibleMonthDateGroups.weekdays.filter((dateValue) =>
+            selectedDateSet.has(dateValue),
+          ).length;
+          const selectedVisibleWeekdayNoFridayCount = participantVisibleMonthDateGroups.weekdaysNoFriday.filter((dateValue) =>
+            selectedDateSet.has(dateValue),
+          ).length;
+          const selectedVisibleWeekendCount = participantVisibleMonthDateGroups.weekends.filter((dateValue) =>
+            selectedDateSet.has(dateValue),
+          ).length;
+          const selectedVisibleLongWeekendCount = participantVisibleMonthDateGroups.longWeekends.filter((dateValue) =>
+            selectedDateSet.has(dateValue),
+          ).length;
+          const areVisibleWeekdaysSelected =
+            participantVisibleMonthDateGroups.weekdays.length > 0 &&
+            selectedVisibleWeekdayCount === participantVisibleMonthDateGroups.weekdays.length;
+          const areVisibleWeekdaysNoFridaySelected =
+            participantVisibleMonthDateGroups.weekdaysNoFriday.length > 0 &&
+            selectedVisibleWeekdayNoFridayCount === participantVisibleMonthDateGroups.weekdaysNoFriday.length;
+          const areVisibleWeekendsSelected =
+            participantVisibleMonthDateGroups.weekends.length > 0 &&
+            selectedVisibleWeekendCount === participantVisibleMonthDateGroups.weekends.length;
+          const areVisibleLongWeekendsSelected =
+            participantVisibleMonthDateGroups.longWeekends.length > 0 &&
+            selectedVisibleLongWeekendCount === participantVisibleMonthDateGroups.longWeekends.length;
+          const visibleWeekdayToggleLabel = areVisibleWeekdaysSelected ? 'Remove weekdays' : 'Add weekdays';
+          const visibleWeekdayNoFridayToggleLabel = areVisibleWeekdaysNoFridaySelected ? 'Remove Mon–Thu' : 'Add Mon–Thu';
+          const visibleWeekendToggleLabel = areVisibleWeekendsSelected ? 'Remove weekends' : 'Add weekends';
+          const visibleLongWeekendToggleLabel = areVisibleLongWeekendsSelected ? 'Remove long wkends' : 'Add long wkends';
+
+          return (
+            <Animated.View key={participant.id} entering={SlideInDown.delay(index * 50).springify()}>
+              <SolidCard
+                style={[
+                  styles.timeParticipantCard,
+                  {
+                    borderLeftWidth: 3,
+                    borderLeftColor:
+                      participant.daysStayed === 0
+                        ? palette.border
+                        : participant.daysStayed === periodDays
+                          ? avatarColor
+                          : `${avatarColor}88`,
+                  },
+                ]}
+              >
+                <View style={styles.timeCardInner}>
+                  <View style={styles.timeRowTop}>
+                    <View style={styles.timeRowNameGroup}>
+                      <View style={[styles.miniAvatar, { backgroundColor: avatarColor }]}>
+                        <Text style={[styles.miniInitials, { color: avatar.foreground }]}>{resolveInitials(participant.name)}</Text>
+                      </View>
+                      <View style={styles.timeParticipantTitleBlock}>
+                        <Text
+                          style={{
+                            color: theme.colors.onSurface,
+                            fontWeight: '700',
+                            fontSize: 15,
+                          }}
+                          numberOfLines={1}
+                        >
+                          {participant.name}
+                        </Text>
+                        <Text variant="bodySmall" style={{ color: palette.muted }}>
+                          {participant.daysStayed}/{periodDays} day
+                          {participant.daysStayed === 1 ? '' : 's'} in period
+                        </Text>
+                      </View>
+                    </View>
+                    <Text
+                      style={{
+                        color: theme.colors.primary,
+                        fontWeight: '800',
+                        fontSize: 18,
+                      }}
+                    >
+                      {formatCurrency(participant.computedAmount, currency)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.timeProgressBarWrap}>
+                    <View
+                      style={[
+                        styles.timeProgressBarTrack,
+                        {
+                          backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                        },
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.timeProgressBarFill,
+                          {
+                            width: `${Math.min(100, periodPct)}%`,
+                            backgroundColor:
+                              participant.daysStayed === periodDays
+                                ? avatarColor
+                                : participant.daysStayed === 0
+                                  ? 'transparent'
+                                  : `${avatarColor}99`,
+                          },
+                        ]}
+                      />
+                    </View>
+                    <Text
+                      style={{
+                        color: palette.muted,
+                        fontSize: 11,
+                        fontWeight: '700',
+                        minWidth: 32,
+                        textAlign: 'right',
+                      }}
+                    >
+                      {periodPct.toFixed(0)}%
+                    </Text>
+                  </View>
+
+                  <View style={styles.timeMetaRow}>
+                    <View style={[styles.timeMetaChip, { borderColor: palette.border }]}>
+                      <Text
+                        style={{
+                          color: palette.muted,
+                          fontSize: 12,
+                          fontWeight: '600',
+                        }}
+                      >
+                        {splitPct.toFixed(0)}% of split
+                      </Text>
+                    </View>
+                    <View style={[styles.timeMetaChip, { borderColor: palette.border }]}>
+                      <Text
+                        style={{
+                          color: palette.muted,
+                          fontSize: 12,
+                          fontWeight: '600',
+                        }}
+                      >
+                        {isStandardMode ? `${missingDays} missed day${missingDays === 1 ? '' : 's'}` : `${periodPct.toFixed(0)}% of period`}
+                      </Text>
+                    </View>
+                    {(participant.daysStayed > 0 || isStandardMode) && (
+                      <View style={[styles.timeMetaChip, { borderColor: palette.border }]}>
+                        <Text
+                          style={{
+                            color: palette.muted,
+                            fontSize: 12,
+                            fontWeight: '600',
+                          }}
+                        >
+                          {isStandardMode
+                            ? `${redistributedAmount >= 0 ? '+' : ''}${formatCurrency(redistributedAmount, currency)} backfill`
+                            : `${formatCurrency(costPerStayedDay, currency)}/day`}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {inputMode === 'days' && (
+                    <>
+                      <View style={styles.timeDaysInputRow}>
+                        <TouchableOpacity
+                          style={[
+                            styles.shareBtn,
+                            styles.timePeriodStepBtn,
+                            {
+                              backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+                            },
+                          ]}
+                          onPress={() => {
+                            lightHaptic();
+                            onDaysChange(participant.id, Math.max(0, participant.daysStayed - 1).toString());
+                          }}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Decrease days for ${participant.name}`}
+                        >
+                          <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>-</Text>
+                        </TouchableOpacity>
+                        <TextInput
+                          style={[
+                            styles.timeDaysInput,
+                            {
+                              color: theme.colors.onSurface,
+                              borderColor: inputBorder(isDark),
+                            },
+                          ]}
+                          value={participant.daysStayed.toString()}
+                          onChangeText={(value) => onDaysChange(participant.id, value)}
+                          keyboardType="number-pad"
+                          placeholder="0"
+                          placeholderTextColor={palette.muted}
+                        />
+                        <TouchableOpacity
+                          style={[
+                            styles.shareBtn,
+                            styles.timePeriodStepBtn,
+                            {
+                              backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+                            },
+                          ]}
+                          onPress={() => {
+                            lightHaptic();
+                            onDaysChange(participant.id, Math.min(periodDays, participant.daysStayed + 1).toString());
+                          }}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Increase days for ${participant.name}`}
+                        >
+                          <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
+                        </TouchableOpacity>
+                        <Text variant="bodySmall" style={{ color: palette.muted, marginLeft: 4 }}>
+                          day{participant.daysStayed !== 1 ? 's' : ''}
+                        </Text>
+                        {participant.daysStayed === periodDays && (
+                          <View style={[styles.timeInlinePill, { backgroundColor: `${theme.colors.primary}16` }]}>
+                            <Text
+                              style={{
+                                color: theme.colors.primary,
+                                fontSize: 11,
+                                fontWeight: '800',
+                              }}
+                            >
+                              Full stay
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+
+                      <TimeValueSlider
+                        accentColor={avatarColor}
+                        isDark={isDark}
+                        maximumValue={periodDays}
+                        minimumValue={0}
+                        onValueChange={(nextValue) => onDaysChange(participant.id, nextValue.toString())}
+                        onSlidingComplete={() => lightHaptic()}
+                        value={participant.daysStayed}
+                      />
+
+                      <View style={styles.timeSliderLabels}>
+                        <Text variant="labelSmall" style={{ color: palette.muted }}>
+                          0d
+                        </Text>
+                        <Text variant="labelSmall" style={{ color: palette.muted }}>
+                          {periodDays}d max
+                        </Text>
+                      </View>
+                    </>
+                  )}
+
+                  {inputMode === 'dates' && (
+                    <View style={styles.timeDateContainer}>
+                      {periodDateOptions.length > 0 ? (
+                        <>
+                          <View style={styles.timeParticipantDateHeader}>
+                            <View style={styles.timeParticipantDateSummary}>
+                              <Text variant="labelSmall" style={{ color: palette.muted }}>
+                                {selectedDateSet.size > 0
+                                  ? `${selectedDateSet.size} selected day${selectedDateSet.size === 1 ? '' : 's'}`
+                                  : hasManualDaysWithoutDates
+                                    ? `${participant.daysStayed} day${participant.daysStayed === 1 ? '' : 's'} set manually`
+                                    : 'No selected days yet'}
+                              </Text>
+                              <Text variant="bodySmall" style={{ color: palette.muted }}>
+                                {hasManualDaysWithoutDates
+                                  ? 'Tap exact days below to replace the manual count with real dates.'
+                                  : 'Tap exact days from the billing range below.'}
+                              </Text>
+                            </View>
+                            <View style={styles.timeParticipantDateActions}>
+                              <TouchableOpacity
+                                style={[styles.timeMiniActionChip, { borderColor: palette.border }]}
+                                onPress={() => {
+                                  lightHaptic();
+                                  if (!isExpanded) {
+                                    const anchorDate = participant.selectedStayDates?.[0] ?? timePeriodStartDate ?? timePeriodEndDate;
+                                    const anchorMonth = anchorDate ? parseCalendarDate(anchorDate) : null;
+                                    if (anchorMonth) {
+                                      setParticipantCalendarMonth(getCalendarMonthStart(anchorMonth));
+                                    }
+                                  }
+                                  setExpandedParticipantId(isExpanded ? null : participant.id);
+                                }}
+                                accessibilityRole="button"
+                                accessibilityLabel={`${isExpanded ? 'Hide' : 'Show'} calendar for ${participant.name}`}
+                                accessibilityState={{ expanded: isExpanded }}
+                              >
+                                <Icon
+                                  source={isExpanded ? 'calendar-collapse-horizontal' : 'calendar-month'}
+                                  size={14}
+                                  color={theme.colors.primary}
+                                />
+                                <Text
+                                  style={{
+                                    color: theme.colors.primary,
+                                    fontSize: 12,
+                                    fontWeight: '700',
+                                  }}
+                                >
+                                  {isExpanded ? 'Hide' : 'Calendar'}
+                                </Text>
+                                {!isExpanded && selectedDateSet.size > 0 && (
+                                  <View style={[styles.calendarBadge, { backgroundColor: avatarColor }]}>
+                                    <Text
+                                      style={{
+                                        color: avatar.foreground,
+                                        fontSize: 9,
+                                        fontWeight: '800',
+                                      }}
+                                    >
+                                      {selectedDateSet.size}
+                                    </Text>
+                                  </View>
+                                )}
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={[
+                                  styles.timeMiniActionChip,
+                                  {
+                                    borderColor: selectedDateSet.size === periodDateOptions.length ? avatarColor : palette.border,
+                                    backgroundColor: selectedDateSet.size === periodDateOptions.length ? `${avatarColor}12` : 'transparent',
+                                  },
+                                ]}
+                                onPress={() => {
+                                  mediumHaptic();
+                                  onStayDatesChange(participant.id, periodDateOptions);
+                                }}
+                                accessibilityRole="checkbox"
+                                accessibilityLabel={`All days for ${participant.name}`}
+                                accessibilityState={{
+                                  checked: selectedDateSet.size === periodDateOptions.length,
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    color: selectedDateSet.size === periodDateOptions.length ? avatarColor : palette.muted,
+                                    fontSize: 12,
+                                    fontWeight: '700',
+                                  }}
+                                >
+                                  All days
+                                </Text>
+                              </TouchableOpacity>
+                              {periodDateGroups.weekdays.length > 0 && (
+                                <TouchableOpacity
+                                  style={[
+                                    styles.timeMiniActionChip,
+                                    {
+                                      borderColor: areAllWeekdaysSelected ? avatarColor : palette.border,
+                                      backgroundColor: areAllWeekdaysSelected ? `${avatarColor}12` : 'transparent',
+                                    },
+                                  ]}
+                                  onPress={() => {
+                                    const nextDates = areAllWeekdaysSelected
+                                      ? removeScopedDates(selectedDateSet, periodDateGroups.weekdays)
+                                      : addScopedDates(selectedDateSet, periodDateGroups.weekdays);
+                                    mediumHaptic();
+                                    onStayDatesChange(participant.id, nextDates);
+                                  }}
+                                  accessibilityRole="checkbox"
+                                  accessibilityLabel={`Weekdays for ${participant.name}`}
+                                  accessibilityState={{
+                                    checked: areAllWeekdaysSelected,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: areAllWeekdaysSelected ? avatarColor : palette.muted,
+                                      fontSize: 12,
+                                      fontWeight: '700',
+                                    }}
+                                  >
+                                    {allWeekdayToggleLabel}
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                              {periodDateGroups.weekdaysNoFriday.length > 0 && (
+                                <TouchableOpacity
+                                  style={[
+                                    styles.timeMiniActionChip,
+                                    {
+                                      borderColor: areAllWeekdaysNoFridaySelected ? avatarColor : palette.border,
+                                      backgroundColor: areAllWeekdaysNoFridaySelected ? `${avatarColor}12` : 'transparent',
+                                    },
+                                  ]}
+                                  onPress={() => {
+                                    const nextDates = areAllWeekdaysNoFridaySelected
+                                      ? removeScopedDates(selectedDateSet, periodDateGroups.weekdaysNoFriday)
+                                      : addScopedDates(selectedDateSet, periodDateGroups.weekdaysNoFriday);
+                                    mediumHaptic();
+                                    onStayDatesChange(participant.id, nextDates);
+                                  }}
+                                  accessibilityRole="checkbox"
+                                  accessibilityLabel={`Monday through Thursday for ${participant.name}`}
+                                  accessibilityState={{
+                                    checked: areAllWeekdaysNoFridaySelected,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: areAllWeekdaysNoFridaySelected ? avatarColor : palette.muted,
+                                      fontSize: 12,
+                                      fontWeight: '700',
+                                    }}
+                                  >
+                                    {allWeekdayNoFridayToggleLabel}
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                              {periodDateGroups.weekends.length > 0 && (
+                                <TouchableOpacity
+                                  style={[
+                                    styles.timeMiniActionChip,
+                                    {
+                                      borderColor: areAllWeekendsSelected ? avatarColor : palette.border,
+                                      backgroundColor: areAllWeekendsSelected ? `${avatarColor}12` : 'transparent',
+                                    },
+                                  ]}
+                                  onPress={() => {
+                                    const nextDates = areAllWeekendsSelected
+                                      ? removeScopedDates(selectedDateSet, periodDateGroups.weekends)
+                                      : addScopedDates(selectedDateSet, periodDateGroups.weekends);
+                                    mediumHaptic();
+                                    onStayDatesChange(participant.id, nextDates);
+                                  }}
+                                  accessibilityRole="checkbox"
+                                  accessibilityLabel={`Weekends for ${participant.name}`}
+                                  accessibilityState={{
+                                    checked: areAllWeekendsSelected,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: areAllWeekendsSelected ? avatarColor : palette.muted,
+                                      fontSize: 12,
+                                      fontWeight: '700',
+                                    }}
+                                  >
+                                    {allWeekendToggleLabel}
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                              {periodDateGroups.longWeekends.length > 0 && (
+                                <TouchableOpacity
+                                  style={[
+                                    styles.timeMiniActionChip,
+                                    {
+                                      borderColor: areAllLongWeekendsSelected ? avatarColor : palette.border,
+                                      backgroundColor: areAllLongWeekendsSelected ? `${avatarColor}12` : 'transparent',
+                                    },
+                                  ]}
+                                  onPress={() => {
+                                    const nextDates = areAllLongWeekendsSelected
+                                      ? removeScopedDates(selectedDateSet, periodDateGroups.longWeekends)
+                                      : addScopedDates(selectedDateSet, periodDateGroups.longWeekends);
+                                    mediumHaptic();
+                                    onStayDatesChange(participant.id, nextDates);
+                                  }}
+                                  accessibilityRole="checkbox"
+                                  accessibilityLabel={`Long weekends for ${participant.name}`}
+                                  accessibilityState={{
+                                    checked: areAllLongWeekendsSelected,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      color: areAllLongWeekendsSelected ? avatarColor : palette.muted,
+                                      fontSize: 12,
+                                      fontWeight: '700',
+                                    }}
+                                  >
+                                    {allLongWeekendToggleLabel}
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                              <TouchableOpacity
+                                style={[styles.timeMiniActionChip, { borderColor: palette.border }]}
+                                onPress={() => {
+                                  mediumHaptic();
+                                  onStayDatesChange(participant.id, []);
+                                }}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Clear selected dates for ${participant.name}`}
+                              >
+                                <Text
+                                  style={{
+                                    color: palette.muted,
+                                    fontSize: 12,
+                                    fontWeight: '700',
+                                  }}
+                                >
+                                  Clear
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+
+                          {isExpanded && (
+                            <View style={styles.timeParticipantCalendarStack}>
+                              <View style={styles.calendarNavRow}>
+                                <TouchableOpacity
+                                  disabled={!canGoToPreviousParticipantMonth}
+                                  style={[
+                                    styles.calendarNavButton,
+                                    {
+                                      borderColor: palette.border,
+                                      opacity: canGoToPreviousParticipantMonth ? 1 : 0.35,
+                                    },
+                                  ]}
+                                  onPress={() => {
+                                    if (!canGoToPreviousParticipantMonth) return;
+                                    setParticipantCalendarMonth((current) => addCalendarMonths(current, -1));
+                                  }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Previous month for ${participant.name}`}
+                                  accessibilityState={{
+                                    disabled: !canGoToPreviousParticipantMonth,
+                                  }}
+                                >
+                                  <Icon source="chevron-left" size={18} color={theme.colors.onSurface} />
+                                </TouchableOpacity>
+                                <Text
+                                  variant="labelLarge"
+                                  style={{
+                                    color: theme.colors.onSurface,
+                                    fontWeight: '700',
+                                  }}
+                                >
+                                  {getCalendarMonthLabel(participantCalendarMonth)}
+                                </Text>
+                                <TouchableOpacity
+                                  disabled={!canGoToNextParticipantMonth}
+                                  style={[
+                                    styles.calendarNavButton,
+                                    {
+                                      borderColor: palette.border,
+                                      opacity: canGoToNextParticipantMonth ? 1 : 0.35,
+                                    },
+                                  ]}
+                                  onPress={() => {
+                                    if (!canGoToNextParticipantMonth) return;
+                                    setParticipantCalendarMonth((current) => addCalendarMonths(current, 1));
+                                  }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Next month for ${participant.name}`}
+                                  accessibilityState={{
+                                    disabled: !canGoToNextParticipantMonth,
+                                  }}
+                                >
+                                  <Icon source="chevron-right" size={18} color={theme.colors.onSurface} />
+                                </TouchableOpacity>
+                              </View>
+
+                              {visibleMonthDates.length > 0 && (
+                                <View style={styles.timeParticipantMonthActionRow}>
+                                  <Text variant="bodySmall" style={{ color: palette.muted }}>
+                                    {selectedVisibleMonthCount}/{visibleMonthDates.length} this month
+                                  </Text>
+                                  <View style={styles.timeParticipantMonthActionButtons}>
+                                    <TouchableOpacity
+                                      style={[
+                                        styles.timeMiniActionChip,
+                                        {
+                                          borderColor: isVisibleMonthFullySelected ? avatarColor : palette.border,
+                                          backgroundColor: isVisibleMonthFullySelected ? `${avatarColor}12` : 'transparent',
+                                        },
+                                      ]}
+                                      onPress={() => {
+                                        const nextDates = isVisibleMonthFullySelected
+                                          ? removeScopedDates(selectedDateSet, visibleMonthDates)
+                                          : addScopedDates(selectedDateSet, visibleMonthDates);
+                                        mediumHaptic();
+                                        onStayDatesChange(participant.id, nextDates);
+                                      }}
+                                      accessibilityRole="checkbox"
+                                      accessibilityLabel={`${getCalendarMonthLabel(participantCalendarMonth)} for ${participant.name}`}
+                                      accessibilityState={{
+                                        checked: isVisibleMonthFullySelected,
+                                      }}
+                                    >
+                                      <Text
+                                        style={{
+                                          color: isVisibleMonthFullySelected ? avatarColor : palette.muted,
+                                          fontSize: 12,
+                                          fontWeight: '700',
+                                        }}
+                                      >
+                                        {monthToggleLabel}
+                                      </Text>
+                                    </TouchableOpacity>
+                                    {participantVisibleMonthDateGroups.weekdays.length > 0 && (
+                                      <TouchableOpacity
+                                        style={[
+                                          styles.timeMiniActionChip,
+                                          {
+                                            borderColor: areVisibleWeekdaysSelected ? avatarColor : palette.border,
+                                            backgroundColor: areVisibleWeekdaysSelected ? `${avatarColor}12` : 'transparent',
+                                          },
+                                        ]}
+                                        onPress={() => {
+                                          const nextDates = areVisibleWeekdaysSelected
+                                            ? removeScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekdays)
+                                            : addScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekdays);
+                                          mediumHaptic();
+                                          onStayDatesChange(participant.id, nextDates);
+                                        }}
+                                        accessibilityRole="checkbox"
+                                        accessibilityLabel={`Weekdays in ${getCalendarMonthLabel(participantCalendarMonth)} for ${participant.name}`}
+                                        accessibilityState={{
+                                          checked: areVisibleWeekdaysSelected,
+                                        }}
+                                      >
+                                        <Text
+                                          style={{
+                                            color: areVisibleWeekdaysSelected ? avatarColor : palette.muted,
+                                            fontSize: 12,
+                                            fontWeight: '700',
+                                          }}
+                                        >
+                                          {visibleWeekdayToggleLabel}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    )}
+                                    {participantVisibleMonthDateGroups.weekdaysNoFriday.length > 0 && (
+                                      <TouchableOpacity
+                                        style={[
+                                          styles.timeMiniActionChip,
+                                          {
+                                            borderColor: areVisibleWeekdaysNoFridaySelected ? avatarColor : palette.border,
+                                            backgroundColor: areVisibleWeekdaysNoFridaySelected ? `${avatarColor}12` : 'transparent',
+                                          },
+                                        ]}
+                                        onPress={() => {
+                                          const nextDates = areVisibleWeekdaysNoFridaySelected
+                                            ? removeScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekdaysNoFriday)
+                                            : addScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekdaysNoFriday);
+                                          mediumHaptic();
+                                          onStayDatesChange(participant.id, nextDates);
+                                        }}
+                                        accessibilityRole="checkbox"
+                                        accessibilityLabel={`Monday through Thursday in ${getCalendarMonthLabel(participantCalendarMonth)} for ${participant.name}`}
+                                        accessibilityState={{
+                                          checked: areVisibleWeekdaysNoFridaySelected,
+                                        }}
+                                      >
+                                        <Text
+                                          style={{
+                                            color: areVisibleWeekdaysNoFridaySelected ? avatarColor : palette.muted,
+                                            fontSize: 12,
+                                            fontWeight: '700',
+                                          }}
+                                        >
+                                          {visibleWeekdayNoFridayToggleLabel}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    )}
+                                    {participantVisibleMonthDateGroups.weekends.length > 0 && (
+                                      <TouchableOpacity
+                                        style={[
+                                          styles.timeMiniActionChip,
+                                          {
+                                            borderColor: areVisibleWeekendsSelected ? avatarColor : palette.border,
+                                            backgroundColor: areVisibleWeekendsSelected ? `${avatarColor}12` : 'transparent',
+                                          },
+                                        ]}
+                                        onPress={() => {
+                                          const nextDates = areVisibleWeekendsSelected
+                                            ? removeScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekends)
+                                            : addScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekends);
+                                          mediumHaptic();
+                                          onStayDatesChange(participant.id, nextDates);
+                                        }}
+                                        accessibilityRole="checkbox"
+                                        accessibilityLabel={`Weekends in ${getCalendarMonthLabel(participantCalendarMonth)} for ${participant.name}`}
+                                        accessibilityState={{
+                                          checked: areVisibleWeekendsSelected,
+                                        }}
+                                      >
+                                        <Text
+                                          style={{
+                                            color: areVisibleWeekendsSelected ? avatarColor : palette.muted,
+                                            fontSize: 12,
+                                            fontWeight: '700',
+                                          }}
+                                        >
+                                          {visibleWeekendToggleLabel}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    )}
+                                    {participantVisibleMonthDateGroups.longWeekends.length > 0 && (
+                                      <TouchableOpacity
+                                        style={[
+                                          styles.timeMiniActionChip,
+                                          {
+                                            borderColor: areVisibleLongWeekendsSelected ? avatarColor : palette.border,
+                                            backgroundColor: areVisibleLongWeekendsSelected ? `${avatarColor}12` : 'transparent',
+                                          },
+                                        ]}
+                                        onPress={() => {
+                                          const nextDates = areVisibleLongWeekendsSelected
+                                            ? removeScopedDates(selectedDateSet, participantVisibleMonthDateGroups.longWeekends)
+                                            : addScopedDates(selectedDateSet, participantVisibleMonthDateGroups.longWeekends);
+                                          mediumHaptic();
+                                          onStayDatesChange(participant.id, nextDates);
+                                        }}
+                                        accessibilityRole="checkbox"
+                                        accessibilityLabel={`Long weekends in ${getCalendarMonthLabel(participantCalendarMonth)} for ${participant.name}`}
+                                        accessibilityState={{
+                                          checked: areVisibleLongWeekendsSelected,
+                                        }}
+                                      >
+                                        <Text
+                                          style={{
+                                            color: areVisibleLongWeekendsSelected ? avatarColor : palette.muted,
+                                            fontSize: 12,
+                                            fontWeight: '700',
+                                          }}
+                                        >
+                                          {visibleLongWeekendToggleLabel}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    )}
+                                  </View>
+                                </View>
+                              )}
+
+                              <CalendarMonthGrid
+                                accentColor={avatarColor}
+                                enabledDates={periodDateSet}
+                                monthDate={participantCalendarMonth}
+                                onPressDate={(dateValue) => {
+                                  const nextDates = selectedDateSet.has(dateValue)
+                                    ? Array.from(selectedDateSet).filter((value) => value !== dateValue)
+                                    : [...Array.from(selectedDateSet), dateValue].sort();
+                                  lightHaptic();
+                                  onStayDatesChange(participant.id, nextDates);
+                                }}
+                                selectedDates={selectedDateSet}
+                              />
+                            </View>
+                          )}
+                        </>
+                      ) : (
+                        <View style={[styles.timeDateHintBox, { borderColor: palette.border }]}>
+                          <Text
+                            variant="bodySmall"
+                            style={{
+                              color: palette.muted,
+                              textAlign: 'center',
+                            }}
+                          >
+                            Choose the total billing period on the calendar above first, then each member can pick their stayed days from
+                            it.
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </View>
+              </SolidCard>
+            </Animated.View>
+          );
+        })}
+
+        {!allZero && included.length > 0 && (
+          <Text variant="labelSmall" style={{ color: palette.muted, textAlign: 'center', marginTop: 4 }}>
+            Equal split baseline: {formatCurrency(totalAmount / included.length, currency)}/person
+          </Text>
+        )}
+      </View>
+    );
+  },
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // E. GAMIFIED / RANDOMIZED SPLITS
@@ -1947,542 +2485,635 @@ interface GamifiedProps {
   onKarmaComplete?: (results: { userId: string; amount: number }[]) => void;
 }
 
-const GamifiedMode_ = React.memo(({
-  mode, onModeChange, participants, onWeightChange, onToggleParticipant, loserId, onSpin,
-  spinTargetIndex, onSpinComplete, isSpinning, currency, totalAmount, initialWeightedAssignments,
-  onWeightedComplete, initialKarmaIntensity, initialKarmaApplied, karmaResetKey, onKarmaIntensityChange, onKarmaComplete,
-}: GamifiedProps) => {
-  const { isDark, theme } = useTheme();
-  const palette = isDark ? darkColors : colors;
-  const included = useMemo(
-    () => participants.filter((participant) => participant.included),
-    [participants],
-  );
+const GamifiedMode_ = React.memo(
+  ({
+    mode,
+    onModeChange,
+    participants,
+    onWeightChange,
+    onToggleParticipant,
+    loserId,
+    onSpin,
+    spinTargetIndex,
+    onSpinComplete,
+    isSpinning,
+    currency,
+    totalAmount,
+    initialWeightedAssignments,
+    onWeightedComplete,
+    initialKarmaIntensity,
+    initialKarmaApplied,
+    karmaResetKey,
+    onKarmaIntensityChange,
+    onKarmaComplete,
+  }: GamifiedProps) => {
+    const { isDark, theme } = useTheme();
+    const palette = isDark ? darkColors : colors;
+    const included = useMemo(() => participants.filter((participant) => participant.included), [participants]);
 
-  // Stable palette slot per person (full roster order) — a player keeps their
-  // colour on the wheel AND the progress bar across rounds and toggles.
-  const colorIndexById = useMemo(() => {
-    const map: Record<string, number> = {};
-    participants.forEach((p, i) => { map[p.id] = i; });
-    return map;
-  }, [participants]);
+    // Stable palette slot per person (full roster order) — a player keeps their
+    // colour on the wheel AND the progress bar across rounds and toggles.
+    const colorIndexById = useMemo(() => {
+      const map: Record<string, number> = {};
+      participants.forEach((p, i) => {
+        map[p.id] = i;
+      });
+      return map;
+    }, [participants]);
 
-  // Wheel ref for roulette / weighted modes
-  const wheelRef = useRef<RouletteWheelRef>(null);
+    // Wheel ref for roulette / weighted modes
+    const wheelRef = useRef<RouletteWheelRef>(null);
 
-  // When parent sets spinTargetIndex, trigger the wheel animation
-  useEffect(() => {
-    if (spinTargetIndex !== null && mode === 'roulette') {
-      wheelRef.current?.spin(spinTargetIndex);
-    }
-  }, [spinTargetIndex, mode]);
-
-  const MODES: { key: GamifiedMode; label: string; icon: string }[] = [
-    { key: 'roulette', label: 'Roulette', icon: 'poker-chip' },
-    { key: 'weightedRoulette', label: 'Double Wheel', icon: 'ferris-wheel' },
-    { key: 'scrooge', label: 'Karma', icon: 'scale-balance' },
-  ];
-
-  const showWheel = mode === 'roulette';
-
-  // ── Karma State ─────────────────────────────────────────────────────
-  const KARMA_PRESETS = [
-    { key: 0.25, label: 'Gentle', emoji: '🌱' },
-    { key: 0.5, label: 'Moderate', emoji: '⚖️' },
-    { key: 0.75, label: 'Strong', emoji: '💪' },
-    { key: 1.0, label: 'Full', emoji: '🔥' },
-  ];
-  const [karmaIntensity, setKarmaIntensity] = useState(initialKarmaIntensity ?? 0.5);
-  const [karmaApplied, setKarmaApplied] = useState(initialKarmaApplied ?? false);
-  const previousKarmaResetKeyRef = useRef(karmaResetKey);
-
-  const karmaComputed = useMemo(() => {
-    if (mode !== 'scrooge') return [];
-    return computeKarma(totalAmount, participants, karmaIntensity);
-  }, [mode, totalAmount, participants, karmaIntensity]);
-
-  const karmaData = useMemo(() => {
-    if (mode !== 'scrooge' || included.length === 0) return [];
-    const avgPaid = included.reduce((s, p) => s + p.historicalPaid, 0) / included.length;
-    const maxDev = Math.max(...included.map((p) => Math.abs(p.historicalPaid - avgPaid)), 1);
-    const equalShare = totalAmount / included.length;
-
-    return included.map((p) => {
-      const computed = karmaComputed.find((c) => c.id === p.id);
-      const deviation = p.historicalPaid - avgPaid;
-      const computedAmt = computed?.computedAmount ?? equalShare;
-      return {
-        id: p.id,
-        name: p.name,
-        historicalPaid: p.historicalPaid,
-        deviation,
-        isOverpayer: deviation > 0,
-        barWidth: Math.min(100, (Math.abs(deviation) / maxDev) * 100),
-        computedAmount: computedAmt,
-        karmaAdjustment: computedAmt - equalShare,
-      };
-    });
-  }, [mode, included, karmaComputed, totalAmount]);
-
-  useEffect(() => {
-    if (mode === 'scrooge') {
-      setKarmaApplied(initialKarmaApplied ?? false);
-      setKarmaIntensity(initialKarmaIntensity ?? 0.5);
-    }
-  }, [initialKarmaApplied, initialKarmaIntensity, mode]);
-
-  useEffect(() => {
-    if (previousKarmaResetKeyRef.current === karmaResetKey) return;
-    previousKarmaResetKeyRef.current = karmaResetKey;
-    if (mode === 'scrooge') setKarmaApplied(false);
-  }, [karmaResetKey, mode]);
-
-  const handleApplyKarma = useCallback(() => {
-    successHaptic();
-    setKarmaApplied(true);
-    const results = karmaComputed
-      .filter((p) => p.included)
-      .map((p) => ({ userId: p.id, amount: p.computedAmount }));
-    onKarmaComplete?.(results);
-  }, [karmaComputed, onKarmaComplete]);
-
-  // ── Weighted Roulette State ─────────────────────────────────────────
-  const weightedWheelRef = useRef<WeightedRouletteWheelRef>(null);
-  const [wAssignments, setWAssignments] = useState<{ userId: string; name: string; percentage: number }[]>(() => (
-    (initialWeightedAssignments ?? []).map((assignment) => ({
-      userId: assignment.userId,
-      name: included.find((participant) => participant.id === assignment.userId)?.name ?? '',
-      percentage: assignment.percentage,
-    }))
-  ));
-  const [wPhase, setWPhase] = useState<'idle' | 'spinning-user' | 'user-selected' | 'spinning-pct' | 'complete'>(
-    initialWeightedAssignments?.length ? 'complete' : 'idle',
-  );
-  const [wPercentOptions, setWPercentOptions] = useState<number[]>(() => {
-    const allocated = (initialWeightedAssignments ?? []).reduce((sum, assignment) => sum + assignment.percentage, 0);
-    return generatePercentageOptions(Math.max(0, 100 - allocated));
-  });
-  const [wSelectedUser, setWSelectedUser] = useState<string | null>(null);
-  // Auto mode: keep firing spins on its own until every share is assigned, so
-  // the user doesn't have to tap Spin once per person.
-  const [wAuto, setWAuto] = useState(false);
-  const seededWeightedAssignments = useMemo(
-    () => (initialWeightedAssignments ?? []).map((assignment) => ({
-      userId: assignment.userId,
-      name: included.find((participant) => participant.id === assignment.userId)?.name ?? '',
-      percentage: assignment.percentage,
-    })),
-    [included, initialWeightedAssignments],
-  );
-  const seededWeightedKey = useMemo(
-    () => seededWeightedAssignments.map((assignment) => `${assignment.userId}:${assignment.percentage}`).join('|'),
-    [seededWeightedAssignments],
-  );
-  const lastWeightedSeedRef = useRef<string | null>(null);
-
-  const wAllocated = useMemo(() => wAssignments.reduce((s, a) => s + a.percentage, 0), [wAssignments]);
-  const wRemainingPct = 100 - wAllocated;
-  const wRemainingParticipants = useMemo(
-    () => included.filter((p) => !wAssignments.some((a) => a.userId === p.id)),
-    [included, wAssignments],
-  );
-  const wBusy = wPhase === 'spinning-user' || wPhase === 'user-selected' || wPhase === 'spinning-pct';
-
-  // Re-seed weighted state on (re)entry or when saved assignments change.
-  // Adjusted DURING render (React's supported set-state-on-prop-change
-  // pattern): a useEffect fires a frame late, flashing the previous visit's
-  // stale assignments (phantom "100% allocated") before resetting.
-  if (mode !== 'weightedRoulette') {
-    lastWeightedSeedRef.current = null;
-  } else if (lastWeightedSeedRef.current !== seededWeightedKey) {
-    lastWeightedSeedRef.current = seededWeightedKey;
-    setWAssignments(seededWeightedAssignments);
-    setWPhase(seededWeightedAssignments.length ? 'complete' : 'idle');
-    setWSelectedUser(null);
-    setWPercentOptions(generatePercentageOptions(
-      Math.max(0, 100 - seededWeightedAssignments.reduce((sum, assignment) => sum + assignment.percentage, 0)),
-    ));
-  }
-
-  // Changing WHO plays invalidates any partial/complete game. Reset locally
-  // during render (no stale frame) and sync the parent's saved assignments
-  // from an effect (parent state must not be set mid-render).
-  const rosterKey = useMemo(() => included.map((p) => p.id).join(','), [included]);
-  const prevRosterKeyRef = useRef(rosterKey);
-  const parentNeedsClearRef = useRef(false);
-  if (prevRosterKeyRef.current !== rosterKey) {
-    prevRosterKeyRef.current = rosterKey;
-    if (mode === 'weightedRoulette' && (wAssignments.length > 0 || wPhase !== 'idle')) {
-      setWAssignments([]);
-      setWPhase('idle');
-      setWSelectedUser(null);
-      setWPercentOptions(generatePercentageOptions(100));
-      parentNeedsClearRef.current = true;
-    }
-    if (mode === 'scrooge' && karmaApplied) {
-      setKarmaApplied(false);
-    }
-  }
-  useEffect(() => {
-    if (parentNeedsClearRef.current) {
-      parentNeedsClearRef.current = false;
-      onWeightedComplete?.([]);
-    }
-  });
-
-  // Store references for async callbacks
-  const wSelectedUserRef = useRef<string | null>(null);
-  const wPctTargetIdxRef = useRef<number>(0);
-
-  const finalizeWeighted = useCallback(
-    (assignments: { userId: string; name: string; percentage: number }[]) => {
-      setWAssignments(assignments);
-      setWPhase('complete');
-      successHaptic();
-      onWeightedComplete?.(assignments.map((a) => ({ userId: a.userId, percentage: a.percentage })));
-    },
-    [onWeightedComplete],
-  );
-
-  const handleWeightedSpin = useCallback(() => {
-    if (wRemainingParticipants.length === 0 || wRemainingPct <= 0 || wPhase !== 'idle') return;
-    heavyHaptic();
-    setWPhase('spinning-user');
-    setWSelectedUser(null);
-
-    const idx = Math.floor(Math.random() * wRemainingParticipants.length);
-    // Pick the target privately for the animation. Do NOT surface it in React
-    // state yet: highlighting a name before the outer wheel stops makes a fair
-    // random draw look pre-decided.
-    wSelectedUserRef.current = wRemainingParticipants[idx].id;
-
-    // Pre-pick the percentage target so inner spin can fire right after outer completes
-    const pctOptions = generatePercentageOptions(wRemainingPct);
-    setWPercentOptions(pctOptions);
-    wPctTargetIdxRef.current = Math.floor(Math.random() * pctOptions.length);
-
-    weightedWheelRef.current?.spinOuter(idx);
-  }, [wRemainingParticipants, wRemainingPct, wPhase]);
-
-  const handleWeightedOuterComplete = useCallback((userId: string) => {
-    // The outer wheel has earned the reveal. Only now may the selected player
-    // be highlighted and the inner wheel begin.
-    wSelectedUserRef.current = userId;
-    setWSelectedUser(userId);
-    setWPhase('user-selected');
-    // Quick pause then spin the inner ring
-    setTimeout(() => {
-      setWPhase('spinning-pct');
-      weightedWheelRef.current?.spinInner(wPctTargetIdxRef.current);
-    }, 700);
-  }, []);
-
-  const handleWeightedInnerComplete = useCallback(
-    (percentage: number) => {
-      const userId = wSelectedUserRef.current!;
-      const userName = included.find((p) => p.id === userId)?.name ?? '';
-
-      const newAssignment = { userId, name: userName, percentage };
-      const allAssignments = [...wAssignments, newAssignment];
-
-      const newRemainingPct = 100 - allAssignments.reduce((s, a) => s + a.percentage, 0);
-      const newRemainingUsers = included.filter((p) => !allAssignments.some((a) => a.userId === p.id));
-
-      if (newRemainingPct <= 0 || newRemainingUsers.length === 0) {
-        finalizeWeighted(allAssignments);
-      } else if (newRemainingUsers.length === 1) {
-        // Auto-assign remaining to last person
-        const last = { userId: newRemainingUsers[0].id, name: newRemainingUsers[0].name, percentage: newRemainingPct };
-        finalizeWeighted([...allAssignments, last]);
-      } else {
-        setWAssignments(allAssignments);
-        setWSelectedUser(null);
-        setWPhase('idle');
-        setWPercentOptions(generatePercentageOptions(newRemainingPct));
+    // When parent sets spinTargetIndex, trigger the wheel animation
+    useEffect(() => {
+      if (spinTargetIndex !== null && mode === 'roulette') {
+        wheelRef.current?.spin(spinTargetIndex);
       }
-    },
-    [wAssignments, included, finalizeWeighted],
-  );
+    }, [spinTargetIndex, mode]);
 
-  // Auto mode CONTINUES the run after the user starts it — it does not start
-  // the game itself. The user checks Auto, taps Spin once, and from then on each
-  // remaining round fires on its own (gated on wAssignments.length > 0, i.e. at
-  // least one manual spin has landed). Call through a ref so an incidental
-  // re-render can't cancel the queued spin.
-  const handleWeightedSpinRef = useRef(handleWeightedSpin);
-  handleWeightedSpinRef.current = handleWeightedSpin;
-  useEffect(() => {
-    if (mode !== 'weightedRoulette' || !wAuto) return;
-    if (wPhase !== 'idle' || wAssignments.length === 0) return;
-    if (wRemainingParticipants.length === 0 || wRemainingPct <= 0) return;
-    const timer = setTimeout(() => handleWeightedSpinRef.current(), 500);
-    return () => clearTimeout(timer);
-  }, [wAuto, wPhase, mode, wAssignments.length, wRemainingParticipants.length, wRemainingPct]);
+    const MODES: { key: GamifiedMode; label: string; icon: string }[] = [
+      { key: 'roulette', label: 'Roulette', icon: 'poker-chip' },
+      { key: 'weightedRoulette', label: 'Double Wheel', icon: 'ferris-wheel' },
+      { key: 'scrooge', label: 'Karma', icon: 'scale-balance' },
+    ];
 
-  return (
-    <View style={styles.section}>
+    const showWheel = mode === 'roulette';
 
-      {/* One compact segmented row — the game names itself, no emoji cards */}
-      <View style={styles.gameModeRow}>
-        {MODES.map((m) => {
-          const selected = mode === m.key;
-          return (
-            <TouchableOpacity
-              key={m.key}
-              accessibilityState={{ selected }}
-              style={[
-                styles.gamePill,
-                {
-                  backgroundColor: selected ? theme.colors.primary : theme.colors.pressed,
-                  borderColor: selected ? theme.colors.primary : palette.border,
-                },
-              ]}
-              onPress={() => { mediumHaptic(); onModeChange(m.key); }}
-              activeOpacity={0.8}
-            >
-              <Icon source={m.icon} size={15} color={selected ? '#FFF' : palette.muted} />
-              <Text
-                style={{ color: selected ? '#FFF' : theme.colors.onSurface, fontSize: 12, fontWeight: selected ? '800' : '600' }}
-                numberOfLines={1}
-              >
-                {m.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+    // ── Karma State ─────────────────────────────────────────────────────
+    const KARMA_PRESETS = [
+      { key: 0.25, label: 'Gentle', emoji: '🌱' },
+      { key: 0.5, label: 'Moderate', emoji: '⚖️' },
+      { key: 0.75, label: 'Strong', emoji: '💪' },
+      { key: 1.0, label: 'Full', emoji: '🔥' },
+    ];
+    const [karmaIntensity, setKarmaIntensity] = useState(initialKarmaIntensity ?? 0.5);
+    const [karmaApplied, setKarmaApplied] = useState(initialKarmaApplied ?? false);
+    const previousKarmaResetKeyRef = useRef(karmaResetKey);
 
-      {/* No in-mode player rail — the split's global roster selector (header,
-          beside Paid by) owns who's in, in every mode. The wheel already shows
-          the players. */}
+    const karmaComputed = useMemo(() => {
+      if (mode !== 'scrooge') return [];
+      return computeKarma(totalAmount, participants, karmaIntensity);
+    }, [mode, totalAmount, participants, karmaIntensity]);
 
-      {mode === 'roulette' && (
-        <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-          Loser pays it all — tap the wheel's center to spin.
-        </Text>
-      )}
+    const karmaData = useMemo(() => {
+      if (mode !== 'scrooge' || included.length === 0) return [];
+      const avgPaid = included.reduce((s, p) => s + p.historicalPaid, 0) / included.length;
+      const maxDev = Math.max(...included.map((p) => Math.abs(p.historicalPaid - avgPaid)), 1);
+      const equalShare = totalAmount / included.length;
 
-      {mode === 'weightedRoulette' && (
-        <View>
-          <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-            Outer ring picks who, inner picks their share — the final split appears full-screen.
-          </Text>
+      return included.map((p) => {
+        const computed = karmaComputed.find((c) => c.id === p.id);
+        const deviation = p.historicalPaid - avgPaid;
+        const computedAmt = computed?.computedAmount ?? equalShare;
+        return {
+          id: p.id,
+          name: p.name,
+          historicalPaid: p.historicalPaid,
+          deviation,
+          isOverpayer: deviation > 0,
+          barWidth: Math.min(100, (Math.abs(deviation) / maxDev) * 100),
+          computedAmount: computedAmt,
+          karmaAdjustment: computedAmt - equalShare,
+        };
+      });
+    }, [mode, included, karmaComputed, totalAmount]);
 
-          {/* Auto — spin every remaining share without tapping each time. */}
-          <TouchableOpacity
-            accessibilityRole="switch"
-            accessibilityState={{ checked: wAuto }}
-            onPress={() => { lightHaptic(); setWAuto((v) => !v); }}
-            activeOpacity={0.8}
-            style={[
-              styles.autoToggle,
-              {
-                borderColor: wAuto ? theme.colors.primary : palette.border,
-                backgroundColor: wAuto ? `${theme.colors.primary}18` : 'transparent',
-              },
-            ]}
-          >
-            <Icon
-              source={wAuto ? 'checkbox-marked' : 'checkbox-blank-outline'}
-              size={18}
-              color={wAuto ? theme.colors.primary : palette.muted}
-            />
-            <Text style={{ color: wAuto ? theme.colors.primary : theme.colors.onSurface, fontSize: 13, fontWeight: '700' }}>
-              Auto-spin
-            </Text>
-            <Text style={{ color: palette.muted, fontSize: 12 }} numberOfLines={1}>
-              runs the wheel until every share is set
-            </Text>
-          </TouchableOpacity>
+    useEffect(() => {
+      if (mode === 'scrooge') {
+        setKarmaApplied(initialKarmaApplied ?? false);
+        setKarmaIntensity(initialKarmaIntensity ?? 0.5);
+      }
+    }, [initialKarmaApplied, initialKarmaIntensity, mode]);
 
-          {/* The dual-ring wheel — its hub is the spin button */}
-          <WeightedRouletteWheel
-            ref={weightedWheelRef}
-            participants={wRemainingParticipants.map((p) => ({ ...p }))}
-            percentages={wPercentOptions}
-            onOuterSpinComplete={handleWeightedOuterComplete}
-            onInnerSpinComplete={handleWeightedInnerComplete}
-            disabled={wBusy}
-            highlightedUserId={wSelectedUser}
-            remainingPct={wRemainingPct}
-            onHubPress={handleWeightedSpin}
-            colorIndexById={colorIndexById}
-          />
+    useEffect(() => {
+      if (previousKarmaResetKeyRef.current === karmaResetKey) return;
+      previousKarmaResetKeyRef.current = karmaResetKey;
+      if (mode === 'scrooge') setKarmaApplied(false);
+    }, [karmaResetKey, mode]);
 
-          {/* Status message */}
-          {wPhase === 'spinning-user' && (
-            <Animated.View entering={FadeIn.duration(200)}>
-              <Text variant="bodySmall" style={{ color: '#F59E0B', textAlign: 'center', fontWeight: '700', marginTop: 4 }}>
-                Selecting who pays next…
-              </Text>
-            </Animated.View>
-          )}
-          {(wPhase === 'user-selected' || wPhase === 'spinning-pct') && (
-            <Animated.View entering={FadeIn.duration(200)}>
-              <Text variant="bodySmall" style={{ color: '#14B8A6', textAlign: 'center', fontWeight: '700', marginTop: 4 }}>
-                Selecting their share…
-              </Text>
-            </Animated.View>
-          )}
+    const handleApplyKarma = useCallback(() => {
+      successHaptic();
+      setKarmaApplied(true);
+      const results = karmaComputed.filter((p) => p.included).map((p) => ({ userId: p.id, amount: p.computedAmount }));
+      onKarmaComplete?.(results);
+    }, [karmaComputed, onKarmaComplete]);
 
-          {/* Live progress — each assigned share as it lands, plus what's left,
-              so the running split is visible during play, not only at the end. */}
-          {wAssignments.length > 0 && wPhase !== 'complete' && (
-            <View style={[styles.wLiveList, { borderColor: palette.border }]}>
-              {wAssignments.map((a) => (
-                <Animated.View key={a.userId} entering={FadeInDown.springify()} style={styles.wLiveRow}>
-                  <Text style={{ color: theme.colors.onSurface, fontWeight: '600', flex: 1 }} numberOfLines={1}>{a.name}</Text>
-                  <Text style={{ color: theme.colors.primary, fontWeight: '800' }}>{a.percentage}%</Text>
-                  <Text variant="bodySmall" style={{ color: palette.muted, width: 68, textAlign: 'right' }}>
-                    {formatCurrency(totalAmount * a.percentage / 100, currency)}
-                  </Text>
-                </Animated.View>
-              ))}
-              <View style={[styles.wLiveRow, styles.wLiveFooter, { borderTopColor: palette.border }]}>
-                <Text variant="bodySmall" style={{ color: palette.muted, flex: 1 }}>
-                  {wRemainingParticipants.length} still to draw
-                </Text>
-                <Text style={{ color: theme.colors.onSurface, fontWeight: '700' }}>{wRemainingPct}% left</Text>
-              </View>
-            </View>
-          )}
+    // ── Weighted Roulette State ─────────────────────────────────────────
+    const weightedWheelRef = useRef<WeightedRouletteWheelRef>(null);
+    const [wAssignments, setWAssignments] = useState<{ userId: string; name: string; percentage: number }[]>(() =>
+      (initialWeightedAssignments ?? []).map((assignment) => ({
+        userId: assignment.userId,
+        name: included.find((participant) => participant.id === assignment.userId)?.name ?? '',
+        percentage: assignment.percentage,
+      })),
+    );
+    const [wPhase, setWPhase] = useState<'idle' | 'spinning-user' | 'user-selected' | 'spinning-pct' | 'complete'>(
+      initialWeightedAssignments?.length ? 'complete' : 'idle',
+    );
+    const [wPercentOptions, setWPercentOptions] = useState<number[]>(() => {
+      const allocated = (initialWeightedAssignments ?? []).reduce((sum, assignment) => sum + assignment.percentage, 0);
+      return generatePercentageOptions(Math.max(0, 100 - allocated));
+    });
+    const [wSelectedUser, setWSelectedUser] = useState<string | null>(null);
+    // Auto mode: keep firing spins on its own until every share is assigned, so
+    // the user doesn't have to tap Spin once per person.
+    const [wAuto, setWAuto] = useState(false);
+    const seededWeightedAssignments = useMemo(
+      () =>
+        (initialWeightedAssignments ?? []).map((assignment) => ({
+          userId: assignment.userId,
+          name: included.find((participant) => participant.id === assignment.userId)?.name ?? '',
+          percentage: assignment.percentage,
+        })),
+      [included, initialWeightedAssignments],
+    );
+    const seededWeightedKey = useMemo(
+      () => seededWeightedAssignments.map((assignment) => `${assignment.userId}:${assignment.percentage}`).join('|'),
+      [seededWeightedAssignments],
+    );
+    const lastWeightedSeedRef = useRef<string | null>(null);
 
-        </View>
-      )}
+    const wAllocated = useMemo(() => wAssignments.reduce((s, a) => s + a.percentage, 0), [wAssignments]);
+    const wRemainingPct = 100 - wAllocated;
+    const wRemainingParticipants = useMemo(
+      () => included.filter((p) => !wAssignments.some((a) => a.userId === p.id)),
+      [included, wAssignments],
+    );
+    const wBusy = wPhase === 'spinning-user' || wPhase === 'user-selected' || wPhase === 'spinning-pct';
 
-      {mode === 'scrooge' && (
-        <View>
-          <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-            Those who've paid less chip in more this time.
-          </Text>
+    // Re-seed weighted state on (re)entry or when saved assignments change.
+    // Adjusted DURING render (React's supported set-state-on-prop-change
+    // pattern): a useEffect fires a frame late, flashing the previous visit's
+    // stale assignments (phantom "100% allocated") before resetting.
+    if (mode !== 'weightedRoulette') {
+      lastWeightedSeedRef.current = null;
+    } else if (lastWeightedSeedRef.current !== seededWeightedKey) {
+      lastWeightedSeedRef.current = seededWeightedKey;
+      setWAssignments(seededWeightedAssignments);
+      setWPhase(seededWeightedAssignments.length ? 'complete' : 'idle');
+      setWSelectedUser(null);
+      setWPercentOptions(
+        generatePercentageOptions(Math.max(0, 100 - seededWeightedAssignments.reduce((sum, assignment) => sum + assignment.percentage, 0))),
+      );
+    }
 
-          {/* Intensity Presets */}
-          <View style={styles.karmaPresetsRow}>
-            {KARMA_PRESETS.map((preset) => (
+    // Changing WHO plays invalidates any partial/complete game. Reset locally
+    // during render (no stale frame) and sync the parent's saved assignments
+    // from an effect (parent state must not be set mid-render).
+    const rosterKey = useMemo(() => included.map((p) => p.id).join(','), [included]);
+    const prevRosterKeyRef = useRef(rosterKey);
+    const parentNeedsClearRef = useRef(false);
+    if (prevRosterKeyRef.current !== rosterKey) {
+      prevRosterKeyRef.current = rosterKey;
+      if (mode === 'weightedRoulette' && (wAssignments.length > 0 || wPhase !== 'idle')) {
+        setWAssignments([]);
+        setWPhase('idle');
+        setWSelectedUser(null);
+        setWPercentOptions(generatePercentageOptions(100));
+        parentNeedsClearRef.current = true;
+      }
+      if (mode === 'scrooge' && karmaApplied) {
+        setKarmaApplied(false);
+      }
+    }
+    useEffect(() => {
+      if (parentNeedsClearRef.current) {
+        parentNeedsClearRef.current = false;
+        onWeightedComplete?.([]);
+      }
+    });
+
+    // Store references for async callbacks
+    const wSelectedUserRef = useRef<string | null>(null);
+    const wPctTargetIdxRef = useRef<number>(0);
+
+    const finalizeWeighted = useCallback(
+      (assignments: { userId: string; name: string; percentage: number }[]) => {
+        setWAssignments(assignments);
+        setWPhase('complete');
+        successHaptic();
+        onWeightedComplete?.(
+          assignments.map((a) => ({
+            userId: a.userId,
+            percentage: a.percentage,
+          })),
+        );
+      },
+      [onWeightedComplete],
+    );
+
+    const handleWeightedSpin = useCallback(() => {
+      if (wRemainingParticipants.length === 0 || wRemainingPct <= 0 || wPhase !== 'idle') return;
+      heavyHaptic();
+      setWPhase('spinning-user');
+      setWSelectedUser(null);
+
+      const idx = secureRandomInt(wRemainingParticipants.length);
+      // Pick the target privately for the animation. Do NOT surface it in React
+      // state yet: highlighting a name before the outer wheel stops makes a fair
+      // random draw look pre-decided.
+      wSelectedUserRef.current = wRemainingParticipants[idx].id;
+
+      // Pre-pick the percentage target so inner spin can fire right after outer completes
+      const pctOptions = generatePercentageOptions(wRemainingPct);
+      setWPercentOptions(pctOptions);
+      wPctTargetIdxRef.current = secureRandomInt(pctOptions.length);
+
+      weightedWheelRef.current?.spinOuter(idx);
+    }, [wRemainingParticipants, wRemainingPct, wPhase]);
+
+    const handleWeightedOuterComplete = useCallback((userId: string) => {
+      // The outer wheel has earned the reveal. Only now may the selected player
+      // be highlighted and the inner wheel begin.
+      wSelectedUserRef.current = userId;
+      setWSelectedUser(userId);
+      setWPhase('user-selected');
+      // Quick pause then spin the inner ring
+      setTimeout(() => {
+        setWPhase('spinning-pct');
+        weightedWheelRef.current?.spinInner(wPctTargetIdxRef.current);
+      }, 700);
+    }, []);
+
+    const handleWeightedInnerComplete = useCallback(
+      (percentage: number) => {
+        const userId = wSelectedUserRef.current!;
+        const userName = included.find((p) => p.id === userId)?.name ?? '';
+
+        const newAssignment = { userId, name: userName, percentage };
+        const allAssignments = [...wAssignments, newAssignment];
+
+        const newRemainingPct = 100 - allAssignments.reduce((s, a) => s + a.percentage, 0);
+        const newRemainingUsers = included.filter((p) => !allAssignments.some((a) => a.userId === p.id));
+
+        if (newRemainingPct <= 0 || newRemainingUsers.length === 0) {
+          finalizeWeighted(allAssignments);
+        } else if (newRemainingUsers.length === 1) {
+          // Auto-assign remaining to last person
+          const last = {
+            userId: newRemainingUsers[0].id,
+            name: newRemainingUsers[0].name,
+            percentage: newRemainingPct,
+          };
+          finalizeWeighted([...allAssignments, last]);
+        } else {
+          setWAssignments(allAssignments);
+          setWSelectedUser(null);
+          setWPhase('idle');
+          setWPercentOptions(generatePercentageOptions(newRemainingPct));
+        }
+      },
+      [wAssignments, included, finalizeWeighted],
+    );
+
+    // Auto mode CONTINUES the run after the user starts it — it does not start
+    // the game itself. The user checks Auto, taps Spin once, and from then on each
+    // remaining round fires on its own (gated on wAssignments.length > 0, i.e. at
+    // least one manual spin has landed). Call through a ref so an incidental
+    // re-render can't cancel the queued spin.
+    const handleWeightedSpinRef = useRef(handleWeightedSpin);
+    handleWeightedSpinRef.current = handleWeightedSpin;
+    useEffect(() => {
+      if (mode !== 'weightedRoulette' || !wAuto) return;
+      if (wPhase !== 'idle' || wAssignments.length === 0) return;
+      if (wRemainingParticipants.length === 0 || wRemainingPct <= 0) return;
+      const timer = setTimeout(() => handleWeightedSpinRef.current(), 500);
+      return () => clearTimeout(timer);
+    }, [wAuto, wPhase, mode, wAssignments.length, wRemainingParticipants.length, wRemainingPct]);
+
+    return (
+      <View style={styles.section}>
+        {/* One compact segmented row — the game names itself, no emoji cards */}
+        <View style={styles.gameModeRow}>
+          {MODES.map((m) => {
+            const selected = mode === m.key;
+            return (
               <TouchableOpacity
-                key={preset.key}
+                key={m.key}
+                accessibilityRole="button"
+                accessibilityLabel={`${m.label} split method`}
+                accessibilityState={{ selected }}
                 style={[
-                  styles.karmaPresetChip,
+                  styles.gamePill,
                   {
-                    backgroundColor: karmaIntensity === preset.key ? `${theme.colors.primary}20` : 'transparent',
-                    borderColor: karmaIntensity === preset.key ? theme.colors.primary : palette.border,
+                    backgroundColor: selected ? theme.colors.primary : theme.colors.pressed,
+                    borderColor: selected ? theme.colors.primary : palette.border,
                   },
                 ]}
                 onPress={() => {
-                  lightHaptic();
-                  setKarmaIntensity(preset.key);
-                  setKarmaApplied(false);
-                  onKarmaIntensityChange?.(preset.key);
+                  mediumHaptic();
+                  onModeChange(m.key);
                 }}
-              >
-                <Text style={{ fontSize: 14 }}>{preset.emoji}</Text>
-                <Text
-                  style={{
-                    color: karmaIntensity === preset.key ? theme.colors.primary : palette.muted,
-                    fontSize: 11,
-                    fontWeight: '700',
-                  }}
-                >
-                  {preset.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Karma Breakdown */}
-          <SolidCard style={styles.groupCard}>
-          {karmaData.map((item, index) => {
-            const equalShare = totalAmount / Math.max(included.length, 1);
-            return (
-              <Animated.View key={item.id} entering={FadeInDown.delay(index * 60).springify()}>
-                <View style={[
-                  styles.karmaRow,
-                  { borderBottomColor: palette.border },
-                  index === karmaData.length - 1 && styles.lastRow,
-                ]}>
-                  <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[index % AVATAR_COLORS.length] }]}>
-                    <Text style={styles.miniInitials}>{resolveInitials(item.name)}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.incomeName, { color: theme.colors.onSurface }]}>{item.name}</Text>
-                    <View style={styles.karmaBarContainer}>
-                      <View
-                        style={[
-                          styles.karmaBar,
-                          {
-                            width: `${Math.max(8, item.barWidth)}%`,
-                            backgroundColor: item.isOverpayer ? '#10B981' : '#F59E0B',
-                          },
-                        ]}
-                      />
-                    </View>
-                    <Text variant="labelSmall" style={{ color: palette.muted, marginTop: 2 }}>
-                      {item.isOverpayer ? 'Overpaid' : 'Underpaid'} by {formatCurrency(Math.abs(item.deviation), currency)}
-                    </Text>
-                  </View>
-                  <View style={{ alignItems: 'flex-end', minWidth: 70 }}>
-                    <Text variant="titleSmall" style={{ color: theme.colors.primary, fontWeight: '800' }}>
-                      {formatCurrency(item.computedAmount, currency)}
-                    </Text>
-                    {Math.abs(item.karmaAdjustment) >= 0.01 && (
-                      <Text
-                        variant="labelSmall"
-                        style={{
-                          color: item.karmaAdjustment < 0 ? '#10B981' : '#F59E0B',
-                          fontWeight: '600',
-                        }}
-                      >
-                        {item.karmaAdjustment > 0 ? '+' : ''}{formatCurrency(item.karmaAdjustment, currency)} vs equal
-                      </Text>
-                    )}
-                  </View>
-                </View>
-              </Animated.View>
-            );
-          })}
-          </SolidCard>
-
-          {/* Equal split reference */}
-          {included.length > 0 && (
-            <Text variant="labelSmall" style={{ color: palette.muted, textAlign: 'center', marginTop: 8 }}>
-              Equal split would be {formatCurrency(totalAmount / included.length, currency)}/person
-            </Text>
-          )}
-
-          {/* Applying exits to the parent-owned full-screen result. */}
-          {!karmaApplied && (
-            <View style={styles.spinContainer}>
-              <TouchableOpacity
-                style={[styles.spinButton, { backgroundColor: theme.colors.primary }]}
-                onPress={handleApplyKarma}
                 activeOpacity={0.8}
               >
-                <Icon source="check-circle" size={24} color="#FFF" />
-                <Text style={styles.spinText}>Apply Karma Split</Text>
+                <Icon source={m.icon} size={15} color={selected ? theme.colors.onPrimary : palette.muted} />
+                <Text
+                  style={{
+                    color: selected ? theme.colors.onPrimary : theme.colors.onSurface,
+                    fontSize: 12,
+                    fontWeight: selected ? '800' : '600',
+                  }}
+                  numberOfLines={1}
+                >
+                  {m.label}
+                </Text>
               </TouchableOpacity>
-            </View>
-          )}
+            );
+          })}
         </View>
-      )}
 
-      {/* ── The Roulette Wheel — the footer's Spin button drives it; the
+        {/* No in-mode player rail — the split's global roster selector (header,
+          beside Paid by) owns who's in, in every mode. The wheel already shows
+          the players. */}
+
+        {mode === 'roulette' && (
+          <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
+            Loser pays it all. Tap the wheel's center to spin.
+          </Text>
+        )}
+
+        {mode === 'weightedRoulette' && (
+          <View>
+            <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
+              Outer ring picks who, inner picks their share. The final split appears full-screen.
+            </Text>
+
+            {/* Auto — spin every remaining share without tapping each time. */}
+            <TouchableOpacity
+              accessibilityRole="switch"
+              accessibilityLabel="Auto-spin weighted roulette"
+              accessibilityState={{ checked: wAuto }}
+              onPress={() => {
+                lightHaptic();
+                setWAuto((v) => !v);
+              }}
+              activeOpacity={0.8}
+              style={[
+                styles.autoToggle,
+                {
+                  borderColor: wAuto ? theme.colors.primary : palette.border,
+                  backgroundColor: wAuto ? `${theme.colors.primary}18` : 'transparent',
+                },
+              ]}
+            >
+              <Icon
+                source={wAuto ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                size={18}
+                color={wAuto ? theme.colors.primary : palette.muted}
+              />
+              <Text
+                style={{
+                  color: wAuto ? theme.colors.primary : theme.colors.onSurface,
+                  fontSize: 13,
+                  fontWeight: '700',
+                }}
+              >
+                Auto-spin
+              </Text>
+              <Text style={{ color: palette.muted, fontSize: 12 }} numberOfLines={1}>
+                runs the wheel until every share is set
+              </Text>
+            </TouchableOpacity>
+
+            {/* The dual-ring wheel — its hub is the spin button */}
+            <WeightedRouletteWheel
+              ref={weightedWheelRef}
+              participants={wRemainingParticipants.map((p) => ({ ...p }))}
+              percentages={wPercentOptions}
+              onOuterSpinComplete={handleWeightedOuterComplete}
+              onInnerSpinComplete={handleWeightedInnerComplete}
+              disabled={wBusy}
+              highlightedUserId={wSelectedUser}
+              remainingPct={wRemainingPct}
+              onHubPress={handleWeightedSpin}
+              colorIndexById={colorIndexById}
+            />
+
+            {/* Status message */}
+            {wPhase === 'spinning-user' && (
+              <Animated.View entering={FadeIn.duration(200)}>
+                <Text
+                  variant="bodySmall"
+                  style={{
+                    color: theme.colors.warning,
+                    textAlign: 'center',
+                    fontWeight: '700',
+                    marginTop: 4,
+                  }}
+                >
+                  Selecting who pays next…
+                </Text>
+              </Animated.View>
+            )}
+            {(wPhase === 'user-selected' || wPhase === 'spinning-pct') && (
+              <Animated.View entering={FadeIn.duration(200)}>
+                <Text
+                  variant="bodySmall"
+                  style={{
+                    color: theme.colors.success,
+                    textAlign: 'center',
+                    fontWeight: '700',
+                    marginTop: 4,
+                  }}
+                >
+                  Selecting their share…
+                </Text>
+              </Animated.View>
+            )}
+
+            {/* Live progress — each assigned share as it lands, plus what's left,
+              so the running split is visible during play, not only at the end. */}
+            {wAssignments.length > 0 && wPhase !== 'complete' && (
+              <View style={[styles.wLiveList, { borderColor: palette.border }]}>
+                {wAssignments.map((a) => (
+                  <Animated.View key={a.userId} entering={FadeInDown.springify()} style={styles.wLiveRow}>
+                    <Text
+                      style={{
+                        color: theme.colors.onSurface,
+                        fontWeight: '600',
+                        flex: 1,
+                        minWidth: 100,
+                      }}
+                    >
+                      {a.name}
+                    </Text>
+                    <Text style={{ color: theme.colors.primary, fontWeight: '800' }}>{a.percentage}%</Text>
+                    <Text
+                      variant="bodySmall"
+                      style={{
+                        color: palette.muted,
+                        minWidth: 68,
+                        textAlign: 'right',
+                      }}
+                    >
+                      {formatCurrency((totalAmount * a.percentage) / 100, currency)}
+                    </Text>
+                  </Animated.View>
+                ))}
+                <View style={[styles.wLiveRow, styles.wLiveFooter, { borderTopColor: palette.border }]}>
+                  <Text variant="bodySmall" style={{ color: palette.muted, flex: 1 }}>
+                    {wRemainingParticipants.length} still to draw
+                  </Text>
+                  <Text style={{ color: theme.colors.onSurface, fontWeight: '700' }}>{wRemainingPct}% left</Text>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
+
+        {mode === 'scrooge' && (
+          <View>
+            <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
+              Those who've paid less chip in more this time.
+            </Text>
+
+            {/* Intensity Presets */}
+            <View style={styles.karmaPresetsRow}>
+              {KARMA_PRESETS.map((preset) => (
+                <TouchableOpacity
+                  key={preset.key}
+                  style={[
+                    styles.karmaPresetChip,
+                    {
+                      backgroundColor: karmaIntensity === preset.key ? `${theme.colors.primary}20` : 'transparent',
+                      borderColor: karmaIntensity === preset.key ? theme.colors.primary : palette.border,
+                    },
+                  ]}
+                  onPress={() => {
+                    lightHaptic();
+                    setKarmaIntensity(preset.key);
+                    setKarmaApplied(false);
+                    onKarmaIntensityChange?.(preset.key);
+                  }}
+                  accessibilityRole="radio"
+                  accessibilityLabel={preset.label}
+                  accessibilityState={{
+                    checked: karmaIntensity === preset.key,
+                  }}
+                >
+                  <Text style={{ fontSize: 14 }}>{preset.emoji}</Text>
+                  <Text
+                    style={{
+                      color: karmaIntensity === preset.key ? theme.colors.primary : palette.muted,
+                      fontSize: 11,
+                      fontWeight: '700',
+                    }}
+                  >
+                    {preset.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Karma Breakdown */}
+            <SolidCard style={styles.groupCard}>
+              {karmaData.map((item, index) => {
+                const equalShare = totalAmount / Math.max(included.length, 1);
+                const avatar = avatarColorsForKey(item.id, isDark);
+                return (
+                  <Animated.View key={item.id} entering={FadeInDown.delay(index * 60).springify()}>
+                    <View
+                      style={[styles.karmaRow, { borderBottomColor: palette.border }, index === karmaData.length - 1 && styles.lastRow]}
+                    >
+                      <View style={[styles.miniAvatar, { backgroundColor: avatar.background }]}>
+                        <Text style={[styles.miniInitials, { color: avatar.foreground }]}>{resolveInitials(item.name)}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.incomeName, { color: theme.colors.onSurface }]}>{item.name}</Text>
+                        <View style={styles.karmaBarContainer}>
+                          <View
+                            style={[
+                              styles.karmaBar,
+                              {
+                                width: `${Math.max(8, item.barWidth)}%`,
+                                backgroundColor: item.isOverpayer ? theme.colors.success : theme.colors.warning,
+                              },
+                            ]}
+                          />
+                        </View>
+                        <Text variant="labelSmall" style={{ color: palette.muted, marginTop: 2 }}>
+                          {item.isOverpayer ? 'Overpaid' : 'Underpaid'} by {formatCurrency(Math.abs(item.deviation), currency)}
+                        </Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end', minWidth: 70 }}>
+                        <Text
+                          variant="titleSmall"
+                          style={{
+                            color: theme.colors.primary,
+                            fontWeight: '800',
+                          }}
+                        >
+                          {formatCurrency(item.computedAmount, currency)}
+                        </Text>
+                        {Math.abs(item.karmaAdjustment) >= 0.01 && (
+                          <Text
+                            variant="labelSmall"
+                            style={{
+                              color: item.karmaAdjustment < 0 ? theme.colors.moneyPositive : theme.colors.moneyNegative,
+                              fontWeight: '600',
+                            }}
+                          >
+                            {item.karmaAdjustment > 0 ? '+' : ''}
+                            {formatCurrency(item.karmaAdjustment, currency)} vs equal
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  </Animated.View>
+                );
+              })}
+            </SolidCard>
+
+            {/* Equal split reference */}
+            {included.length > 0 && (
+              <Text
+                variant="labelSmall"
+                style={{
+                  color: palette.muted,
+                  textAlign: 'center',
+                  marginTop: 8,
+                }}
+              >
+                Equal split would be {formatCurrency(totalAmount / included.length, currency)}/person
+              </Text>
+            )}
+
+            {/* Applying exits to the parent-owned full-screen result. */}
+            {!karmaApplied && (
+              <View style={styles.spinContainer}>
+                <TouchableOpacity
+                  style={[styles.spinButton, { backgroundColor: theme.colors.primary }]}
+                  onPress={handleApplyKarma}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Apply Karma Split"
+                >
+                  <Icon source="check-circle" size={24} color={theme.colors.onPrimary} />
+                  <Text style={[styles.spinText, { color: theme.colors.onPrimary }]}>Apply Karma Split</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* ── The Roulette Wheel — the footer's Spin button drives it; the
              full-screen winner overlay in BillSplitScreen stages the payoff. */}
-      {showWheel && (
-        <RouletteWheel
-          ref={wheelRef}
-          participants={participants}
-          onSpinComplete={onSpinComplete}
-          disabled={isSpinning}
-          totalAmount={totalAmount}
-          currency={currency}
-          winnerId={!isSpinning ? loserId : null}
-          onHubPress={onSpin}
-        />
-      )}
-
-    </View>
-  );
-});
+        {showWheel && (
+          <RouletteWheel
+            ref={wheelRef}
+            participants={participants}
+            onSpinComplete={onSpinComplete}
+            disabled={isSpinning}
+            totalAmount={totalAmount}
+            currency={currency}
+            winnerId={!isSpinning ? loserId : null}
+            onHubPress={onSpin}
+          />
+        )}
+      </View>
+    );
+  },
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // F. ITEM-TYPE SPLIT
@@ -2507,30 +3138,50 @@ const ItemTypeMode = React.memo(({ categories, onCategoriesChange, participants,
   const palette = isDark ? darkColors : colors;
   const included = participants.filter((p) => p.included);
 
-  const addCategory = useCallback((label: string) => {
-    lightHaptic();
-    if (categories.find((c) => c.label === label)) return;
-    onCategoriesChange([...categories, { id: `cat_${Date.now()}`, label, amount: 0, excludedParticipants: [] }]);
-  }, [categories, onCategoriesChange]);
+  const addCategory = useCallback(
+    (label: string) => {
+      lightHaptic();
+      if (categories.find((c) => c.label === label)) return;
+      onCategoriesChange([
+        ...categories,
+        {
+          id: `cat_${Date.now()}`,
+          label,
+          amount: 0,
+          excludedParticipants: [],
+        },
+      ]);
+    },
+    [categories, onCategoriesChange],
+  );
 
-  const updateCategory = useCallback((id: string, field: string, value: number | string[]) => {
-    onCategoriesChange(categories.map((c) => (c.id === id ? { ...c, [field]: value } : c)));
-  }, [categories, onCategoriesChange]);
+  const updateCategory = useCallback(
+    (id: string, field: string, value: number | string[]) => {
+      onCategoriesChange(categories.map((c) => (c.id === id ? { ...c, [field]: value } : c)));
+    },
+    [categories, onCategoriesChange],
+  );
 
-  const removeCategory = useCallback((id: string) => {
-    mediumHaptic();
-    onCategoriesChange(categories.filter((c) => c.id !== id));
-  }, [categories, onCategoriesChange]);
+  const removeCategory = useCallback(
+    (id: string) => {
+      mediumHaptic();
+      onCategoriesChange(categories.filter((c) => c.id !== id));
+    },
+    [categories, onCategoriesChange],
+  );
 
-  const toggleExclusion = useCallback((catId: string, userId: string) => {
-    lightHaptic();
-    const cat = categories.find((c) => c.id === catId);
-    if (!cat) return;
-    const excluded = cat.excludedParticipants.includes(userId)
-      ? cat.excludedParticipants.filter((id) => id !== userId)
-      : [...cat.excludedParticipants, userId];
-    updateCategory(catId, 'excludedParticipants', excluded);
-  }, [categories, updateCategory]);
+  const toggleExclusion = useCallback(
+    (catId: string, userId: string) => {
+      lightHaptic();
+      const cat = categories.find((c) => c.id === catId);
+      if (!cat) return;
+      const excluded = cat.excludedParticipants.includes(userId)
+        ? cat.excludedParticipants.filter((id) => id !== userId)
+        : [...cat.excludedParticipants, userId];
+      updateCategory(catId, 'excludedParticipants', excluded);
+    },
+    [categories, updateCategory],
+  );
 
   const categorizedTotal = categories.reduce((s, c) => s + c.amount, 0);
   const remaining = totalAmount - categorizedTotal;
@@ -2547,6 +3198,9 @@ const ItemTypeMode = React.memo(({ categories, onCategoriesChange, participants,
           return (
             <TouchableOpacity
               key={preset.label}
+              accessibilityRole="checkbox"
+              accessibilityLabel={`${preset.label} category`}
+              accessibilityState={{ checked: Boolean(added) }}
               style={[
                 styles.presetChip,
                 {
@@ -2554,10 +3208,16 @@ const ItemTypeMode = React.memo(({ categories, onCategoriesChange, participants,
                   backgroundColor: added ? `${theme.colors.primary}15` : 'transparent',
                 },
               ]}
-              onPress={() => added ? removeCategory(added.id) : addCategory(preset.label)}
+              onPress={() => (added ? removeCategory(added.id) : addCategory(preset.label))}
             >
               <Icon source={preset.icon} size={16} color={added ? theme.colors.primary : palette.muted} />
-              <Text style={{ color: added ? theme.colors.primary : palette.muted, fontSize: 12, fontWeight: '600' }}>
+              <Text
+                style={{
+                  color: added ? theme.colors.primary : palette.muted,
+                  fontSize: 12,
+                  fontWeight: '600',
+                }}
+              >
                 {preset.label}
               </Text>
             </TouchableOpacity>
@@ -2575,15 +3235,29 @@ const ItemTypeMode = React.memo(({ categories, onCategoriesChange, participants,
               <View style={styles.inputRow}>
                 <Text style={{ color: palette.muted }}>$</Text>
                 <DecimalInput
-                  style={[styles.catAmountInput, { color: theme.colors.onSurface, borderColor: inputBorder(isDark) }]}
+                  style={[
+                    styles.catAmountInput,
+                    {
+                      color: theme.colors.onSurface,
+                      borderColor: inputBorder(isDark),
+                    },
+                  ]}
                   value={cat.amount}
                   onChange={(v: string) => updateCategory(cat.id, 'amount', parseFloat(v) || 0)}
                   keyboardType="decimal-pad"
                   placeholder="0.00"
                   placeholderTextColor={palette.muted}
+                  accessibilityLabel={`${cat.label} amount in ${currency}`}
                 />
               </View>
-              <IconButton icon="close" size={16} iconColor={palette.muted} onPress={() => removeCategory(cat.id)} />
+              <IconButton
+                icon="close"
+                size={16}
+                iconColor={palette.muted}
+                onPress={() => removeCategory(cat.id)}
+                accessibilityLabel={`Remove ${cat.label} category`}
+                style={styles.itemActionButton}
+              />
             </View>
             <Text variant="bodySmall" style={{ color: palette.muted, marginBottom: 8 }}>
               Exclude from this category:
@@ -2595,16 +3269,26 @@ const ItemTypeMode = React.memo(({ categories, onCategoriesChange, participants,
                   <TouchableOpacity
                     key={p.id}
                     onPress={() => toggleExclusion(cat.id, p.id)}
+                    accessibilityRole="checkbox"
+                    accessibilityLabel={`Exclude ${p.name} from ${cat.label}`}
+                    accessibilityState={{ checked: isExcluded }}
                     style={[
                       styles.exclusionChip,
                       {
-                        backgroundColor: isExcluded ? `${colors.danger}15` : 'transparent',
-                        borderColor: isExcluded ? colors.danger : palette.border,
+                        backgroundColor: isExcluded ? `${theme.colors.danger}15` : 'transparent',
+                        borderColor: isExcluded ? theme.colors.danger : palette.border,
                       },
                     ]}
                   >
-                    <Text style={{ color: isExcluded ? colors.danger : palette.muted, fontSize: 12, fontWeight: '600' }}>
-                      {isExcluded ? '✗ ' : ''}{p.name.split(' ')[0]}
+                    <Text
+                      style={{
+                        color: isExcluded ? theme.colors.danger : palette.muted,
+                        fontSize: 12,
+                        fontWeight: '600',
+                      }}
+                    >
+                      {isExcluded ? '✗ ' : ''}
+                      {p.name.split(' ')[0]}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -2828,12 +3512,18 @@ const styles = StyleSheet.create({
   },
   itemPriceInput: {
     width: 72,
+    minHeight: 44,
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
     fontSize: 14,
     textAlign: 'right',
+  },
+  itemActionButton: {
+    margin: 0,
+    width: 44,
+    height: 44,
   },
   assignRow: {
     paddingHorizontal: 12,
@@ -2847,6 +3537,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 10,
     paddingVertical: 6,
+    minHeight: 44,
     marginRight: 6,
   },
   miniAvatar: {
@@ -2857,7 +3548,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   miniInitials: {
-    color: '#FFF',
     fontSize: 10,
     fontWeight: '700',
   },
@@ -2931,6 +3621,7 @@ const styles = StyleSheet.create({
   },
   incomeInput: {
     width: 80,
+    minHeight: 44,
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 8,
@@ -2957,9 +3648,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   shareBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3075,6 +3766,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 7,
+    minHeight: 44,
   },
   timeRangeSelectedRow: {
     flexDirection: 'row',
@@ -3095,10 +3787,10 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   calendarNavButton: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     borderWidth: 1,
-    borderRadius: 18,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3159,9 +3851,9 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   timePeriodStepBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
   },
   timePeriodInput: {
     width: 76,
@@ -3397,7 +4089,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    height: 38,
+    minHeight: 44,
     borderRadius: 19,
     borderWidth: 1,
     paddingHorizontal: 8,
@@ -3409,7 +4101,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 12,
     paddingHorizontal: 12,
-    height: 40,
+    minHeight: 44,
     marginBottom: 8,
   },
   wLiveList: {
@@ -3420,9 +4112,11 @@ const styles = StyleSheet.create({
   },
   wLiveRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 10,
-    height: 34,
+    minHeight: 44,
+    paddingVertical: 6,
   },
   wLiveFooter: {
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -3467,7 +4161,6 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
   },
   spinText: {
-    color: '#FFF',
     fontSize: 18,
     fontWeight: '800',
   },
@@ -3501,6 +4194,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
+    minHeight: 44,
   },
   catHeader: {
     flexDirection: 'row',
@@ -3511,6 +4205,7 @@ const styles = StyleSheet.create({
   },
   catAmountInput: {
     width: 72,
+    minHeight: 44,
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 8,
@@ -3530,6 +4225,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 6,
+    minHeight: 44,
   },
   // Karma
   karmaPresetsRow: {

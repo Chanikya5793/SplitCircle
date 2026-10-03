@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Security | ManaSplit</title>
+    <meta
+      name="description"
+      content="ManaSplit’s local-first security architecture and vulnerability reporting process."
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <script src="/theme.js"></script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <nav class="nav shell" aria-label="Primary navigation">
+        <a class="brand" href="/"
+          ><img src="/assets/muggu.svg" alt="" /><span
+            >Mana<span>Split</span></span
+          ></a
+        >
+        <div class="nav-links">
+          <a href="/privacy/">Privacy</a><a href="/support/">Support</a
+          ><a class="button compact" href="mailto:security@manasplit.com"
+            >Report a concern</a
+          >
+        </div>
+      </nav>
+    </header>
+    <main id="main">
+      <section class="page-hero shell">
+        <p class="eyebrow">Security</p>
+        <h1>Less data in the cloud. Fewer places to lose it.</h1>
+        <p>
+          ManaSplit is designed around short-lived transit, device-local
+          conversation history, scoped persistent records, and explicit security
+          boundaries. This page describes the approach without publishing a
+          roadmap for attackers.
+        </p>
+      </section>
+      <section class="resource-grid shell">
+        <article class="support-card">
+          <span class="badge">Transit</span>
+          <h2>Queues, not archives</h2>
+          <p>
+            Realtime cloud state moves messages and coordinates calls. Delivery
+            and hangup cleanup remove short-lived records, with server reapers
+            for stale state.
+          </p>
+        </article>
+        <article class="support-card">
+          <span class="badge">Local</span>
+          <h2>History on device</h2>
+          <p>
+            Messages, call history, downloaded media, and personal indexes are
+            stored on your devices instead of becoming a permanent server-side
+            conversation archive.
+          </p>
+        </article>
+        <article class="support-card">
+          <span class="badge">Persistent</span>
+          <h2>Shared records are scoped</h2>
+          <p>
+            Profiles, groups, chat metadata, expenses, and settings use
+            authenticated access controls tied to the person, group, chat, or
+            device.
+          </p>
+        </article>
+        <article class="support-card">
+          <span class="badge">Encryption</span>
+          <h2>Protected in motion and at rest</h2>
+          <p>
+            Supported messages use end-to-end encryption. Cloud traffic uses
+            transport encryption, secrets live in managed secret stores, and
+            enrolled security identities are encrypted with per-user data keys.
+          </p>
+        </article>
+        <article class="support-card">
+          <span class="badge">Devices</span>
+          <h2>Linking needs proof</h2>
+          <p>
+            Companion devices use expiring pairing credentials, confirmation
+            state, scoped authentication claims, and revocation controls.
+          </p>
+        </article>
+        <article class="support-card">
+          <span class="badge">AI</span>
+          <h2>Rules own the decision</h2>
+          <p>
+            AI can explain evidence. Deterministic logic owns security severity
+            and financial calculations. The app identifies on-device,
+            private-cloud, and exact outputs.
+          </p>
+        </article>
+      </section>
+      <section class="section">
+        <div class="shell privacy-panel">
+          <p class="eyebrow gold-link">
+            Coordinated disclosure
+          </p>
+          <h2>Found something real? Tell us privately.</h2>
+          <p>
+            Email
+            <a href="mailto:security@manasplit.com" class="gold-link"
+              >security@manasplit.com</a
+            >
+            with the affected feature, impact, reproduction steps, and a safe
+            proof. Do not access another person’s data, degrade the service, use
+            social engineering, or publish an unpatched vulnerability.
+          </p>
+          <div class="privacy-grid">
+            <div class="privacy-item">
+              <strong>We acknowledge</strong
+              ><span
+                >We aim to confirm receipt within three business days.</span
+              >
+            </div>
+            <div class="privacy-item">
+              <strong>We investigate</strong
+              ><span
+                >We will provide a tracking point and ask for details when
+                needed.</span
+              >
+            </div>
+            <div class="privacy-item">
+              <strong>We coordinate</strong
+              ><span
+                >We will discuss remediation and a reasonable disclosure
+                date.</span
+              >
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="section">
+        <div class="shell legal-content">
+          <h2>Safe-harbor intent</h2>
+          <p>
+            We support good-faith security research that avoids privacy
+            violations, service disruption, extortion, and data destruction. If
+            you follow this policy, make a genuine effort to avoid harm, and
+            give us a reasonable opportunity to remediate, we will treat your
+            work as authorized to the extent we can and will not recommend legal
+            action solely for that research.
+          </p>
+          <h2>Report urgent account abuse</h2>
+          <p>
+            For an account takeover, unwanted contact, threats, or harmful
+            content, email
+            <a href="mailto:safety@manasplit.com">safety@manasplit.com</a>.
+            Contact local emergency services first when anyone is in immediate
+            danger.
+          </p>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <div class="shell">
+        <div class="footer-grid">
+          <div class="footer-brand">
+            <a class="brand" href="/"
+              ><img src="/assets/muggu-reversed.svg" alt="" /><span
+                >Mana<span>Split</span></span
+              ></a
+            >
+          </div>
+          <div class="footer-col">
+            <h2>Product</h2>
+            <a href="/">Home</a>
+          </div>
+          <div class="footer-col">
+            <h2>Help</h2>
+            <a href="/support/">Support</a><a href="/community/">Community</a>
+          </div>
+          <div class="footer-col">
+            <h2>Legal</h2>
+            <a href="/privacy/">Privacy</a><a href="/terms/">Terms</a>
+          </div>
+        </div>
+        <div class="footer-bottom">
+          <span>© <span data-year></span> ManaSplit.</span
+          ><span>Security contact: security@manasplit.com</span>
+        </div>
+      </div>
+    </footer>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

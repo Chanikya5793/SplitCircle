@@ -20,11 +20,7 @@ import {
 } from '../../modules/splitcircle-ai';
 import type { Group } from '@/models';
 import type { ExpenseAiAnswer } from '@/services/aiService';
-import {
-  buildExpenseContext,
-  maxExpensesForContext,
-  resolveCitedExpenses,
-} from '@/utils/onDeviceAiContext';
+import { buildExpenseContext, maxExpensesForContext, resolveCitedExpenses } from '@/utils/onDeviceAiContext';
 import { getGroupAnalytics } from '@/utils/expenseAnalytics';
 import { answerExpenseQuery, type QueryContext } from '@/utils/expenseQuery';
 import { resolveDisplayName } from '@/utils/identity';
@@ -42,15 +38,14 @@ export { getOnDeviceAiAvailability };
  * Intelligence required). Returns null for open-ended questions so the caller
  * can fall back to the grounded LLM.
  */
-export function answerExpenseLocally(
-  question: string,
-  group: Group,
-  currentUserId: string,
-): ExpenseAiAnswer | null {
+export function answerExpenseLocally(question: string, group: Group, currentUserId: string): ExpenseAiAnswer | null {
   const queryCtx: QueryContext = {
     expenses: group.expenses ?? [],
     settlements: group.settlements ?? [],
-    members: group.members.map((m) => ({ userId: m.userId, displayName: m.displayName })),
+    members: group.members.map((m) => ({
+      userId: m.userId,
+      displayName: m.displayName,
+    })),
     currentUserId,
     currency: group.currency,
   };
@@ -69,7 +64,10 @@ export function answerExpenseLocally(
 export function buildFactsBlock(group: Group, currentUserId: string): string {
   const a = getGroupAnalytics(group, currentUserId);
   const cur = group.currency || 'USD';
-  const topCats = a.byCategory.slice(0, 5).map((c) => `${c.category} ${c.total.toFixed(2)}`).join(', ');
+  const topCats = a.byCategory
+    .slice(0, 5)
+    .map((c) => `${c.category} ${c.total.toFixed(2)}`)
+    .join(', ');
   const bal =
     Math.abs(a.userBalance) < 0.01
       ? 'settled up'
@@ -90,37 +88,28 @@ export function buildFactsBlock(group: Group, currentUserId: string): string {
 /** Human copy for each unavailability reason (the "sorry" notes). */
 export const ON_DEVICE_UNAVAILABLE_COPY: Record<Exclude<OnDeviceAiAvailability, 'available'>, string> = {
   deviceNotEligible:
-    "Sorry — the assistant runs entirely on your iPhone using Apple Intelligence, which needs an iPhone 15 Pro or newer. Your expenses still work exactly as before.",
+    'Sorry. The assistant runs entirely on your iPhone using Apple Intelligence, which needs an iPhone 15 Pro or newer. Your expenses still work exactly as before.',
   appleIntelligenceNotEnabled:
-    'Apple Intelligence is turned off. Enable it in Settings → Apple Intelligence & Siri, then come back — answers are generated on your device.',
-  modelNotReady:
-    "Apple's on-device model is still downloading. Leave your iPhone on Wi-Fi and charging, then try again in a few minutes.",
-  unsupportedOS:
-    'Sorry — the assistant needs iOS 26 or later on an Apple Intelligence-capable iPhone (15 Pro or newer).',
+    'Apple Intelligence is turned off. Enable it in Settings → Apple Intelligence & Siri, then come back. Answers are generated on your device.',
+  modelNotReady: "Apple's on-device model is still downloading. Leave your iPhone on Wi-Fi and charging, then try again in a few minutes.",
+  unsupportedOS: 'Sorry. The assistant needs iOS 26 or later on an Apple Intelligence-capable iPhone (15 Pro or newer).',
 };
 
 /**
  * Ask the on-device model about this group's expenses. Throws on failure —
  * callers gate on `getOnDeviceAiAvailability() === 'available'` first.
  */
-export async function askExpenseAiOnDevice(
-  question: string,
-  group: Group,
-  currentUserId: string,
-): Promise<ExpenseAiAnswer> {
-  const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
+export async function askExpenseAiOnDevice(question: string, group: Group, currentUserId: string): Promise<ExpenseAiAnswer> {
+  const members = group.members.map((m) => ({
+    userId: m.userId,
+    displayName: m.displayName,
+  }));
 
   // Adapt how much history we ground in to the device's real context window:
   // iPhone Air / 17 Pro auto-run Apple's larger "Core Advanced" on-device model
   // and report a bigger window, so they get more expenses → fuller answers.
   const maxLines = maxExpensesForContext(getOnDeviceContextSize());
-  const { context, selected } = buildExpenseContext(
-    group.expenses,
-    question,
-    members,
-    group.currency,
-    maxLines,
-  );
+  const { context, selected } = buildExpenseContext(group.expenses, question, members, group.currency, maxLines);
 
   if (selected.length === 0) {
     return {

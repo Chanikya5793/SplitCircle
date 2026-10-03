@@ -1,6 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GlassToast } from '@/components/ui';
+import { GlassToast, ScrimBackdrop } from '@/components/ui';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -814,6 +814,9 @@ const MediaInfoPanel = ({ message, senderName, visible, onClose }: MediaInfoPane
     <View
       style={StyleSheet.absoluteFill}
       pointerEvents={visible ? 'auto' : 'none'}
+      accessibilityElementsHidden={!visible}
+      importantForAccessibility={visible ? 'auto' : 'no-hide-descendants'}
+      accessibilityViewIsModal={visible}
     >
       {/* Tap-outside dismiss — fades with the slide so it doesn't pop. */}
       <Animated.View
@@ -822,57 +825,70 @@ const MediaInfoPanel = ({ message, senderName, visible, onClose }: MediaInfoPane
       >
         <TouchableOpacity
           activeOpacity={1}
-          style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }]}
+          style={StyleSheet.absoluteFill}
           onPress={onClose}
-        />
+          accessibilityRole="button"
+          accessibilityLabel="Close file information"
+        >
+          <ScrimBackdrop pointerEvents="none" />
+        </TouchableOpacity>
       </Animated.View>
       <Animated.View
         style={[
-          styles.infoPanel,
-          {
-            backgroundColor: isDark ? 'rgba(20,20,28,0.97)' : 'rgba(255,255,255,0.97)',
-            transform: [{ translateY: slideAnim }],
-          },
+          styles.infoPanelMotion,
+          { transform: [{ translateY: slideAnim }] },
         ]}
         {...panResponder.panHandlers}
       >
-        <View style={styles.infoPanelHandle} />
-        <View style={styles.infoPanelHeader}>
-          <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-            File Info
-          </Text>
-          <TouchableOpacity onPress={onClose} hitSlop={12}>
-            <Ionicons name="close" size={22} color={theme.colors.onSurface} />
-          </TouchableOpacity>
-        </View>
-        <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
-          {rows.map((row, i) => (
-            <View
-              key={row.label}
-              style={[
-                styles.infoRow,
-                i < rows.length - 1 && {
-                  borderBottomWidth: StyleSheet.hairlineWidth,
-                  borderBottomColor: isDark
-                    ? 'rgba(255,255,255,0.08)'
-                    : 'rgba(0,0,0,0.08)',
-                },
-              ]}
+        <GlassView
+          role="floating"
+          radius={24}
+          style={styles.infoPanel}
+          contentStyle={styles.infoPanelContent}
+        >
+          <View style={styles.infoPanelHandle} />
+          <View style={styles.infoPanelHeader}>
+            <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+              File Info
+            </Text>
+            <TouchableOpacity
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close file information"
+              style={styles.infoCloseButton}
             >
-              <View style={[styles.infoIconWrap, { backgroundColor: theme.colors.primaryContainer }]}>
-                <Ionicons name={row.icon} size={16} color={theme.colors.primary} />
+              <Ionicons name="close" size={22} color={theme.colors.onSurface} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
+            {rows.map((row, i) => (
+              <View
+                key={row.label}
+                style={[
+                  styles.infoRow,
+                  i < rows.length - 1 && {
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                    borderBottomColor: isDark
+                      ? 'rgba(255,255,255,0.08)'
+                      : 'rgba(0,0,0,0.08)',
+                  },
+                ]}
+              >
+                <View style={[styles.infoIconWrap, { backgroundColor: theme.colors.primaryContainer }]}>
+                  <Ionicons name={row.icon} size={16} color={theme.colors.primary} />
+                </View>
+                <View style={styles.infoRowContent}>
+                  <Text style={[styles.infoLabel, { color: theme.colors.onSurfaceVariant }]}>
+                    {row.label}
+                  </Text>
+                  <Text style={[styles.infoValue, { color: theme.colors.onSurface }]}>
+                    {row.value}
+                  </Text>
+                </View>
               </View>
-              <View style={styles.infoRowContent}>
-                <Text style={[styles.infoLabel, { color: theme.colors.onSurfaceVariant }]}>
-                  {row.label}
-                </Text>
-                <Text style={[styles.infoValue, { color: theme.colors.onSurface }]}>
-                  {row.value}
-                </Text>
-              </View>
-            </View>
-          ))}
-        </ScrollView>
+            ))}
+          </ScrollView>
+        </GlassView>
       </Animated.View>
     </View>
   );
@@ -900,7 +916,6 @@ const FullScreenViewer = ({
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [showInfo, setShowInfo] = useState(false);
   const [showChrome, setShowChrome] = useState(true);
-  const fadeAnim = useRef(new Animated.Value(1)).current;
   const backdropOpacity = useSharedValue(1);
 
   useEffect(() => {
@@ -908,22 +923,13 @@ const FullScreenViewer = ({
       setCurrentIndex(initialIndex);
       setShowInfo(false);
       setShowChrome(true);
-      fadeAnim.setValue(1);
       backdropOpacity.value = 1;
     }
-  }, [initialIndex, visible, fadeAnim, backdropOpacity]);
+  }, [initialIndex, visible, backdropOpacity]);
 
   const toggleChrome = useCallback(() => {
-    setShowChrome((prev) => {
-      const next = !prev;
-      Animated.timing(fadeAnim, {
-        toValue: next ? 1 : 0,
-        duration: 180,
-        useNativeDriver: true,
-      }).start();
-      return next;
-    });
-  }, [fadeAnim]);
+    setShowChrome((prev) => !prev);
+  }, []);
 
   const goNext = useCallback(() => {
     setCurrentIndex((i) => Math.min(messages.length - 1, i + 1));
@@ -1002,6 +1008,7 @@ const FullScreenViewer = ({
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
+      {/* surface-role-exempt: FullScreenViewer is an immersive media canvas; MediaInfoPanel owns its material chrome. */}
       <View style={styles.viewerRoot}>
         {/* Animated black backdrop — fades during drag-to-dismiss */}
         <Reanimated.View
@@ -1080,32 +1087,41 @@ const FullScreenViewer = ({
         </View>
 
         {/* Top bar */}
-        <Animated.View
-          style={[styles.viewerTopBar, { paddingTop: insets.top + 8, opacity: fadeAnim }]}
-          pointerEvents={showChrome ? 'auto' : 'none'}
-        >
-          <TouchableOpacity onPress={onClose} style={styles.viewerNavButton} hitSlop={12}>
-            <Ionicons name="close" size={26} color="#fff" />
+        {showChrome && (
+        <View style={[styles.viewerTopBar, { paddingTop: insets.top + 8 }]}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={styles.viewerNavButton}
+            accessibilityRole="button"
+            accessibilityLabel="Close media viewer"
+          >
+            <GlassView role="floating" radius={22} style={styles.viewerNavGlass} contentStyle={styles.viewerNavGlassContent}>
+              <Ionicons name="close" size={24} color={theme.colors.onSurface} />
+            </GlassView>
           </TouchableOpacity>
           <View style={{ flex: 1 }} />
           <TouchableOpacity
             onPress={() => setShowInfo((v) => !v)}
             style={styles.viewerNavButton}
-            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel={showInfo ? 'Hide media information' : 'Show media information'}
+            accessibilityState={{ expanded: showInfo }}
           >
-            <Ionicons
-              name={showInfo ? 'information-circle' : 'information-circle-outline'}
-              size={26}
-              color={showInfo ? theme.colors.primary : '#fff'}
-            />
+            <GlassView role="floating" radius={22} style={styles.viewerNavGlass} contentStyle={styles.viewerNavGlassContent}>
+              <Ionicons
+                name={showInfo ? 'information-circle' : 'information-circle-outline'}
+                size={24}
+                color={showInfo ? theme.colors.primary : theme.colors.onSurface}
+              />
+            </GlassView>
           </TouchableOpacity>
-        </Animated.View>
+        </View>
+        )}
 
         {/* Bottom bar */}
-        <Animated.View
-          style={[styles.viewerBottomBar, { paddingBottom: insets.bottom + 8, opacity: fadeAnim }]}
-          pointerEvents={showChrome ? 'box-none' : 'none'}
-        >
+        {showChrome && (
+        <View style={[styles.viewerBottomBar, { paddingBottom: insets.bottom + 8 }]}>
+          <GlassView role="floating" radius={24} style={styles.viewerBottomGlass} contentStyle={styles.viewerBottomContent}>
           {messages.length > 1 && (
             <FlatList
               ref={stripRef}
@@ -1144,25 +1160,33 @@ const FullScreenViewer = ({
           </Text>
           <Text style={styles.viewerSender}>{senderName}</Text>
           <Text style={styles.viewerDate}>{formatDate(msg.createdAt)}</Text>
-        </Animated.View>
+          </GlassView>
+        </View>
+        )}
 
         {/* Prev / next arrows (visual hint for non-touch users; swipe also works) */}
         {currentIndex > 0 && showChrome && (
           <TouchableOpacity
             style={[styles.viewerArrow, styles.viewerArrowLeft]}
             onPress={goPrev}
-            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Previous media"
           >
-            <Ionicons name="chevron-back" size={30} color="rgba(255,255,255,0.85)" />
+            <GlassView role="floating" radius={22} style={styles.viewerArrowGlass} contentStyle={styles.viewerArrowGlassContent}>
+              <Ionicons name="chevron-back" size={26} color={theme.colors.onSurface} />
+            </GlassView>
           </TouchableOpacity>
         )}
         {currentIndex < messages.length - 1 && showChrome && (
           <TouchableOpacity
             style={[styles.viewerArrow, styles.viewerArrowRight]}
             onPress={goNext}
-            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Next media"
           >
-            <Ionicons name="chevron-forward" size={30} color="rgba(255,255,255,0.85)" />
+            <GlassView role="floating" radius={22} style={styles.viewerArrowGlass} contentStyle={styles.viewerArrowGlassContent}>
+              <Ionicons name="chevron-forward" size={26} color={theme.colors.onSurface} />
+            </GlassView>
           </TouchableOpacity>
         )}
 
@@ -1206,6 +1230,9 @@ const MediaCell = React.memo(({ message, onPress, onLongPress, selectionMode, se
       onPress={onPress}
       onLongPress={onLongPress}
       activeOpacity={0.82}
+      accessibilityRole={selectionMode ? 'checkbox' : 'button'}
+      accessibilityLabel={`${isVideo ? 'Video' : 'Photo'}${message.mediaMetadata?.fileName ? `, ${message.mediaMetadata.fileName}` : ''}`}
+      accessibilityState={selectionMode ? { checked: Boolean(selected) } : undefined}
     >
       {displayUri ? (
         <Image
@@ -1243,7 +1270,7 @@ const MediaCell = React.memo(({ message, onPress, onLongPress, selectionMode, se
             },
           ]}
         >
-          {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
+          {selected && <Ionicons name="checkmark" size={14} color={theme.colors.onPrimary} />}
         </View>
       )}
     </TouchableOpacity>
@@ -1269,6 +1296,9 @@ const StripThumb = React.memo(({ message, active, onPress }: StripThumbProps) =>
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel={`${isVideo ? 'Video' : 'Photo'} thumbnail`}
+      accessibilityState={{ selected: active }}
       style={[
         styles.stripThumb,
         {
@@ -1337,6 +1367,9 @@ const DocRow = React.memo(({ message, senderName, onPress, onLongPress, selectio
       onPress={onPress}
       onLongPress={onLongPress}
       activeOpacity={0.7}
+      accessibilityRole={selectionMode ? 'checkbox' : 'button'}
+      accessibilityLabel={meta?.fileName ?? (isAudio ? 'Voice message' : 'Document')}
+      accessibilityState={selectionMode ? { checked: Boolean(selected) } : undefined}
     >
       {selectionMode ? (
         <View
@@ -1348,7 +1381,7 @@ const DocRow = React.memo(({ message, senderName, onPress, onLongPress, selectio
             },
           ]}
         >
-          {selected && <Ionicons name="checkmark" size={12} color="#fff" />}
+          {selected && <Ionicons name="checkmark" size={12} color={theme.colors.onPrimary} />}
         </View>
       ) : null}
       <View
@@ -1407,6 +1440,9 @@ const LinkRow = React.memo(({ message, senderName, onPress, onLongPress, selecti
           onPress={onPress}
           onLongPress={onLongPress}
           activeOpacity={selectionMode ? 0.7 : 1}
+          accessibilityRole={selectionMode ? 'checkbox' : 'link'}
+          accessibilityLabel={url}
+          accessibilityState={selectionMode ? { checked: Boolean(selected) } : undefined}
           style={[
             styles.docRow,
             {
@@ -1427,7 +1463,7 @@ const LinkRow = React.memo(({ message, senderName, onPress, onLongPress, selecti
                 },
               ]}
             >
-              {selected && <Ionicons name="checkmark" size={12} color="#fff" />}
+              {selected && <Ionicons name="checkmark" size={12} color={theme.colors.onPrimary} />}
             </View>
           ) : null}
           <View style={[styles.docIconWrap, { backgroundColor: theme.colors.secondaryContainer }]}>
@@ -1903,7 +1939,7 @@ export const ChatMediaGalleryScreen = () => {
 
   const handleDocPress = useCallback(async (message: ChatMessage) => {
     let localPath = message.localMediaPath;
-    
+
     if (!localPath && message.mediaUrl) {
       try {
         const fileName = message.mediaMetadata?.fileName || 'document';
@@ -2055,15 +2091,10 @@ export const ChatMediaGalleryScreen = () => {
             styles.tabBarContainer,
             {
               paddingTop: insets.top + 52,
-              backgroundColor: isDark
-                ? 'rgba(18,18,18,0.94)'
-                : 'rgba(253,251,251,0.94)',
-              borderBottomColor: isDark
-                ? 'rgba(255,255,255,0.08)'
-                : 'rgba(0,0,0,0.08)',
             },
           ]}
         >
+          <GlassView role="floating" radius={18} style={styles.tabBarGlass}>
           <View style={styles.tabBar}>
             {TABS.map((tab) => {
               const isActive = activeTab === tab.id;
@@ -2073,6 +2104,9 @@ export const ChatMediaGalleryScreen = () => {
                   style={styles.tabItem}
                   onPress={() => handleTabPress(tab.id)}
                   activeOpacity={0.7}
+                  accessibilityRole="tab"
+                  accessibilityLabel={tab.label}
+                  accessibilityState={{ selected: isActive }}
                 >
                   <Ionicons
                     name={tab.icon}
@@ -2117,6 +2151,7 @@ export const ChatMediaGalleryScreen = () => {
               ]}
             />
           </View>
+          </GlassView>
         </View>
 
         {/* Selection action bar — appears at the bottom while in selection mode. */}
@@ -2124,14 +2159,10 @@ export const ChatMediaGalleryScreen = () => {
           <View
             style={[
               styles.selectionBar,
-              {
-                paddingBottom: insets.bottom + 8,
-                backgroundColor: isDark ? 'rgba(18,18,18,0.96)' : 'rgba(253,251,251,0.96)',
-              },
-              { borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' },
+              { paddingBottom: insets.bottom + 8 },
             ]}
           >
-            <View style={styles.selectionBarRow}>
+            <GlassView role="floating" radius={18} style={styles.selectionBarGlass} contentStyle={styles.selectionBarRow}>
               <Text style={[styles.selectionCount, { color: theme.colors.onSurface }]}>
                 {selectedIds.size} selected
               </Text>
@@ -2140,6 +2171,8 @@ export const ChatMediaGalleryScreen = () => {
                   <TouchableOpacity
                     onPress={promptBulkDeleteForEveryone}
                     style={[styles.selectionBarButton, { backgroundColor: theme.colors.errorContainer ?? 'rgba(255,82,82,0.18)' }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Delete selected items for everyone"
                   >
                     <Ionicons name="trash-bin-outline" size={18} color={theme.colors.error} />
                     <Text style={[styles.selectionBarButtonText, { color: theme.colors.error }]}>For everyone</Text>
@@ -2152,12 +2185,15 @@ export const ChatMediaGalleryScreen = () => {
                     { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', opacity: selectedIds.size === 0 ? 0.4 : 1 },
                   ]}
                   disabled={selectedIds.size === 0}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete selected items for me"
+                  accessibilityState={{ disabled: selectedIds.size === 0 }}
                 >
                   <Ionicons name="trash-outline" size={18} color={theme.colors.error} />
                   <Text style={[styles.selectionBarButtonText, { color: theme.colors.error }]}>For me</Text>
                 </TouchableOpacity>
               </View>
-            </View>
+            </GlassView>
           </View>
         )}
       </View>
@@ -2206,10 +2242,12 @@ const styles = StyleSheet.create({
   tabBarContainer: {
     position: 'absolute',
     top: 0,
-    left: 0,
-    right: 0,
+    left: 12,
+    right: 12,
     zIndex: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  tabBarGlass: {
+    overflow: 'hidden',
   },
   tabBar: {
     flexDirection: 'row',
@@ -2220,7 +2258,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 12,
+    minHeight: 44,
+    paddingVertical: 10,
   },
   tabLabel: {
     fontSize: 14,
@@ -2289,15 +2328,17 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    paddingTop: 8,
     paddingHorizontal: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  selectionBarGlass: {
+    overflow: 'hidden',
   },
   selectionBarRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
+    padding: 8,
   },
   selectionCount: {
     fontSize: 14,
@@ -2308,8 +2349,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 12,
+    minHeight: 44,
     paddingVertical: 8,
-    borderRadius: 10,
+    borderRadius: 12,
   },
   selectionBarButtonText: {
     fontSize: 13,
@@ -2411,11 +2453,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingBottom: 12,
-    backgroundColor: 'rgba(0,0,0,0.38)',
   },
   viewerNavButton: {
     width: 44,
     height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerNavGlass: {
+    width: 44,
+    height: 44,
+    overflow: 'hidden',
+  },
+  viewerNavGlassContent: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2424,9 +2475,15 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    backgroundColor: 'rgba(0,0,0,0.42)',
+    paddingHorizontal: 12,
+  },
+  viewerBottomGlass: {
+    overflow: 'hidden',
+  },
+  viewerBottomContent: {
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
     gap: 2,
   },
   viewerCounter: {
@@ -2452,10 +2509,17 @@ const styles = StyleSheet.create({
     marginTop: -22,
     width: 44,
     height: 44,
+    borderRadius: 22,
+  },
+  viewerArrowGlass: {
+    width: 44,
+    height: 44,
+    overflow: 'hidden',
+  },
+  viewerArrowGlassContent: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    borderRadius: 22,
   },
   viewerArrowLeft: { left: 12 },
   viewerArrowRight: { right: 12 },
@@ -2493,21 +2557,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   // Info panel
-  infoPanel: {
+  infoPanelMotion: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
+    maxHeight: SCREEN_HEIGHT * 0.62,
+  },
+  infoPanel: {
+    maxHeight: '100%',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    maxHeight: SCREEN_HEIGHT * 0.62,
+    overflow: 'hidden',
+  },
+  infoPanelContent: {
+    maxHeight: '100%',
     paddingTop: 12,
     paddingBottom: Platform.OS === 'ios' ? 34 : 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 20,
   },
   infoPanelHandle: {
     width: 36,
@@ -2523,6 +2589,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     marginBottom: 8,
+  },
+  infoCloseButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   infoRow: {
     flexDirection: 'row',

@@ -47,12 +47,18 @@ interface UseMediaSendPipelineOptions {
 
 const getMediaPlaceholder = (type: MessageType): string => {
   switch (type) {
-    case 'image': return '📷 Photo';
-    case 'video': return '🎥 Video';
-    case 'audio': return '🎵 Audio';
-    case 'file': return '📄 Document';
-    case 'location': return '📍 Location';
-    default: return '📎 Attachment';
+    case 'image':
+      return '📷 Photo';
+    case 'video':
+      return '🎥 Video';
+    case 'audio':
+      return '🎵 Audio';
+    case 'file':
+      return '📄 Document';
+    case 'location':
+      return '📍 Location';
+    default:
+      return '📎 Attachment';
   }
 };
 
@@ -98,13 +104,7 @@ interface PreparedMedia {
   mediaMetadata: Record<string, unknown>;
 }
 
-export const useMediaSendPipeline = ({
-  chatId,
-  groupId,
-  groupName,
-  participants,
-  sendMessage,
-}: UseMediaSendPipelineOptions) => {
+export const useMediaSendPipeline = ({ chatId, groupId, groupName, participants, sendMessage }: UseMediaSendPipelineOptions) => {
   const [failedItems, setFailedItems] = useState<FailedSendItem[]>([]);
   const [failedSheetVisible, setFailedSheetVisible] = useState(false);
   const { user } = useAuth();
@@ -119,50 +119,53 @@ export const useMediaSendPipeline = ({
    * thread on tap, at its ORIGINAL uri, and the compressed file replaces it
    * in place when `sendMessage` later saves the same message id.
    */
-  const createPlaceholder = useCallback(async (job: MediaJob) => {
-    if (!user) return;
-    const { media, caption } = job.item;
-    const messageType = toMessageType(media.type);
-    // Offset by position so a batch saved within the same millisecond still
-    // sorts in the order the user picked — the list sorts by timestamp.
-    const now = Date.now() + job.position;
+  const createPlaceholder = useCallback(
+    async (job: MediaJob) => {
+      if (!user) return;
+      const { media, caption } = job.item;
+      const messageType = toMessageType(media.type);
+      // Offset by position so a batch saved within the same millisecond still
+      // sorts in the order the user picked — the list sorts by timestamp.
+      const now = Date.now() + job.position;
 
-    const metadata: Record<string, unknown> = {};
-    if (media.fileName) metadata.fileName = media.fileName;
-    if (media.fileSize) metadata.fileSize = media.fileSize;
-    if (media.mimeType) metadata.mimeType = media.mimeType;
-    if (media.width) metadata.width = media.width;
-    if (media.height) metadata.height = media.height;
-    if (media.duration) metadata.duration = media.duration;
-    if (media.width && media.height) metadata.aspectRatio = media.width / media.height;
-    if (job.albumId) {
-      metadata.albumId = job.albumId;
-      metadata.albumIndex = job.position - 1;
-      metadata.albumSize = job.total;
-    }
+      const metadata: Record<string, unknown> = {};
+      if (media.fileName) metadata.fileName = media.fileName;
+      if (media.fileSize) metadata.fileSize = media.fileSize;
+      if (media.mimeType) metadata.mimeType = media.mimeType;
+      if (media.width) metadata.width = media.width;
+      if (media.height) metadata.height = media.height;
+      if (media.duration) metadata.duration = media.duration;
+      if (media.width && media.height) metadata.aspectRatio = media.width / media.height;
+      if (job.albumId) {
+        metadata.albumId = job.albumId;
+        metadata.albumIndex = job.position - 1;
+        metadata.albumSize = job.total;
+      }
 
-    const placeholder: ChatMessage = {
-      id: job.requestId,
-      messageId: job.requestId,
-      requestId: job.requestId,
-      chatId,
-      senderId: user.userId,
-      type: messageType,
-      content: caption || getMediaPlaceholder(messageType),
-      localMediaPath: media.uri,
-      mediaDownloaded: true,
-      mediaMetadata: metadata as any,
-      status: 'sending',
-      createdAt: now,
-      timestamp: now,
-      isFromMe: true,
-      deliveredTo: [],
-      readBy: [],
-    };
+      const placeholder: ChatMessage = {
+        id: job.requestId,
+        messageId: job.requestId,
+        requestId: job.requestId,
+        chatId,
+        senderId: user.userId,
+        type: messageType,
+        content: caption || getMediaPlaceholder(messageType),
+        localMediaPath: media.uri,
+        mediaDownloaded: true,
+        mediaMetadata: metadata as any,
+        status: 'sending',
+        createdAt: now,
+        timestamp: now,
+        isFromMe: true,
+        deliveredTo: [],
+        readBy: [],
+      };
 
-    setSendProgress(job.requestId, { stage: 'queued', fraction: null });
-    await saveMessageLocally(placeholder);
-  }, [chatId, user]);
+      setSendProgress(job.requestId, { stage: 'queued', fraction: null });
+      await saveMessageLocally(placeholder);
+    },
+    [chatId, user],
+  );
 
   /**
    * Stage 1 — compress. CPU-bound, so callers run these strictly one at a
@@ -307,130 +310,129 @@ export const useMediaSendPipeline = ({
    * `sum(compress) + sum(upload)`; now it costs roughly
    * `max(sum(compress), sum(upload))` plus one item's worth of latency.
    */
-  const dispatchOne = useCallback(async (job: MediaJob, prepared: PreparedMedia) => {
-    if (job.cancelled) throw new MediaSendCancelledError();
+  const dispatchOne = useCallback(
+    async (job: MediaJob, prepared: PreparedMedia) => {
+      if (job.cancelled) throw new MediaSendCancelledError();
 
-    let replyData: any = undefined;
-    if (job.replyTarget) {
-      const replySource = job.replyTarget;
-      const participant = participants.find((p) => p.userId === replySource.senderId);
-      replyData = {
-        messageId: replySource.messageId,
-        senderId: replySource.senderId,
-        senderName: resolveDisplayName(participant, 'Unknown'),
-        content: replySource.content,
-        type: replySource.type,
-      };
-    }
+      let replyData: any = undefined;
+      if (job.replyTarget) {
+        const replySource = job.replyTarget;
+        const participant = participants.find((p) => p.userId === replySource.senderId);
+        replyData = {
+          messageId: replySource.messageId,
+          senderId: replySource.senderId,
+          senderName: resolveDisplayName(participant, 'Unknown'),
+          content: replySource.content,
+          type: replySource.type,
+        };
+      }
 
-    // Direct, and this hook no longer ACCEPTS a `runSend` at all (doc 35).
-    // `usePreventDoubleSubmit` returns the in-flight promise without running a
-    // concurrent task, so a second media item sent while the first was still
-    // uploading was silently discarded. This pipeline exists precisely to send
-    // several items, so de-duplicating them is the opposite of what it needs.
-    // The prop was left plumbed in but unused after that fix, which is an
-    // invitation to reintroduce the bug; removing it makes that impossible.
-    await sendMessage({
-      chatId,
-      requestId: job.requestId,
-      content: job.item.caption || getMediaPlaceholder(prepared.messageType),
-      type: prepared.messageType,
-      mediaUri: prepared.processedUri,
-      groupId,
-      groupName,
-      replyTo: replyData,
-      mediaMetadata: Object.keys(prepared.mediaMetadata).length > 0
-        ? (prepared.mediaMetadata as any)
-        : undefined,
-    });
-  }, [chatId, groupId, groupName, participants, sendMessage]);
+      // Direct, and this hook no longer ACCEPTS a `runSend` at all (doc 35).
+      // `usePreventDoubleSubmit` returns the in-flight promise without running a
+      // concurrent task, so a second media item sent while the first was still
+      // uploading was silently discarded. This pipeline exists precisely to send
+      // several items, so de-duplicating them is the opposite of what it needs.
+      // The prop was left plumbed in but unused after that fix, which is an
+      // invitation to reintroduce the bug; removing it makes that impossible.
+      await sendMessage({
+        chatId,
+        requestId: job.requestId,
+        content: job.item.caption || getMediaPlaceholder(prepared.messageType),
+        type: prepared.messageType,
+        mediaUri: prepared.processedUri,
+        groupId,
+        groupName,
+        replyTo: replyData,
+        mediaMetadata: Object.keys(prepared.mediaMetadata).length > 0 ? (prepared.mediaMetadata as any) : undefined,
+      });
+    },
+    [chatId, groupId, groupName, participants, sendMessage],
+  );
 
-  const buildFailedItem = useCallback((
-    payload: MediaPreviewSendItem,
-    batchIndex: number,
-    batchSize: number,
-    requestId: string,
-    error: unknown,
-  ): FailedSendItem => {
-    const name = error instanceof Error ? error.name : '';
-    const raw = error instanceof Error ? error.message : 'Failed to send';
-    const isOversize = /too large|maximum size|exceeds/i.test(raw);
-    let reason = raw;
-    if (isOversize) {
-      reason = 'File too large after compression — trim or switch to SD.';
-    } else if (name === 'MediaSourceUnavailableError' || name === 'MediaCopyFailedError') {
-      reason = raw;
-    } else if (/no longer in the photo library|E_ASSET_NOT_FOUND/i.test(raw)) {
-      // The asset was deleted from Photos between picking and sending.
-      reason = 'This item was removed from your photo library. Pick it again.';
-    } else if (/no downloadable file|E_NO_RESOURCE/i.test(raw)) {
-      reason = 'This item has no file we can send. It may still be syncing.';
-    } else if (/E_IN_CLOUD|no local preview/i.test(raw)) {
-      reason = 'Still in iCloud and couldn’t be downloaded. Check your connection and retry.';
-    } else if (/iCloud|PHPhotosErrorDomain|3164|asset not available|network access|E_MATERIALIZE/i.test(raw)) {
-      reason = 'Couldn’t download this item from iCloud. Open it once in Photos, then retry.';
-    } else if (/ENOENT|no such file/i.test(raw)) {
-      reason = 'Source file is no longer available. Pick it again.';
-    } else if (/permission|denied|EACCES/i.test(raw)) {
-      reason = 'Permission denied while reading the file. Check Photos / Files access.';
-    } else if (/Not authenticated/i.test(raw)) {
-      reason = 'You’re signed out. Sign in and try again.';
-    } else if (/network|offline|timeout|Network request failed/i.test(raw)) {
-      reason = 'Network error — check your connection and retry.';
-    } else if (/Unsupported media type/i.test(raw)) {
-      reason = 'This file type isn’t supported.';
-    }
-    return { batchIndex, batchSize, payload, reason, isOversize, requestId };
-  }, []);
+  const buildFailedItem = useCallback(
+    (payload: MediaPreviewSendItem, batchIndex: number, batchSize: number, requestId: string, error: unknown): FailedSendItem => {
+      const name = error instanceof Error ? error.name : '';
+      const raw = error instanceof Error ? error.message : '';
+      const isOversize = /too large|maximum size|exceeds/i.test(raw);
+      let reason = 'Couldn’t send this item. Try again.';
+      if (isOversize) {
+        reason = 'File too large after compression. Trim it or switch to SD.';
+      } else if (name === 'MediaSourceUnavailableError' || name === 'MediaCopyFailedError') {
+        reason = 'This item is no longer available. Pick it again.';
+      } else if (/no longer in the photo library|E_ASSET_NOT_FOUND/i.test(raw)) {
+        // The asset was deleted from Photos between picking and sending.
+        reason = 'This item was removed from your photo library. Pick it again.';
+      } else if (/no downloadable file|E_NO_RESOURCE/i.test(raw)) {
+        reason = 'This item has no file we can send. It may still be syncing.';
+      } else if (/E_IN_CLOUD|no local preview/i.test(raw)) {
+        reason = 'Still in iCloud and couldn’t be downloaded. Check your connection and retry.';
+      } else if (/iCloud|PHPhotosErrorDomain|3164|asset not available|network access|E_MATERIALIZE/i.test(raw)) {
+        reason = 'Couldn’t download this item from iCloud. Open it once in Photos, then retry.';
+      } else if (/ENOENT|no such file/i.test(raw)) {
+        reason = 'Source file is no longer available. Pick it again.';
+      } else if (/permission|denied|EACCES/i.test(raw)) {
+        reason = 'Permission denied while reading the file. Check Photos / Files access.';
+      } else if (/Not authenticated/i.test(raw)) {
+        reason = 'You’re signed out. Sign in and try again.';
+      } else if (/network|offline|timeout|Network request failed/i.test(raw)) {
+        reason = 'Check your connection and retry.';
+      } else if (/Unsupported media type/i.test(raw)) {
+        reason = 'This file type isn’t supported.';
+      }
+      return { batchIndex, batchSize, payload, reason, isOversize, requestId };
+    },
+    [],
+  );
 
   const removeFailedItem = useCallback((batchIndex: number, mediaUri: string) => {
     setFailedItems((prev) => prev.filter((f) => !(f.batchIndex === batchIndex && f.payload.media.uri === mediaUri)));
   }, []);
 
-  const retrySingleFailedItem = useCallback(async (item: FailedSendItem) => {
-    // Reuses the original requestId, so the retry addresses the same message
-    // id and progress slot rather than leaving an orphaned bubble behind.
-    const job: MediaJob = {
-      item: item.payload,
-      position: 1,
-      total: 1,
-      requestId: item.requestId,
-      replyTarget: null,
-      cancelled: false,
-    };
-    try {
-      await createPlaceholder(job);
-      setSendProgress(job.requestId, {
-        stage: 'queued',
-        fraction: null,
-        cancel: () => {
-          job.cancelled = true;
-        },
-      });
-      const prepared = await compressOne(job);
-      await dispatchOne(job, prepared);
-      clearSendProgress(job.requestId);
-      removeFailedItem(item.batchIndex, item.payload.media.uri);
-    } catch (err) {
-      clearSendProgress(job.requestId);
-      const cancelled =
-        err instanceof Error &&
-        (err.name === 'MediaSendCancelledError' || err.name === 'MediaUploadCancelledError');
-      if (cancelled) {
-        await deleteMessageLocally(chatId, job.requestId);
+  const retrySingleFailedItem = useCallback(
+    async (item: FailedSendItem) => {
+      // Reuses the original requestId, so the retry addresses the same message
+      // id and progress slot rather than leaving an orphaned bubble behind.
+      const job: MediaJob = {
+        item: item.payload,
+        position: 1,
+        total: 1,
+        requestId: item.requestId,
+        replyTarget: null,
+        cancelled: false,
+      };
+      try {
+        await createPlaceholder(job);
+        setSendProgress(job.requestId, {
+          stage: 'queued',
+          fraction: null,
+          cancel: () => {
+            job.cancelled = true;
+          },
+        });
+        const prepared = await compressOne(job);
+        await dispatchOne(job, prepared);
+        clearSendProgress(job.requestId);
         removeFailedItem(item.batchIndex, item.payload.media.uri);
-        return;
+      } catch (err) {
+        clearSendProgress(job.requestId);
+        const cancelled = err instanceof Error && (err.name === 'MediaSendCancelledError' || err.name === 'MediaUploadCancelledError');
+        if (cancelled) {
+          await deleteMessageLocally(chatId, job.requestId);
+          removeFailedItem(item.batchIndex, item.payload.media.uri);
+          return;
+        }
+        console.error('Retry failed:', err);
+        setFailedItems((prev) =>
+          prev.map((f) =>
+            f.batchIndex === item.batchIndex && f.payload.media.uri === item.payload.media.uri
+              ? buildFailedItem(item.payload, item.batchIndex, item.batchSize, item.requestId, err)
+              : f,
+          ),
+        );
       }
-      console.error('Retry failed:', err);
-      setFailedItems((prev) =>
-        prev.map((f) =>
-          f.batchIndex === item.batchIndex && f.payload.media.uri === item.payload.media.uri
-            ? buildFailedItem(item.payload, item.batchIndex, item.batchSize, item.requestId, err)
-            : f,
-        ),
-      );
-    }
-  }, [chatId, createPlaceholder, compressOne, dispatchOne, removeFailedItem, buildFailedItem]);
+    },
+    [chatId, createPlaceholder, compressOne, dispatchOne, removeFailedItem, buildFailedItem],
+  );
 
   const handleRetryAllFailedItems = useCallback(async () => {
     const snapshot = [...failedItems];
@@ -445,145 +447,140 @@ export const useMediaSendPipeline = ({
     });
   }, [failedItems, retrySingleFailedItem]);
 
-  const handleTrimAndRetryFailedItem = useCallback(async (item: FailedSendItem) => {
-    if (item.payload.media.type !== 'video') return;
-    setFailedSheetVisible(false);
-    try {
-      const trimmed = await trimVideoInteractive(item.payload.media.uri, {
-        headerText: 'Trim to fit',
-      });
-      if (!trimmed) {
-        setFailedSheetVisible(true);
-        return;
-      }
-      let newSize = 0;
+  const handleTrimAndRetryFailedItem = useCallback(
+    async (item: FailedSendItem) => {
+      if (item.payload.media.type !== 'video') return;
+      setFailedSheetVisible(false);
       try {
-        const info = await getInfoAsync(trimmed.outputPath);
-        newSize = info.exists && 'size' in info ? info.size : 0;
-      } catch {
-        /* swallow — size will be filled in by processVideo's read */
-      }
-      const updated: FailedSendItem = {
-        ...item,
-        payload: {
-          ...item.payload,
-          media: {
-            ...item.payload.media,
-            uri: trimmed.outputPath,
-            duration: trimmed.durationMs,
-            fileSize: newSize > 0 ? newSize : item.payload.media.fileSize,
-          },
-        },
-      };
-      await retrySingleFailedItem(updated);
-      setFailedItems((current) => {
-        if (current.length > 0) setFailedSheetVisible(true);
-        return current;
-      });
-    } catch (err) {
-      console.error('Trim & retry failed:', err);
-      appAlert('Couldn’t trim video', err instanceof Error ? err.message : 'Please try again.');
-      setFailedSheetVisible(true);
-    }
-  }, [retrySingleFailedItem]);
-
-  const handleSendMedia = useCallback(async (
-    results: MediaPreviewSendItem[],
-    replySource: ChatMessage | null,
-    onDismissPreview: () => void,
-  ) => {
-    if (results.length === 0) return;
-
-    onDismissPreview();
-
-    const isAlbum =
-      results.length > 1 &&
-      results.every(({ media }) =>
-        media.type === 'image' ||
-        media.type === 'camera' ||
-        media.type === 'video',
-      );
-    const albumId = isAlbum ? `album_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` : undefined;
-
-    const jobs: MediaJob[] = results.map((item, i) => ({
-      item,
-      position: i + 1,
-      total: results.length,
-      requestId: uuid(),
-      albumId,
-      replyTarget: i === 0 ? replySource : null,
-      cancelled: false,
-    }));
-
-    // Every bubble appears at once, before a single byte is processed. The
-    // user sees exactly what they picked, in order, immediately.
-    for (const job of jobs) {
-      await createPlaceholder(job);
-      setSendProgress(job.requestId, {
-        stage: 'queued',
-        fraction: null,
-        cancel: () => {
-          job.cancelled = true;
-        },
-      });
-    }
-
-    const failures: FailedSendItem[] = [];
-    const noteFailure = (job: MediaJob, error: unknown) => {
-      clearSendProgress(job.requestId);
-      // A cancel is not a failure — the bubble is already gone and the user
-      // does not want to be asked to retry what they just stopped.
-      if (error instanceof Error && error.name === 'MediaSendCancelledError') return;
-      if (error instanceof Error && error.name === 'MediaUploadCancelledError') return;
-      console.error(`Failed to send batch item ${job.position - 1}:`, error);
-      failures.push(
-        buildFailedItem(job.item, job.position - 1, job.total, job.requestId, error),
-      );
-    };
-
-    // Two-stage pipeline. Compression stays strictly sequential (CPU-bound —
-    // concurrent transcodes on a phone are slower than serial ones and starve
-    // the UI thread), while uploads run on their own chain so item N uploads
-    // WHILE item N+1 compresses. The chain also preserves order, which an
-    // album depends on.
-    let uploadChain: Promise<void> = Promise.resolve();
-
-    for (const job of jobs) {
-      let prepared: PreparedMedia;
-      try {
-        prepared = await compressOne(job);
-      } catch (error) {
-        // A cancelled placeholder has no send to clean it up, so remove it here.
-        if (error instanceof Error && error.name === 'MediaSendCancelledError') {
-          await deleteMessageLocally(chatId, job.requestId);
+        const trimmed = await trimVideoInteractive(item.payload.media.uri, {
+          headerText: 'Trim to fit',
+        });
+        if (!trimmed) {
+          setFailedSheetVisible(true);
+          return;
         }
-        noteFailure(job, error);
-        continue;
-      }
-
-      const readyJob = job;
-      const readyMedia = prepared;
-      uploadChain = uploadChain.then(async () => {
+        let newSize = 0;
         try {
-          await dispatchOne(readyJob, readyMedia);
-          clearSendProgress(readyJob.requestId);
-        } catch (error) {
-          if (error instanceof Error && error.name === 'MediaSendCancelledError') {
-            await deleteMessageLocally(chatId, readyJob.requestId);
-          }
-          noteFailure(readyJob, error);
+          const info = await getInfoAsync(trimmed.outputPath);
+          newSize = info.exists && 'size' in info ? info.size : 0;
+        } catch {
+          /* swallow — size will be filled in by processVideo's read */
         }
-      });
-    }
+        const updated: FailedSendItem = {
+          ...item,
+          payload: {
+            ...item.payload,
+            media: {
+              ...item.payload.media,
+              uri: trimmed.outputPath,
+              duration: trimmed.durationMs,
+              fileSize: newSize > 0 ? newSize : item.payload.media.fileSize,
+            },
+          },
+        };
+        await retrySingleFailedItem(updated);
+        setFailedItems((current) => {
+          if (current.length > 0) setFailedSheetVisible(true);
+          return current;
+        });
+      } catch (err) {
+        console.error('Trim & retry failed:', err);
+        appAlert('Couldn’t trim video', 'Please try again.');
+        setFailedSheetVisible(true);
+      }
+    },
+    [retrySingleFailedItem],
+  );
 
-    await uploadChain;
+  const handleSendMedia = useCallback(
+    async (results: MediaPreviewSendItem[], replySource: ChatMessage | null, onDismissPreview: () => void) => {
+      if (results.length === 0) return;
 
-    if (failures.length > 0) {
-      setFailedItems(failures);
-      setFailedSheetVisible(true);
-      warningHaptic();
-    }
-  }, [chatId, createPlaceholder, compressOne, dispatchOne, buildFailedItem]);
+      onDismissPreview();
+
+      const isAlbum =
+        results.length > 1 && results.every(({ media }) => media.type === 'image' || media.type === 'camera' || media.type === 'video');
+      const albumId = isAlbum ? `album_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` : undefined;
+
+      const jobs: MediaJob[] = results.map((item, i) => ({
+        item,
+        position: i + 1,
+        total: results.length,
+        requestId: uuid(),
+        albumId,
+        replyTarget: i === 0 ? replySource : null,
+        cancelled: false,
+      }));
+
+      // Every bubble appears at once, before a single byte is processed. The
+      // user sees exactly what they picked, in order, immediately.
+      for (const job of jobs) {
+        await createPlaceholder(job);
+        setSendProgress(job.requestId, {
+          stage: 'queued',
+          fraction: null,
+          cancel: () => {
+            job.cancelled = true;
+          },
+        });
+      }
+
+      const failures: FailedSendItem[] = [];
+      const noteFailure = (job: MediaJob, error: unknown) => {
+        clearSendProgress(job.requestId);
+        // A cancel is not a failure — the bubble is already gone and the user
+        // does not want to be asked to retry what they just stopped.
+        if (error instanceof Error && error.name === 'MediaSendCancelledError') return;
+        if (error instanceof Error && error.name === 'MediaUploadCancelledError') return;
+        console.error(`Failed to send batch item ${job.position - 1}:`, error);
+        failures.push(buildFailedItem(job.item, job.position - 1, job.total, job.requestId, error));
+      };
+
+      // Two-stage pipeline. Compression stays strictly sequential (CPU-bound —
+      // concurrent transcodes on a phone are slower than serial ones and starve
+      // the UI thread), while uploads run on their own chain so item N uploads
+      // WHILE item N+1 compresses. The chain also preserves order, which an
+      // album depends on.
+      let uploadChain: Promise<void> = Promise.resolve();
+
+      for (const job of jobs) {
+        let prepared: PreparedMedia;
+        try {
+          prepared = await compressOne(job);
+        } catch (error) {
+          // A cancelled placeholder has no send to clean it up, so remove it here.
+          if (error instanceof Error && error.name === 'MediaSendCancelledError') {
+            await deleteMessageLocally(chatId, job.requestId);
+          }
+          noteFailure(job, error);
+          continue;
+        }
+
+        const readyJob = job;
+        const readyMedia = prepared;
+        uploadChain = uploadChain.then(async () => {
+          try {
+            await dispatchOne(readyJob, readyMedia);
+            clearSendProgress(readyJob.requestId);
+          } catch (error) {
+            if (error instanceof Error && error.name === 'MediaSendCancelledError') {
+              await deleteMessageLocally(chatId, readyJob.requestId);
+            }
+            noteFailure(readyJob, error);
+          }
+        });
+      }
+
+      await uploadChain;
+
+      if (failures.length > 0) {
+        setFailedItems(failures);
+        setFailedSheetVisible(true);
+        warningHaptic();
+      }
+    },
+    [chatId, createPlaceholder, compressOne, dispatchOne, buildFailedItem],
+  );
 
   return {
     failedItems,

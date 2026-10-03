@@ -127,6 +127,8 @@ export const SplitFooter = React.memo(({
         onPress={onCta}
         disabled={!ctaEnabled}
         accessibilityRole="button"
+        accessibilityLabel={ctaLabel}
+        accessibilityState={{ disabled: !ctaEnabled, busy: isSpinning }}
         style={({ pressed }) => [
           styles.cta,
           {
@@ -135,8 +137,8 @@ export const SplitFooter = React.memo(({
           },
         ]}
       >
-        <Icon source={ctaIcon} size={17} color={ctaEnabled ? '#FFF' : theme.colors.muted} />
-        <Text style={{ color: ctaEnabled ? '#FFF' : theme.colors.muted, fontSize: 15, fontWeight: '800' }}>
+        <Icon source={ctaIcon} size={17} color={ctaEnabled ? theme.colors.onPrimary : theme.colors.muted} />
+        <Text style={{ color: ctaEnabled ? theme.colors.onPrimary : theme.colors.muted, fontSize: 15, fontWeight: '800' }}>
           {ctaLabel}
         </Text>
       </Pressable>
