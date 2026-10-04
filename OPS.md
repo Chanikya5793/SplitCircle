@@ -164,10 +164,13 @@ project and Web app display names are also **ManaSplit**; their immutable IDs
 remain `splitcircle-c9e46` and the existing app ID. After changing branding,
 verify the consent screen and a new-account Google notice with a real account.
 On 2026-10-03, the owner Chrome profile `chanikya.chowdary1@gmail.com` showed
-the ManaSplit project Branding page with app name **ManaSplit**, an existing
-Current App logo, and the `manasplit.pages.dev` public links. The current logo
-was not visually matched to `assets/icon.png`; verify that image and the public
-consent screen before claiming the branding work fully complete.
+the ManaSplit project Branding page with app name **ManaSplit** and the
+`manasplit.pages.dev` public links. The canonical `assets/icon.png` was selected
+in Google's logo picker and saved; the console confirmed "Branding changes
+saved!" and again showed a Current App logo. A live Google sign-in preview for
+the shipped iOS OAuth client showed "continue to ManaSplit" and "You're signing
+back in to ManaSplit" with the expected privacy and terms links. A fresh
+new-account notification email and a physical-device sign-in still need checking.
 As checked on 2026-10-03, Audience is External and Testing with no listed test
 users. Google's basic `openid`/`email`/`profile` sign-in exception permits
 non-test accounts in that state, so Testing alone does not explain a login
