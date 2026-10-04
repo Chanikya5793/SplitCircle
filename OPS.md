@@ -18,9 +18,12 @@ purges stale DerivedData. Builds land in TestFlight after Apple processes.
 The iOS `1.0.1 (0.0.252)` archive built, but App Store Connect rejected its
 submission because version `1.0.1` was already submitted. The replacement
 archive uses marketing version `1.0.2`. Build `0.0.253` was uploaded and
-accepted by App Store Connect for processing through EAS Submit. Apple processing
-and physical-device sign-in remain unverified. The 56 existing core Functions
-deployed.
+accepted by App Store Connect through EAS Submit. On 2026-10-03, the signed-in
+App Store Connect TestFlight page showed `1.0.2 (0.0.253)` in **Testing** for the
+internal **Team (Expo)** group, and the group showed an installation of that
+build by the owner iCloud tester account. Physical-device Google sign-in and
+the new-account notification email remain unverified. The 56 existing core
+Functions deployed.
 The Security Center monitoring Functions were excluded from that
 Functions deploy: Cloud KMS is not enabled, and the project has no values for
 `SECURITY_MONITORING_KMS_KEY`, `SECURITY_BLIND_INDEX_KEY`, `HIBP_API_KEY`,
