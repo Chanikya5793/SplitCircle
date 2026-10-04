@@ -15,6 +15,17 @@ purges stale DerivedData. Builds land in TestFlight after Apple processes.
 
 ### 2026-10-03 release status: Security Center provider gate
 
+On October 3 at 8:31 PM CDT (October 4 at 01:31 UTC), App Store Connect
+accepted the public update submission for iOS `1.0.2 (0.0.253)`.
+Submission `c4ad006c-4759-4b13-b863-31fd382d5583` and the version both
+showed `WAITING_FOR_REVIEW` on a fresh API read. Release type is
+`AFTER_APPROVAL`, so Apple should publish automatically if it approves the
+version. The public US storefront still showed `1.0.1` at submission time.
+The update uses the processed TestFlight build; no new binary was uploaded
+for this submission. Google sign-in and new-account email remain unverified
+on a physical device, and live Security Center monitoring remains gated as
+described below.
+
 The iOS `1.0.1 (0.0.252)` archive built, but App Store Connect rejected its
 submission because version `1.0.1` was already submitted. The replacement
 archive uses marketing version `1.0.2`. Build `0.0.253` was uploaded and
