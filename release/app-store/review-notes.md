@@ -39,7 +39,7 @@ If two accounts are needed to exercise messaging or calling, place the second ac
 
 ## iOS and AI behavior
 
-Version 1.0.0, build 0.0.244 uses Xcode 27 RC (27A266a) and the iOS 27.0 SDK. It supports iOS 17 and later. Supported Apple Intelligence features run on eligible devices. The app uses other supported methods when the model is unavailable. AI does not move money or change a shared expense without the user's confirmation.
+Version 1.0.2, build 0.0.253 supports iOS 17 and later. Supported Apple Intelligence features run on eligible devices. The app uses other supported methods when the model is unavailable. AI does not move money or change a shared expense without the user's confirmation.
 
 ## User safety controls
 
@@ -51,11 +51,9 @@ Message and call history are stored on the device. Firebase Realtime Database is
 
 ## Current submission boundary
 
-- Version 1.0.0, build 0.0.244 was submitted September 10 at 12:55 AM. Apple rejected it September 14 under Guideline 5 because CallKit was enabled while China mainland was available. This live verification supersedes the older local claim that submission was unfinished.
-- Submission `afc7e32a-1b9e-4e32-91d8-c357504139f7` contains 16 items: the app, subscription group, ten subscriptions, and four credit packs. The app is rejected; other submitted items cannot be approved until unresolved issues are addressed.
-- China mainland was removed from app availability September 14 and reload-verified as Not Available, with 174 other territories retained. CallKit remains unchanged. Apple says territory changes can take up to 24 hours. A replacement build is requested and must be validated before resubmission; build 0.0.244 must not be resubmitted.
-- Production and Sandbox notification URLs are saved. Purchase History and Product Interaction are published as account-linked data used for App Functionality, not tracking. The draft version is 1.0.0.
-- All product Review Information screenshots are saved and reload-verified. Fixed the 25-credit pack's missing country availability; all products passed draft inclusion validation.
-- Primary reviewer login and the live monetization snapshot were verified: sandbox environment, free plan, standard access without quota bypass, commerce enabled, active sandbox grant through October 8. The secondary chat/call account uses production commerce and is not the sandbox purchase account.
-- Before commercial submission, verify real sandbox purchase and restore/lifecycle behavior, then send the completed draft. Read-only September 10 checks found zero sandbox Apple transaction records and zero sandbox Apple notification records. Device Hub automation cannot navigate the phone, and the last capture showed it locked; the user must participate in the genuine StoreKit checkout check.
-- Nearby delivery is enabled and should be tested on compatible hardware if Apple requests it.
+- Version 1.0.1 is live on the public App Store. Version 1.0.2, build 0.0.253 is processed in TestFlight and is the candidate for this update.
+- Google sign-in handling and app motion changed in this build. A physical-device Google sign-in and new-account email check have not yet been recorded as passing.
+- Security Center live monitoring is not enabled. Its provider credentials and Cloud KMS key are pending; its unavailable state is presented in the app. Do not describe monitoring as live to reviewers.
+- Genuine StoreKit purchase and restore behavior has not been verified in this release cycle. Do not claim a current passing transaction test without evidence.
+- China mainland remains excluded while CallKit is enabled. Confirm territory availability in App Store Connect before submission.
+- Nearby delivery requires compatible hardware and should be tested on two devices if Apple requests it.
