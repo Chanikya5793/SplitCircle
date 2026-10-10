@@ -13,6 +13,39 @@ npm run build:ios:local  # .ipa only, no upload
 number auto-increments, `scripts/eas-local-preflight.sh` needs ~12GB free disk and
 purges stale DerivedData. Builds land in TestFlight after Apple processes.
 
+### 2026-10-10 TestFlight build: 1.0.3 (0.0.256)
+
+On October 10, iOS `1.0.3 (0.0.256)` was built locally with `npm run ship:ios`
+from `ui-revamp` (`380de13`) and accepted by App Store Connect through EAS
+Submit (submission `ccd3bcb0-3865-4528-b6a4-4fd47fc182db`). Apple processing
+and its appearance in the **Team (Expo)** TestFlight group were not yet
+confirmed when this was written. It is TestFlight-only; `1.0.2 (0.0.253)`
+remains the version in App Review and was not changed.
+
+- Build numbers `0.0.254` and `0.0.255` are burned. The first run stopped at
+  the disk preflight (7GB free), and the second archived as `1.0.2 (0.0.255)`
+  but App Store Connect refused it with "You've already submitted this
+  version", because a version in review accepts no further builds. The
+  marketing version was bumped to `1.0.3` in `app.config.ts` and all four
+  `MARKETING_VERSION` entries in the Xcode project.
+- Contents: feature-limit enforcement for AI assistant messages, AI insight
+  reports, link checks and manual scans; the Usage & Limits screen; the
+  repair of the 2026-10-03 UI restyle; and the Privacy Guard duress rework
+  (decoy data applied at the `useGroups()` source, writes blocked). See
+  commit `4aae57c`.
+- Functions: before this build, 57 Functions were deployed to
+  `splitcircle-c9e46`. That was every previously live function, updated,
+  plus the new `getMonetizationUsage`. The CLI checks the secrets of EVERY
+  function in the codebase even under `--only`, so the Security Center
+  exports (`securityMonitoring`, `securityUrlAnalysis`) were commented out of
+  `functions/src/index.ts` for that deploy only and restored right after.
+  The Security Center gate below still applies: its 13 Functions are not
+  deployed.
+- The disk preflight needs 12GB. To get there, the npm, CocoaPods, Homebrew
+  and pip caches, Xcode DerivedData and iOS DeviceSupport were cleared. Old
+  Xcode Archives (about 4.7GB) were kept, and they are the next thing to
+  prune.
+
 ### 2026-10-03 release status: Security Center provider gate
 
 On October 3 at 8:31 PM CDT (October 4 at 01:31 UTC), App Store Connect
