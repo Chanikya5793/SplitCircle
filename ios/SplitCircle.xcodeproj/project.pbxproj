@@ -609,7 +609,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"$(LIBSIGNAL_FFI_LIB_TO_LINK)",
@@ -643,7 +643,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"$(LIBSIGNAL_FFI_LIB_TO_LINK)",
@@ -679,7 +679,7 @@
 				);
 				LIBSIGNAL_FFI_LIB_TO_LINK = "$(LIBSIGNAL_FFI_TEMP_DIR)/target/$(CARGO_BUILD_TARGET)/release/libsignal_ffi.a";
 				LIBSIGNAL_FFI_TEMP_DIR = "$(PROJECT_TEMP_ROOT)/Pods.build/libsignal_ffi";
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"$(LIBSIGNAL_FFI_LIB_TO_LINK)",
@@ -874,7 +874,7 @@
 				);
 				LIBSIGNAL_FFI_LIB_TO_LINK = "$(LIBSIGNAL_FFI_TEMP_DIR)/target/$(CARGO_BUILD_TARGET)/release/libsignal_ffi.a";
 				LIBSIGNAL_FFI_TEMP_DIR = "$(PROJECT_TEMP_ROOT)/Pods.build/libsignal_ffi";
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"$(LIBSIGNAL_FFI_LIB_TO_LINK)",
