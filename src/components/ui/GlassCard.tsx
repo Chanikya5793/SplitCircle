@@ -1,4 +1,4 @@
-// Unified material primitive. See DESIGN.md for the Refined Glass contract.
+// Unified material primitive. See DESIGN.md ("Two surface styles") for the contract.
 // Glass preference: native material, blur, or tinted Android fallback.
 // Flat preference: borderless sections, opaque floating chrome, and the named
 // glass accents. Reduce Transparency makes bounded surfaces opaque in either
@@ -104,17 +104,53 @@ const BORDERLESS_RESET = {
 
 type AppRadius = ReturnType<typeof useTheme>['theme']['radius'];
 
+// Children render inside an inner content view (it sits above the blur /
+// native material), so layout props on `style` land on the SHELL and never
+// reach them. The callers plainly meant their children:
+//  - `flexDirection: 'row'` — the call banner, chat search, pinned bar, media
+//    banner, selection toolbar and stats insight cards all rendered as a
+//    vertical stack;
+//  - `alignItems: 'center'` — it centred the content block but not the items
+//    in it, so an empty state's icon sat at the left edge of its own text.
+// Those are forwarded to the content view. A column's `gap`/`flexWrap` are
+// NOT: they have been inert for as long as those screens were tuned (the Add
+// Expense form among them), and applying them now would re-space every one.
+const CHILD_LAYOUT_KEYS = ['alignItems', 'justifyContent', 'alignContent'] as const;
+const ROW_ONLY_LAYOUT_KEYS = ['flexDirection', 'flexWrap', 'gap', 'rowGap', 'columnGap'] as const;
+
+const splitChildLayout = (
+  style: StyleProp<ViewStyle>,
+): { shell: StyleProp<ViewStyle>; layout: ViewStyle | null } => {
+  const flat = StyleSheet.flatten(style) as ViewStyle | undefined;
+  if (!flat) return { shell: style, layout: null };
+  const isRow = flat.flexDirection === 'row' || flat.flexDirection === 'row-reverse';
+  const keys = isRow ? [...CHILD_LAYOUT_KEYS, ...ROW_ONLY_LAYOUT_KEYS] : CHILD_LAYOUT_KEYS;
+  if (!keys.some((key) => key in flat)) return { shell: style, layout: null };
+  const shell: Record<string, unknown> = { ...flat };
+  // Fill the shell so a fixed-size bar or circle can still centre its content.
+  const layout: Record<string, unknown> = { flexGrow: 1 };
+  for (const key of keys) {
+    if (key in shell) {
+      layout[key] = shell[key];
+      delete shell[key];
+    }
+  }
+  return { shell: shell as ViewStyle, layout: layout as ViewStyle };
+};
+
 export const GlassCard = React.memo(
   ({
     children,
-    style,
-    contentStyle,
+    style: callerStyle,
+    contentStyle: callerContentStyle,
     intensity = 38,
     radius = 'lg',
     forceBlur = false,
     role = 'section',
   }: GlassCardProps) => {
     const { isDark, theme, themeProgress } = useTheme();
+    const { shell: style, layout: childLayout } = React.useMemo(() => splitChildLayout(callerStyle), [callerStyle]);
+    const contentStyle = childLayout ? [childLayout, callerContentStyle] : callerContentStyle;
     // Defaulted, not asserted: several component tests mock useTheme() with a
     // partial theme object, and an undefined surfaceStyle must mean 'glass'
     // rather than throwing or silently flattening.

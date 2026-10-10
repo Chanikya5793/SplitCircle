@@ -36,7 +36,7 @@ export const SettlementCard = ({
     groupId,
 }: SettlementCardProps) => {
   const fmtMoney = useMoneyDisplay(groupId);
-  const { maskGroupText } = usePrivacyMask();
+  const { maskGroupText, maskGroupDate } = usePrivacyMask();
     const { theme } = useTheme();
     const isFlat = theme?.surfaceStyle === 'flat';
     const { pressScaleStyle, pressHighlightStyle, touchableProps } = usePressFeedback();
@@ -119,18 +119,18 @@ export const SettlementCard = ({
                         <Animated.View style={[styles.content, isFlat && styles.contentFlat, pressHighlightStyle]}>
                             <View style={styles.header}>
                                 <View style={styles.titleRow}>
-                                    <View style={styles.iconContainer}>
+                                    <View style={[styles.iconContainer, { backgroundColor: theme.colors.primaryContainer }]}>
                                         <Icon
                                             source="handshake"
-                                            size={20}
+                                            size={18}
                                             color={theme.colors.primary}
                                         />
                                     </View>
-                                    <View style={{ flex: 1 }}>
+                                    <View style={{ flex: 1, minWidth: 0 }}>
                                         <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
                                             {maskGroupText('Settlement', groupId, 'note')}
                                         </Text>
-                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                                        <Text variant="bodySmall" numberOfLines={2} style={{ color: theme.colors.onSurfaceVariant }}>
                                             {fromName} → {toName}
                                         </Text>
                                         {settlement.note && (
@@ -138,15 +138,15 @@ export const SettlementCard = ({
                                                 {maskGroupText(settlement.note, groupId, 'note')}
                                             </Text>
                                         )}
-                                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
-                                            {maskGroupText(new Date(settlement.createdAt).toLocaleDateString(), groupId)}
-                                        </Text>
                                         {isPendingSync ? <SyncBadge style={{ marginTop: 4 }} /> : null}
                                     </View>
                                 </View>
                                 <View style={styles.amountContainer}>
-                                    <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.primary }}>
+                                    <Text variant="titleMedium" numberOfLines={1} style={{ fontWeight: 'bold', color: theme.colors.primary, fontVariant: ['tabular-nums'] }}>
                                         {fmtMoney(settlement.amount, currency)}
+                                    </Text>
+                                    <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
+                                        {maskGroupDate(settlement.createdAt, groupId, (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}
                                     </Text>
                                 </View>
                             </View>
@@ -187,17 +187,19 @@ const styles = StyleSheet.create({
         flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        gap: 10,
     },
     iconContainer: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 34,
+        height: 34,
+        borderRadius: 17,
         justifyContent: 'center',
         alignItems: 'center',
     },
     amountContainer: {
         alignItems: 'flex-end',
+        marginLeft: 12,
+        gap: 2,
     },
     rightAction: {
         width: 120, // ample space for the pill

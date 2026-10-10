@@ -201,7 +201,7 @@ const styles = StyleSheet.create({
   // Tightened 12 -> 8 (2026-08-07, compact density pass).
   content: { padding: 16, paddingBottom: 48, gap: 8 },
   card: { borderRadius: 16, padding: 14 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48, marginBottom: 8 },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 10,  marginBottom: 8 },
   sectionTitle: { flex: 1 },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
   rowBody: { flex: 1 },

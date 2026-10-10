@@ -238,6 +238,7 @@ return (
         accessibilityRole="button"
         accessibilityLabel={allSelected ? 'Deselect all participants' : 'Select all participants'}
         style={styles.selectAllButton}
+        hitSlop={12}
     >
         <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>
         {allSelected ? 'Deselect All' : 'Select All'}
@@ -332,7 +333,6 @@ fontWeight: '500',
 },
 input: {
 width: 72,
-minHeight: 44,
 borderWidth: 1,
 borderRadius: 8,
 paddingHorizontal: 10,
@@ -347,9 +347,9 @@ alignItems: 'center',
 gap: 10,
 },
 shareBtn: {
-width: 44,
-height: 44,
-borderRadius: 22,
+width: 30,
+height: 30,
+borderRadius: 15,
 alignItems: 'center',
 justifyContent: 'center',
 },
@@ -364,12 +364,11 @@ minWidth: 20,
 textAlign: 'center',
 },
 selectAllButton: {
-minHeight: 44,
 justifyContent: 'center',
 },
 checkboxTarget: {
-width: 44,
-height: 44,
+width: 36,
+height: 36,
 alignItems: 'center',
 justifyContent: 'center',
 },

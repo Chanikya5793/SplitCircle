@@ -6,6 +6,8 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { GuardedScreen, ScrimBackdrop, SelectableChip } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { DecoyWriteBlockedError, decoyRecurringBill } from '@/services/duressDecoy';
 import { Group } from '@/models';
 import { BillAmountMode, BillFrequency, MonthlyPattern, RecurrenceRule, RecurringBill } from '@/models/recurringBill';
 import {
@@ -230,6 +232,13 @@ const SwipeableBillCard = ({
 };
 
 export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
+    // Duress decoy world: bills come from the service rather than useGroups,
+    // so they are disguised here, and every write is refused with the same
+    // ordinary-looking failure the screen already shows for network errors.
+    const { duress, isShielded } = usePrivacyGuard();
+    const decoyed = duress && isShielded('expenses', group.groupId);
+    const guardWrite = <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+        (...args: A): Promise<R> => (decoyed ? Promise.reject(new DecoyWriteBlockedError()) : fn(...args));
     const { theme, isDark } = useTheme();
     const { user } = useAuth();
     const insets = useSafeAreaInsets();
@@ -343,7 +352,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
             setLoading(true);
             await syncRecurringBillsForGroupWithFallback(group.groupId);
             const data = await getRecurringBillsForGroup(group.groupId);
-            setBills(data);
+            setBills(decoyed ? data.map(decoyRecurringBill) : data);
         } catch (error) {
             console.error('Error loading recurring bills:', error);
             appAlert('Could not load recurring bills', 'Pull down to try again.');
@@ -472,7 +481,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     hasRotation &&
                     existingBill?.rotation &&
                     existingBill.rotation.order.join(',') === rotationOrder.join(',');
-                await updateRecurringBill(editingBillId, group.groupId, {
+                await guardWrite(updateRecurringBill)(editingBillId, group.groupId, {
                     title: title.trim(),
                     amount: billAmount,
                     category: category.trim() || 'Other',
@@ -494,7 +503,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     isActive: existingBill?.isActive,
                 }, group.currency);
             } else {
-                await createRecurringBill({
+                await guardWrite(createRecurringBill)({
                     groupId: group.groupId,
                     title: title.trim(),
                     amount: billAmount,
@@ -561,7 +570,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
     const handleToggle = async (bill: RecurringBill) => {
         try {
             lightHaptic();
-            await toggleRecurringBillStatus(bill, !bill.isActive, group.currency);
+            await guardWrite(toggleRecurringBillStatus)(bill, !bill.isActive, group.currency);
             setBills((prev) => prev.map((entry) => (
                 entry.billId === bill.billId
                     ? { ...entry, isActive: !entry.isActive }
@@ -585,7 +594,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     text: 'Skip',
                     onPress: async () => {
                         try {
-                            await skipOccurrence(bill, bill.nextDueAt, group.currency);
+                            await guardWrite(skipOccurrence)(bill, bill.nextDueAt, group.currency);
                             lightHaptic();
                             await loadBills();
                         } catch (error) {
@@ -606,7 +615,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                 style: 'destructive',
                 onPress: async () => {
                     try {
-                        await deleteRecurringBill(bill.billId, group.groupId);
+                        await guardWrite(deleteRecurringBill)(bill.billId, group.groupId);
                         errorHaptic();
                         setBills((prev) => prev.filter((entry) => entry.billId !== bill.billId));
                     } catch (error) {
@@ -665,14 +674,11 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     contentContainerStyle={[styles.container, { paddingTop: insets.top + 60 }]}
                     showsVerticalScrollIndicator={false}
                 >
-                    <GlassView style={styles.headerCard}>
-                        <Text variant="headlineSmall" style={{ fontWeight: '700', color: theme.colors.onSurface }}>
-                            Recurring Bills
-                        </Text>
-                        <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
-                            Automate and schedule shared expenses with advanced rules.
-                        </Text>
-                    </GlassView>
+                    {/* The header pill already names the screen; a second
+                    "Recurring Bills" heading card under it just repeated it. */}
+                    <Text style={[styles.intro, { color: theme.colors.onSurfaceVariant }]}>
+                        Automate and schedule shared expenses with advanced rules.
+                    </Text>
 
                     {bills.length === 0 && !loading ? (
                         <GlassView style={styles.emptyCard}>
@@ -1177,9 +1183,8 @@ const styles = StyleSheet.create({
         padding: 16,
         paddingBottom: 120,
     },
-    headerCard: {
-        padding: 20,
-        borderRadius: 24,
+    intro: {
+        paddingHorizontal: 4,
         marginBottom: 16,
     },
     billCard: {

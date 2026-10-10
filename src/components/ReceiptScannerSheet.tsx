@@ -381,7 +381,7 @@ const GlobalSplitToggle = memo(({ title, price, config, members, theme, isExpand
         onPress={onToggleExpand}
         accessibilityLabel={isExpanded ? 'Hide item split details' : 'Show item split details'}
         accessibilityState={{ expanded: isExpanded }}
-        style={{ margin: 0, backgroundColor: isExpanded ? `${theme.colors.primary}15` : 'transparent', width: 44, height: 44 }}
+        style={{ margin: 0, backgroundColor: isExpanded ? `${theme.colors.primary}15` : 'transparent', width: 28, height: 28 }}
       />
       <Text variant="bodySmall" style={{ color: !isValid ? theme.colors.error : theme.colors.onSurfaceVariant }}>
         {activeMode === 'equal' ? `Split ${title} evenly` : (!isValid ? `Invalid custom ${title} split` : `Custom ${title} split`)}
@@ -461,7 +461,7 @@ const GlobalSplitPanel = memo(({ members, title, price, config, onUpdate, theme,
             accessibilityLabel={`${m === 'percentage' ? 'Percentage' : m.charAt(0).toUpperCase() + m.slice(1)} split`}
             accessibilityState={{ selected: activeMode === m }}
             style={{
-              flex: 1, minHeight: 44, paddingVertical: 6, alignItems: 'center', justifyContent: 'center', borderRadius: 8,
+              flex: 1, paddingVertical: 6, alignItems: 'center', justifyContent: 'center', borderRadius: 8,
               backgroundColor: activeMode === m ? theme.colors.primary : 'transparent',
               borderWidth: 1, borderColor: activeMode === m ? theme.colors.primary : theme.colors.outline,
             }}
@@ -484,7 +484,7 @@ const GlobalSplitPanel = memo(({ members, title, price, config, onUpdate, theme,
                  onFocus={() => { setTargetFocused(true); setLocalTargetShares(String(targetShares)); }}
                  onBlur={() => setTargetFocused(false)}
                  onChangeText={updateTargetSharesParam}
-                 style={{ width: 80, minHeight: 44, fontSize: 13, backgroundColor: 'transparent' }}
+                 style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
                  contentStyle={{ paddingHorizontal: 8 }}
                />
              </View>
@@ -502,7 +502,7 @@ const GlobalSplitPanel = memo(({ members, title, price, config, onUpdate, theme,
                 onBlur={() => setFocusedInput(null)}
                 onChangeText={v => updateSplitData(m.id, v)}
                 accessibilityLabel={`${m.name}, ${title}, ${activeMode === 'exact' ? `amount in ${currency}` : activeMode}`}
-                style={{ width: activeMode === 'exact' ? 120 : 80, minHeight: 44, fontSize: 13, backgroundColor: 'transparent' }}
+                style={{ width: activeMode === 'exact' ? 120 : 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
                 left={activeMode === 'exact' ? <TextInput.Affix text={currency} /> : undefined}
                 right={activeMode === 'percentage' ? <TextInput.Affix text="%" /> : undefined}
                 contentStyle={{ paddingHorizontal: 8 }}
@@ -680,7 +680,7 @@ const ItemCard = memo(({
         onPress={onToggleExpand}
         accessibilityLabel={isExpanded ? `Hide assignments for ${item.name || 'receipt item'}` : `Show assignments for ${item.name || 'receipt item'}`}
         accessibilityState={{ expanded: isExpanded }}
-        style={{ margin: 0, width: 44, height: 44, backgroundColor: isExpanded ? `${theme.colors.primary}15` : 'transparent' }}
+        style={{ margin: 0, backgroundColor: isExpanded ? `${theme.colors.primary}15` : 'transparent' }}
       />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
         {members.map(m => {
@@ -694,7 +694,7 @@ const ItemCard = memo(({
               accessibilityLabel={`Assign item to ${m.name}`}
               accessibilityState={{ checked: isAssigned }}
               style={{
-                width: 44, height: 44, borderRadius: 22,
+                width: 28, height: 28, borderRadius: 14,
                 backgroundColor: isAssigned ? theme.colors.primary : theme.colors.surfaceVariant,
                 alignItems: 'center', justifyContent: 'center',
                 borderWidth: isAssigned ? 0 : 1, borderColor: theme.colors.outline,
@@ -722,7 +722,7 @@ const ItemCard = memo(({
               accessibilityLabel={`${m === 'percentage' ? 'Percentage' : m.charAt(0).toUpperCase() + m.slice(1)} split`}
               accessibilityState={{ selected: activeMode === m }}
               style={{
-                flex: 1, minHeight: 44, paddingVertical: 6, alignItems: 'center', justifyContent: 'center', borderRadius: 8,
+                flex: 1, paddingVertical: 6, alignItems: 'center', justifyContent: 'center', borderRadius: 8,
                 backgroundColor: activeMode === m ? theme.colors.primary : 'transparent',
                 borderWidth: 1, borderColor: activeMode === m ? theme.colors.primary : theme.colors.outline,
               }}
@@ -745,7 +745,7 @@ const ItemCard = memo(({
                      onFocus={() => { setTargetFocused(true); setLocalTargetShares(String(targetShares)); }}
                      onBlur={() => setTargetFocused(false)}
                      onChangeText={updateTargetSharesParam}
-                     style={{ width: 80, minHeight: 44, fontSize: 13, backgroundColor: 'transparent' }}
+                     style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
                      contentStyle={{ paddingHorizontal: 8 }}
                    />
                  </View>
@@ -763,7 +763,7 @@ const ItemCard = memo(({
                   onBlur={() => setFocusedInput(null)}
                   onChangeText={v => updateSplitData(m.id, v)}
                   accessibilityLabel={`${m.name}, ${item.name}, ${activeMode === 'exact' ? `amount in ${currency}` : activeMode}`}
-                  style={{ width: activeMode === 'exact' ? 120 : 80, minHeight: 44, fontSize: 13, backgroundColor: 'transparent' }}
+                  style={{ width: activeMode === 'exact' ? 120 : 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
                   left={activeMode === 'exact' ? <TextInput.Affix text={currency} /> : undefined}
                   right={activeMode === 'percentage' ? <TextInput.Affix text="%" /> : undefined}
                   contentStyle={{ paddingHorizontal: 8 }}
@@ -1982,7 +1982,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    minHeight: 44,
     paddingVertical: 4,
     paddingHorizontal: 8,
   },
@@ -2008,12 +2007,12 @@ const styles = StyleSheet.create({
   itemNameInput: {
     flex: 2,
     fontSize: 14,
-    minHeight: 44,
+    height: 38,
   },
   itemPriceInput: {
     flex: 1,
     fontSize: 14,
-    minHeight: 44,
+    height: 38,
     textAlign: 'right',
   },
   itemActions: {
@@ -2023,13 +2022,11 @@ const styles = StyleSheet.create({
   },
   removeBtn: {
     margin: 0,
-    width: 44,
-    height: 44,
+    marginLeft: -4,
   },
   reviewBtn: {
     margin: 0,
-    width: 44,
-    height: 44,
+    marginRight: -4,
   },
   reviewBadge: {
     flexDirection: 'row',

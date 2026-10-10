@@ -89,3 +89,7 @@ SplitCircle*.ipa
 # inside node_modules and modules/*). Never source; also what polluted a
 # patch-package regeneration with 87KB of .bin artifacts.
 modules/*/android/build/
+
+# Local Firebase emulator state (scripts/emulators.sh)
+/.emulator-data/
+/functions/.secret.local

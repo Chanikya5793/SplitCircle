@@ -455,7 +455,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    minHeight: 48,
     paddingVertical: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
   },

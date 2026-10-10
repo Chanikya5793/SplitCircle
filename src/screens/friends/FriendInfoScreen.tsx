@@ -7,6 +7,9 @@ import { useAuth } from '@/context/AuthContext';
 import { useCallContext } from '@/context/CallContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { useTheme } from '@/context/ThemeContext';
 import { db } from '@/firebase';
 import { computeFriendBalances } from '@/utils/friendBalances';
@@ -52,6 +55,14 @@ export const FriendInfoScreen = () => {
   const { theme } = useTheme();
   const { groups } = useGroups();
   const { ensureDirectThread } = useChat();
+  // Privacy Guard: the profile is fetched fresh from the server, so it is
+  // masked here — name, photo, email, bio, the private note and the groups in
+  // common — or the duress decoy (or a friends/expenses shield) leaks them.
+  const { maskPersonName, maskGroupName, hidePhoto } = usePrivacyMask();
+  const { isShielded: guardIsShielded, duress: guardDuress } = usePrivacyGuard();
+  const personHidden = guardIsShielded('friends') || (guardDuress && guardIsShielded('expenses'));
+  const fmtMoney = useMoneyDisplay();
+  const maskAmounts = guardIsShielded('expenses') && !guardDuress;
   const { startCallSession } = useCallContext();
   const insets = useSafeAreaInsets();
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -63,10 +74,10 @@ export const FriendInfoScreen = () => {
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: resolveDisplayName({ displayName: params.displayName }, 'Friend'),
+      title: maskPersonName(resolveDisplayName({ displayName: params.displayName }, 'Friend')),
       headerTransparent: true,
     });
-  }, [navigation, params.displayName]);
+  }, [navigation, params.displayName, maskPersonName]);
 
   useEffect(() => {
     if (!params.userId) return;
@@ -115,7 +126,7 @@ export const FriendInfoScreen = () => {
   const handleGroupPress = useCallback((group: { groupId: string; name: string }) => {
     lightHaptic();
     setNavigatingGroupId(group.groupId);
-    const backTitle = resolveDisplayName(profile, resolveDisplayName({ displayName: params.displayName }, 'Friend'));
+    const backTitle = maskPersonName(resolveDisplayName(profile, resolveDisplayName({ displayName: params.displayName }, 'Friend')));
     setTimeout(() => {
       navigation.navigate(ROUTES.APP.ROOT, {
         screen: ROUTES.APP.GROUPS_TAB,
@@ -123,14 +134,14 @@ export const FriendInfoScreen = () => {
           screen: ROUTES.APP.GROUP_DETAILS,
           params: {
             groupId: group.groupId,
-            initialTitle: group.name,
+            initialTitle: maskGroupName(group.name, group.groupId),
             backTitle,
           },
         },
       });
       setNavigatingGroupId(null);
     }, 80);
-  }, [navigation, profile?.displayName, params.displayName]);
+  }, [navigation, profile?.displayName, params.displayName, maskPersonName, maskGroupName]);
 
   const sharedGroups = useMemo(
     () => groups.filter((group) => group.members?.some((m) => m.userId === params.userId)),
@@ -197,7 +208,7 @@ export const FriendInfoScreen = () => {
     }
   };
 
-  const displayName = resolveDisplayName(profile, resolveDisplayName({ displayName: params.displayName }, 'Friend'));
+  const displayName = maskPersonName(resolveDisplayName(profile, resolveDisplayName({ displayName: params.displayName }, 'Friend')));
   const initials = resolveInitials(displayName);
   // A placeholder only counts if NEITHER the live profile NOR the route param
   // carried a real name — if either did, `displayName` above is real, not a guess.
@@ -212,7 +223,7 @@ export const FriendInfoScreen = () => {
         {/* Hero card — avatar centered, name, bio, action row */}
         <GlassView role="glass" style={styles.heroCard}>
           <View style={styles.avatarWrapper}>
-            {profile?.photoURL ? (
+            {profile?.photoURL && !hidePhoto() ? (
               <Avatar.Image size={112} source={{ uri: profile.photoURL }} />
             ) : (
               <Avatar.Text
@@ -235,7 +246,7 @@ export const FriendInfoScreen = () => {
           >
             {displayName}
           </Text>
-          {profile?.email ? (
+          {profile?.email && !personHidden ? (
             <Text
               variant="bodyMedium"
               style={[styles.heroEmail, { color: theme.colors.onSurfaceVariant }]}
@@ -243,7 +254,7 @@ export const FriendInfoScreen = () => {
               {profile.email}
             </Text>
           ) : null}
-          {profile?.bio ? (
+          {profile?.bio && !personHidden ? (
             <Text
               variant="bodyMedium"
               style={[styles.heroBio, { color: theme.colors.onSurface }]}
@@ -281,7 +292,7 @@ export const FriendInfoScreen = () => {
               <List.Item title="Settled up" left={(props) => <List.Icon {...props} icon="check-circle-outline" />} />
             ) : (
               <List.Item
-                title={balanceSum > 0 ? `Owes you ${balances.map((b) => formatBalance(b.amount, b.currency)).join(' · ')}` : `You owe ${balances.map((b) => formatBalance(b.amount, b.currency)).join(' · ')}`}
+                title={`${balanceSum > 0 ? 'Owes you' : 'You owe'} ${balances.map((b) => (maskAmounts ? fmtMoney(Math.abs(b.amount), b.currency) : formatBalance(b.amount, b.currency))).join(' · ')}`}
                 titleStyle={{ color: balanceColor }}
                 left={(props) => <List.Icon {...props} icon={balanceSum > 0 ? 'cash-plus' : 'cash-minus'} color={balanceColor} />}
               />
@@ -297,8 +308,9 @@ export const FriendInfoScreen = () => {
               {noteEditing ? (
                 <TextInput
                   ref={noteInputRef}
-                  value={note}
-                  onChangeText={saveNote}
+                  value={personHidden ? '' : note}
+                  onChangeText={personHidden ? undefined : saveNote}
+                  editable={!personHidden}
                   onBlur={() => setNoteEditing(false)}
                   multiline
                   placeholder="Add a private note about this friend…"
@@ -318,11 +330,11 @@ export const FriendInfoScreen = () => {
                   <Text
                     style={[
                       styles.noteText,
-                      { color: note ? theme.colors.onSurface : theme.colors.onSurfaceVariant },
+                      { color: note && !personHidden ? theme.colors.onSurface : theme.colors.onSurfaceVariant },
                     ]}
                     numberOfLines={4}
                   >
-                    {note || 'Tap to add a private note…'}
+                    {(!personHidden && note) || 'Tap to add a private note…'}
                   </Text>
                   <View style={styles.noteEditIcon} pointerEvents="none">
                     <Icon source="pencil-outline" size={16} color={theme.colors.onSurfaceVariant} />
@@ -380,7 +392,7 @@ export const FriendInfoScreen = () => {
                 <View key={group.groupId}>
                   {index > 0 ? <Divider /> : null}
                   <List.Item
-                    title={group.name}
+                    title={maskGroupName(group.name, group.groupId)}
                     description={`${group.members?.length ?? 0} members`}
                     left={(props) => <List.Icon {...props} icon="account-group" />}
                     right={() =>

@@ -21,7 +21,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import { AppState, Platform, Settings } from 'react-native';
-import { useGroups } from '@/context/GroupContext';
+import { useRealGroups } from '@/context/GroupContext';
 import { computeSplit } from '@/utils/split';
 import { computeParticipantsFromSplitMetadata, toParticipantShares } from '@/utils/expenseSplit';
 import { serializeSplitParticipantConfig } from '@/utils/expenseSplitMetadata';
@@ -189,7 +189,9 @@ function materializeExpense(rec: QueuedExpense, group: Group) {
  * tree. Mount once (see PendingExpenseHandler in AppNavigator).
  */
 export function usePendingExpenseFlush(): void {
-  const { groups, addExpense, settleUp } = useGroups();
+  // Real data: this drains expenses the user already queued (Siri, share
+  // sheet) and renders nothing, so the duress decoy must not intercept it.
+  const { groups, addExpense, settleUp } = useRealGroups();
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
   const running = useRef(false);

@@ -162,6 +162,32 @@ const hash = (s: string): string => {
   return String(h);
 };
 
+const narrativeKey = (facts: string, deep: boolean): string =>
+  `${deep ? 'deep' : 'lite'}:${facts.length}:${hash(facts)}`;
+
+/**
+ * The narrative already produced for these facts, if any — never runs a
+ * model. Re-showing a report someone already generated is free; only a new
+ * generation counts against the insight-report allowance.
+ */
+export async function peekNarrative(
+  facts: string,
+  opts: { deep?: boolean } = {},
+): Promise<InsightNarrative | null> {
+  const key = narrativeKey(facts, opts.deep === true);
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const stored = await readStored(key);
+  if (stored) cache.set(key, stored);
+  return stored;
+}
+
+/** Whether any narrative model (on-device or Private Cloud) can run here. */
+export async function narrativeModelAvailable(): Promise<boolean> {
+  if (getOnDeviceAiAvailability() === 'available') return true;
+  return (await getPccEnabled()) && pccEligible();
+}
+
 /**
  * Narrate a facts blob. `deep: true` prefers PCC (whole-history analysis);
  * otherwise on-device is tried first. Returns null when no model is available
@@ -173,7 +199,7 @@ export async function narrateInsights(
 ): Promise<InsightNarrative | null> {
   // facts.length rides the key: with a persistent cache, a bare 32-bit hash
   // collision would show another facts blob's narrative.
-  const key = `${opts.deep ? 'deep' : 'lite'}:${facts.length}:${hash(facts)}`;
+  const key = narrativeKey(facts, opts.deep === true);
   const cached = cache.get(key);
   if (cached) return cached;
   if (nullCache.has(key)) return null;

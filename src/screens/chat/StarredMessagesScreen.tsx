@@ -45,10 +45,10 @@ export const StarredMessagesScreen = () => {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
   const { isShielded: guardIsShielded, isLockedDown: guardIsLockedDown } = usePrivacyGuard();
-  const starredShielded = guardIsShielded('chats');
+  const starredShielded = guardIsShielded('chats', params.chatId);
   // Lock copy only outside duress — in the decoy world this reads as a
   // normal empty starred list instead of advertising hidden content.
-  const starredLocked = guardIsLockedDown('chats');
+  const starredLocked = guardIsLockedDown('chats', params.chatId);
   const { threads } = useChat();
   const { user } = useAuth();
 

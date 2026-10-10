@@ -751,13 +751,13 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   closeButton: {
-    width: 44,
-    height: 44,
+    width: 34,
+    height: 34,
   },
   closeButtonContent: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -896,7 +896,6 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   pairingCancel: {
-    minHeight: 44,
     justifyContent: 'center',
     alignSelf: 'center',
     paddingHorizontal: 14,
@@ -1083,7 +1082,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   settingsButton: {
-    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
@@ -1141,8 +1139,8 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   retryButton: {
-    minHeight: 44,
-    borderRadius: 22,
+    minHeight: 40,
+    borderRadius: 20,
     paddingHorizontal: 15,
     flexDirection: 'row',
     alignItems: 'center',

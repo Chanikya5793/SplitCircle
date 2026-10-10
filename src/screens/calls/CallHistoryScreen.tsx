@@ -42,6 +42,7 @@ import { Gesture, GestureDetector, GestureHandlerRootView, Swipeable } from 'rea
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, Text, TextInput, TouchableRipple } from 'react-native-paper';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import Animated, {
     FadeIn,
     FadeOut,
@@ -131,11 +132,13 @@ const CallHistoryRow = memo(function CallHistoryRow({
   onRegister,
 }: CallHistoryRowProps) {
   const { pressScaleStyle, pressHighlightStyle, touchableProps } = usePressFeedback();
+  const { hidePhoto, maskCallerName } = usePrivacyMask();
+  const callerName = maskCallerName(resolveDisplayName(entry.otherParticipant, 'Unknown'));
   const isFlat = theme?.surfaceStyle === 'flat';
   const missed = isMissedOrDeclined(entry);
   const nameColor = missed ? theme.colors.error : theme.colors.onSurface;
   const largeText = theme.fontScale >= 1.5;
-  const initials = resolveInitials(entry.otherParticipant.displayName, 'U');
+  const initials = resolveInitials(callerName, 'U');
 
   return (
     <Swipeable
@@ -150,7 +153,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
           onPress={() => onDelete(entry.callId)}
           activeOpacity={0.7}
           accessibilityRole="button"
-          accessibilityLabel={`Delete call with ${resolveDisplayName(entry.otherParticipant, 'Unknown')}`}
+          accessibilityLabel={`Delete call with ${callerName}`}
         >
           <MaterialCommunityIcons name="delete" size={24} color={theme.colors.onDanger} />
           <Text style={[styles.deleteActionText, { color: theme.colors.onDanger }]}>Delete</Text>
@@ -192,7 +195,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
                       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                       style={styles.deleteCircle}
                       accessibilityRole="button"
-                      accessibilityLabel={`Delete call with ${resolveDisplayName(entry.otherParticipant, 'Unknown')}`}
+                      accessibilityLabel={`Delete call with ${callerName}`}
                     >
                       <MaterialCommunityIcons
                         name="minus-circle"
@@ -203,7 +206,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
                   </Animated.View>
                 )}
 
-                {entry.otherParticipant.photoURL ? (
+                {entry.otherParticipant.photoURL && !hidePhoto() ? (
                   <Avatar.Image
                     size={44}
                     source={{ uri: entry.otherParticipant.photoURL }}
@@ -226,7 +229,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
                 onLongPress={() => onLongPressRow(entry)}
                 borderless
                 accessibilityRole="button"
-                accessibilityLabel={`${resolveDisplayName(entry.otherParticipant, 'Unknown')}, ${getSubtitle(entry)}, ${formatCallTime(entry.startedAt)}`}
+                accessibilityLabel={`${callerName}, ${getSubtitle(entry)}, ${formatCallTime(entry.startedAt)}`}
                 accessibilityHint="Opens call details"
                 {...touchableProps}
               >
@@ -235,7 +238,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
                   style={[styles.callName, { color: nameColor }]}
                   numberOfLines={largeText ? 0 : 1}
                 >
-                  {resolveDisplayName(entry.otherParticipant, 'Unknown')}
+                  {callerName}
                 </Text>
                 <View style={styles.callMeta}>
                   {/* Decorative: getSubtitle() below already says "Missed
@@ -270,7 +273,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
                     // The action has a full 44-point target and an explicit name.
                     style={styles.rowActionTarget}
                     accessibilityRole="button"
-                    accessibilityLabel={`Call ${resolveDisplayName(entry.otherParticipant, 'Unknown')} back, ${entry.type === 'video' ? 'video' : 'audio'}`}
+                    accessibilityLabel={`Call ${callerName} back, ${entry.type === 'video' ? 'video' : 'audio'}`}
                   >
                     <MaterialCommunityIcons
                       name={entry.type === 'video' ? 'video-outline' : 'phone-outline'}
@@ -284,7 +287,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
                     onPress={() => onPressInfo(entry)}
                     style={styles.rowActionTarget}
                     accessibilityRole="button"
-                    accessibilityLabel={`Call details for ${resolveDisplayName(entry.otherParticipant, 'Unknown')}`}
+                    accessibilityLabel={`Call details for ${callerName}`}
                   >
                     <MaterialCommunityIcons
                       name="information-outline"
@@ -311,6 +314,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   const largeText = theme.fontScale >= 1.5;
   const insets = useSafeAreaInsets();
   const { isShielded, isLockedDown, isVanished } = usePrivacyGuard();
+  const { hidePhoto, maskCallerName } = usePrivacyMask();
   const callsShielded = isShielded('calls');
   // The New Call sheet lists conversations by name — block it whenever calls
   // OR chats are locked down so it can't reveal who you talk to. In duress the
@@ -532,7 +536,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
         { text: 'Delete from history', style: 'destructive', onPress: () => void handleDeleteCall(entry.callId) },
         { text: 'Cancel', style: 'cancel' },
       );
-      appAlert(resolveDisplayName(entry.otherParticipant, 'Call'), undefined, buttons);
+      appAlert(maskCallerName(resolveDisplayName(entry.otherParticipant, 'Call')), undefined, buttons);
     },
     [threadByChatId, onStartCall, handleOpenInfo, handleDeleteCall],
   );
@@ -688,6 +692,10 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
             <View style={styles.headerContainer}>
               {/* Title row: Edit button + "Calls" + new call icon */}
               <View style={styles.titleRow}>
+                {/* Equal-width side slots keep "Calls" centred on the screen —
+                    Edit and New-call differ in width, so a flex title between
+                    them sat visibly right of centre. */}
+                <View style={[styles.titleSide, styles.titleSideStart]}>
                 <TouchableOpacity
                   onPress={toggleEdit}
                   style={styles.editButton}
@@ -706,6 +714,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                     </Text>
                   </GlassView>
                 </TouchableOpacity>
+                </View>
 
                 <Text
                   variant="displaySmall"
@@ -715,6 +724,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                   Calls
                 </Text>
 
+                <View style={[styles.titleSide, styles.titleSideEnd]}>
                 <TouchableOpacity
                   onPress={() => {
                     lightHaptic();
@@ -734,6 +744,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                     />
                   </GlassView>
                 </TouchableOpacity>
+                </View>
               </View>
 
               {/* Filter chips: All | Missed. Shares ui/SegmentedControl with the
@@ -913,7 +924,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
 
                       return (
                         <View style={styles.sheetItem}>
-                          {photo ? (
+                          {photo && !hidePhoto() ? (
                             <Avatar.Image size={44} source={{ uri: photo }} />
                           ) : (
                             <Avatar.Text
@@ -1016,9 +1027,15 @@ const styles = StyleSheet.create({
    *  so it must yield rather than run under them at large text sizes. */
   headerTitle: {
     fontWeight: 'bold',
+    flex: 1,
     flexShrink: 1,
     textAlign: 'center',
   },
+  titleSide: {
+    width: 76,
+  },
+  titleSideStart: { alignItems: 'flex-start' },
+  titleSideEnd: { alignItems: 'flex-end' },
   /** 44pt minimum touch target for the per-row icon actions. hitSlop alone
    *  left them at 42dp and does not show up as node bounds to an audit. */
   rowActionTarget: {
@@ -1128,8 +1145,6 @@ const styles = StyleSheet.create({
   },
   deleteCircle: {
     marginRight: 2,
-    minWidth: 44,
-    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1299,8 +1314,6 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   sheetCallBtn: {
-    minWidth: 44,
-    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },

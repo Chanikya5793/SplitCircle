@@ -115,12 +115,12 @@ const styles = StyleSheet.create({
     zIndex: 100,
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  button: { width: 44, height: 44, borderRadius: 22, overflow: 'hidden' },
+  button: { width: 40, height: 40, borderRadius: 20, overflow: 'hidden' },
   buttonGlass: { flex: 1, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   searchGlass: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 44,
+    height: 40,
     borderRadius: 20,
     overflow: 'hidden',
     paddingRight: 8,
@@ -139,7 +139,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   navCluster: { flexDirection: 'row', gap: 4 },
-  navButton: { width: 44, height: 44, borderRadius: 22, overflow: 'hidden' },
+  navButton: { width: 36, height: 40, borderRadius: 18, overflow: 'hidden' },
   navGlass: { flex: 1, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
 });
 

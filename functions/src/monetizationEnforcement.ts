@@ -10,6 +10,7 @@ import * as logger from "firebase-functions/logger";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import {
+    CLIENT_AUTHORIZED_FEATURE_IDS,
     METERED_FEATURES,
     MONETIZATION_SCHEMA_VERSION,
     type ExecutionRoute,
@@ -164,7 +165,9 @@ export function sanitizeAuthorizeMonetizedOperationInput(
         outcome: "completed",
         app: input.app,
     });
-    if (usage.featureId !== "advanced_split.completion") {
+    // Provider-backed features are authorized by the callable that performs
+    // the provider work, never by a client reservation it could leave unused.
+    if (!CLIENT_AUTHORIZED_FEATURE_IDS.includes(usage.featureId)) {
         throw new MonetizationInputError(
             "FEATURE_NOT_ENFORCED",
             "This feature is not enabled for commercial authorization.",
@@ -488,6 +491,38 @@ function releaseWindowReservation(
     }, { merge: true });
 }
 
+/** UTC calendar day used to bucket completed operations for the usage page. */
+export function usageDayKey(nowMs: number): string {
+    return new Date(nowMs).toISOString().slice(0, 10);
+}
+
+/** Firestore map keys cannot hold the catalog's dotted ids unambiguously. */
+export function usageCountKey(featureId: string): string {
+    return featureId.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+/**
+ * Per-day totals of completed operations, independent of plan windows, so
+ * the usage page can chart activity across plan changes. Increment-only, so it
+ * needs no read inside the finalizing transaction.
+ */
+function recordDailyUsage(
+    transaction: Transaction,
+    usageRef: DocumentReference,
+    featureId: MeteredFeatureId,
+    creditsSpent: number,
+    nowMs: number,
+): void {
+    const day = usageDayKey(nowMs);
+    transaction.set(usageRef.collection("usageDays").doc(day), {
+        schemaVersion: MONETIZATION_SCHEMA_VERSION,
+        day,
+        counts: { [usageCountKey(featureId)]: FieldValue.increment(1) },
+        ...(creditsSpent > 0 ? { creditsSpent: FieldValue.increment(creditsSpent) } : {}),
+        updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+}
+
 export async function finalizeReservationInTransaction(params: {
     transaction: Transaction;
     db: Firestore;
@@ -559,6 +594,9 @@ export async function finalizeReservationInTransaction(params: {
         ]);
         const completed = params.outcome === "completed";
         releaseWindowReservation(transaction, windowRef, windowSnapshot?.data(), completed);
+        if (completed) {
+            recordDailyUsage(transaction, usageRef, reservation.featureId, reservation.creditCost, params.nowMs);
+        }
 
         if (previewRef) {
             if (previewSnapshot?.data()?.authorizationId === reservation.authorizationId) {
@@ -667,6 +705,74 @@ export const finalizeMonetizedOperation = onCall(
         }
     },
 );
+
+/** Thrown by provider callables when the caller's included uses ran out. */
+export function quotaExhaustedError(decision: MonetizedOperationAuthorization): HttpsError {
+    const feature = METERED_FEATURES[decision.featureId];
+    return new HttpsError(
+        "resource-exhausted",
+        `You've used all your included ${feature.unit.other} for now.`,
+        { reasonCode: decision.reasonCode, monetization: decision },
+    );
+}
+
+/**
+ * Reserve one use of a provider-backed feature from inside the callable that
+ * performs it. `operationKey` must be stable for one logical attempt so a
+ * retried request returns the original decision instead of charging twice.
+ */
+export async function authorizeServerMeteredOperation(params: {
+    uid: string;
+    environment: MonetizationEnvironment;
+    access: InternalTestAccess;
+    featureId: MeteredFeatureId;
+    operationKey: string;
+    useCredits: boolean;
+    nowMs?: number;
+    db?: Firestore;
+}): Promise<MonetizedOperationAuthorization> {
+    const feature = METERED_FEATURES[params.featureId];
+    if (feature.enforcement !== "server_internal") {
+        throw new Error(`${params.featureId} is not a server-internal feature.`);
+    }
+    await ensureMonetizationAccount({ uid: params.uid, environment: params.environment, db: params.db });
+    return authorizeInTransaction({
+        db: params.db ?? getFirestore(),
+        uid: params.uid,
+        environment: params.environment,
+        access: params.access,
+        input: {
+            operationId: params.operationKey,
+            featureId: params.featureId,
+            executionRoute: "provider",
+            useCredits: params.useCredits,
+        },
+        nowMs: params.nowMs ?? Date.now(),
+    });
+}
+
+/** Completes or releases a reservation made by authorizeServerMeteredOperation. */
+export async function finalizeServerMeteredOperation(params: {
+    uid: string;
+    environment: MonetizationEnvironment;
+    authorization: MonetizedOperationAuthorization;
+    operationKey: string;
+    outcome: FinalOutcome;
+    nowMs?: number;
+    db?: Firestore;
+}): Promise<FinalizeMonetizedOperationResult | null> {
+    if (!params.authorization.allowed || !params.authorization.authorizationId) return null;
+    return finalizeReservation({
+        db: params.db ?? getFirestore(),
+        accountId: accountDocumentId(params.environment, params.uid),
+        reservationId: params.authorization.authorizationId,
+        expectedAuthorizationId: params.authorization.authorizationId,
+        expectedOperationDigest: operationDigest(params.operationKey),
+        outcome: params.outcome,
+        nowMs: params.nowMs ?? Date.now(),
+        allowExpiredRelease: params.outcome !== "completed",
+    });
+}
 
 /** Support tooling and the scheduled reaper share this fail-safe release path. */
 export async function releaseMonetizationReservation(params: {

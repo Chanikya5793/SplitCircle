@@ -26,6 +26,9 @@ export const SelectableChip = ({
   return (
     <Pressable
       onPress={disabled ? undefined : onPress}
+      // The pill is drawn at the compact size the chips it replaced used;
+      // the slop keeps the touch target at 44pt without the 44pt look.
+      hitSlop={5}
       accessibilityRole={accessibilityRole}
       accessibilityLabel={label}
       accessibilityState={accessibilityRole === 'radio' || accessibilityRole === 'checkbox'
@@ -67,7 +70,7 @@ export const SelectableChip = ({
 
 const styles = StyleSheet.create({
   chip: {
-    minHeight: 44,
+    minHeight: 34,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

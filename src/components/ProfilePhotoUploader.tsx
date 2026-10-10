@@ -26,6 +26,8 @@ export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhot
   const { theme } = useTheme();
   const [uploading, setUploading] = useState(false);
   const [localUri, setLocalUri] = useState<string | null>(null);
+  // ~38% of the avatar: 24pt on the 64pt Settings hero, 30pt on an 80pt one.
+  const badgeSize = Math.max(22, Math.round(size * 0.38));
 
   const photoUrl = localUri || user?.photoURL;
   const initials = (() => {
@@ -132,9 +134,18 @@ export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhot
           pointerEvents="none"
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
-          style={[styles.editBadge, { backgroundColor: theme.colors.primary }]}
+          style={[
+            styles.editBadge,
+            {
+              width: badgeSize,
+              height: badgeSize,
+              borderRadius: badgeSize / 2,
+              backgroundColor: theme.colors.primary,
+              borderColor: theme.colors.surface,
+            },
+          ]}
         >
-          <Icon source="camera" size={16} color={theme.colors.onPrimary} />
+          <Icon source="camera" size={Math.round(badgeSize * 0.5)} color={theme.colors.onPrimary} />
         </View>
       )}
     </View>
@@ -159,13 +170,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  // Sized to the avatar (see badgeSize) with a ring in the surface colour, so
+  // it reads as a badge on the photo instead of covering the initials.
   editBadge: {
     position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    bottom: -2,
+    right: -2,
+    borderWidth: 2,
     justifyContent: 'center',
     alignItems: 'center',
   },

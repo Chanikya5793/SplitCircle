@@ -186,6 +186,7 @@ describeWithEmulator("Apple entitlement and credit ledger", () => {
             uid: notificationUid,
             environment: "sandbox",
             db,
+            nowMs: NOW_MS,
         });
         expect(sandbox).toMatchObject({
             appAccountToken: production.appAccountToken,
@@ -326,6 +327,7 @@ describeWithEmulator("Apple entitlement and credit ledger", () => {
             uid: orderingUid,
             environment: "sandbox",
             db,
+            nowMs: NOW_MS + 5_000,
         });
         expect(account).toMatchObject({
             planId: "max",

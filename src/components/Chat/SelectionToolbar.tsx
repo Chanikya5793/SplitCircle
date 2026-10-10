@@ -86,19 +86,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   iconBtn: {
-    width: 44,
-    height: 44,
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
   count: { flex: 1, fontSize: 16, fontWeight: '600', marginLeft: 4 },
   actionsRow: { flexDirection: 'row', gap: 4 },
   actionBtn: {
-    width: 44,
-    height: 44,
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 22,
+    borderRadius: 18,
   },
 });
 

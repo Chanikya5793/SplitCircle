@@ -2764,6 +2764,8 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   );
 };
 
+const COMPOSER_RADIUS = 22;
+
 const styles = StyleSheet.create({
   dropOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -2839,8 +2841,10 @@ const styles = StyleSheet.create({
     flex: 1,
     // Container padding controls inner space around the text input
     padding: 0,
-    // Larger radius makes the composer pill feel more touch-friendly
-    borderRadius: 50,
+    // Half the 44pt single-line height: a full pill at one line that becomes
+    // a rounded rectangle as the message wraps. A fixed 50 kept the pill ends
+    // on a 3-line box and sliced the corners off the first and last lines.
+    borderRadius: COMPOSER_RADIUS,
   },
   input: {
     backgroundColor: 'transparent',
@@ -2859,7 +2863,7 @@ const styles = StyleSheet.create({
   },
   composerAnimated: {
     flex: 1,
-    borderRadius: 50,
+    borderRadius: COMPOSER_RADIUS,
     overflow: 'hidden',
   },
   sendButton: {
@@ -2944,14 +2948,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   headerBackButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     overflow: 'hidden',
   },
   headerBackButtonGlass: {
     flex: 1,
-    borderRadius: 22,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2978,7 +2982,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   balancePillContent: {
-    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
@@ -2991,7 +2994,6 @@ const styles = StyleSheet.create({
     maxWidth: '88%',
   },
   nearbyPillContent: {
-    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
@@ -3026,14 +3028,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   headerCallButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     overflow: 'hidden',
   },
   headerCallButtonGlass: {
     flex: 1,
-    borderRadius: 22,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3044,7 +3046,7 @@ const styles = StyleSheet.create({
   replyPreview: {
     paddingVertical: 8,
     paddingHorizontal: 12,
-    paddingRight: 52,
+    paddingRight: 40,
     borderRadius: 12,
     borderLeftWidth: 3,
   },
@@ -3052,10 +3054,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 8,
     top: '50%',
-    transform: [{ translateY: -22 }],
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    transform: [{ translateY: -16 }],
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3068,9 +3070,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 16,
     bottom: 90,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 4,

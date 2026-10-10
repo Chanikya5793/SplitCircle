@@ -44,6 +44,7 @@ export const ReactionsRow = ({
         onPress={onPress}
         disabled={!onPress}
         style={styles.target}
+        hitSlop={10}
         accessibilityRole="button"
         accessibilityLabel={`${total} reaction${total === 1 ? '' : 's'}: ${reactionSummary}. Show reaction details`}
         accessibilityState={{ selected: Boolean(minePresent), disabled: !onPress }}
@@ -64,13 +65,12 @@ export const ReactionsRow = ({
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    marginTop: -22,
+    marginTop: -10,
     zIndex: 1,
   },
   alignLeft: { justifyContent: 'flex-start', paddingLeft: 4 },
   alignRight: { justifyContent: 'flex-end', paddingRight: 4 },
   target: {
-    minHeight: 44,
     justifyContent: 'center',
   },
   chip: {

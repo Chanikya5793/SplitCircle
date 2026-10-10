@@ -37,6 +37,7 @@ export const ROUTES = {
     ASK_AI: 'AskAi',
     SETTINGS: 'Settings',
     PLANS_AND_CREDITS: 'PlansAndCredits',
+    USAGE: 'Usage',
     NOTIFICATION_SETTINGS: 'NotificationSettings',
     OFFLINE_SYNC: 'OfflineSync',
     NEARBY_MESH: 'NearbyMesh',

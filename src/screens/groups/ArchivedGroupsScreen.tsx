@@ -10,6 +10,7 @@ import { FloatingDetailHeader, floatingDetailHeaderHeight } from '@/components/u
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import type { Group } from '@/models';
 import { unarchiveGroup } from '@/services/archiveService';
@@ -36,9 +37,11 @@ export const ArchivedGroupsScreen = () => {
   }, [navigation]);
 
   const archivedIds = useMemo(() => new Set(user?.archivedGroupIds ?? []), [user?.archivedGroupIds]);
+  // Vanished groups stay out of here too, as on the main list.
+  const { isVanished } = usePrivacyGuard();
   const archivedGroups = useMemo(
-    () => groups.filter((g) => archivedIds.has(g.groupId)),
-    [groups, archivedIds],
+    () => groups.filter((g) => archivedIds.has(g.groupId) && !isVanished('expenses', g.groupId)),
+    [groups, archivedIds, isVanished],
   );
 
   const handleOpenGroup = (group: Group) => {

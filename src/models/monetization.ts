@@ -43,9 +43,24 @@ export interface MonetizationPlanDefinition {
   storefrontStatus: 'not_for_sale' | 'research_only' | 'for_sale' | 'storefront';
 }
 
+/** Feature ids the app can reserve itself (the work runs on this device). */
+export type ClientMeteredFeatureId =
+  | 'advanced_split.completion'
+  | 'ai.expense_on_device_turn'
+  | 'insights.advanced_report';
+
+/** Feature ids metered inside the server callable that does the work. */
+export type ServerMeteredFeatureId = 'provider.security_check' | 'provider.manual_monitor_run';
+
+export type MeteredFeatureId = ClientMeteredFeatureId | ServerMeteredFeatureId;
+
 export interface MonetizationFeatureDefinition {
   id: string;
+  /** Short user-facing name. Older catalogs used a technical description. */
   label: string;
+  /** Nouns for one completed use; absent on older catalogs. */
+  unit?: { one: string; other: string };
+  enforcement?: 'client_authorized' | 'server_internal';
   quotaKey: string;
   costClass: MonetizationCostClass;
   allowedExecutionRoutes: MonetizationExecutionRoute[];
@@ -548,3 +563,111 @@ export const isFinalizeMonetizedOperationResult = (
   && Number.isInteger(value.creditBalance)
   && (value.creditBalance as number) >= 0
   && isFiniteNumber(value.serverTime);
+
+export interface MonetizationFeatureUsage {
+  featureId: MeteredFeatureId;
+  label: string;
+  unit: { one: string; other: string };
+  rule: MonetizationQuotaRule;
+  used: number;
+  reserved: number;
+  limit: number | null;
+  remaining: number | null;
+  windowStartMs: number | null;
+  resetsAt: number | null;
+  creditCost: number | null;
+  previews: { variant: string; claimed: boolean }[] | null;
+}
+
+export interface MonetizationUsageDay {
+  /** UTC calendar day, YYYY-MM-DD. */
+  day: string;
+  counts: Partial<Record<MeteredFeatureId, number>>;
+  creditsSpent: number;
+}
+
+export interface MonetizationCreditLedgerItem {
+  id: string;
+  type: string;
+  status: string;
+  creditDelta: number;
+  balanceAfter: number | null;
+  featureId: MeteredFeatureId | null;
+  productId: string | null;
+  createdAt: number | null;
+}
+
+export interface MonetizationUsageSummary {
+  schemaVersion: 1;
+  serverTime: number;
+  environment: MonetizationEnvironment;
+  planId: MonetizationPlanId;
+  validUntil: number | null;
+  creditBalance: number;
+  creditDebt: number;
+  access: {
+    kind: 'standard' | 'internal_test';
+    commercialQuotaBypass: boolean;
+    grantExpiresAt: number | null;
+  };
+  features: MonetizationFeatureUsage[];
+  daily: MonetizationUsageDay[];
+  ledger: MonetizationCreditLedgerItem[];
+}
+
+const isNonNegativeInteger = (value: unknown): value is number =>
+  Number.isInteger(value) && (value as number) >= 0;
+
+const isNullableFinite = (value: unknown): boolean => value === null || isFiniteNumber(value);
+
+const isFeatureUsage = (value: unknown): value is MonetizationFeatureUsage => isRecord(value)
+  && typeof value.featureId === 'string'
+  && typeof value.label === 'string'
+  && isRecord(value.unit)
+  && typeof value.unit.one === 'string'
+  && typeof value.unit.other === 'string'
+  && isQuotaRule(value.rule)
+  && isNonNegativeInteger(value.used)
+  && isNonNegativeInteger(value.reserved)
+  && (value.limit === null || isNonNegativeInteger(value.limit))
+  && (value.remaining === null || isNonNegativeInteger(value.remaining))
+  && isNullableFinite(value.windowStartMs)
+  && isNullableFinite(value.resetsAt)
+  && (value.creditCost === null || isNonNegativeInteger(value.creditCost))
+  && (value.previews === null || (Array.isArray(value.previews) && value.previews.every(
+    (preview) => isRecord(preview) && typeof preview.variant === 'string' && typeof preview.claimed === 'boolean',
+  )));
+
+const isUsageDay = (value: unknown): value is MonetizationUsageDay => isRecord(value)
+  && typeof value.day === 'string'
+  && /^\d{4}-\d{2}-\d{2}$/.test(value.day)
+  && isRecord(value.counts)
+  && Object.values(value.counts).every(isNonNegativeInteger)
+  && isNonNegativeInteger(value.creditsSpent);
+
+const isLedgerItem = (value: unknown): value is MonetizationCreditLedgerItem => isRecord(value)
+  && typeof value.id === 'string'
+  && typeof value.type === 'string'
+  && typeof value.status === 'string'
+  && Number.isInteger(value.creditDelta)
+  && isNullableFinite(value.balanceAfter)
+  && (value.featureId === null || typeof value.featureId === 'string')
+  && (value.productId === null || typeof value.productId === 'string')
+  && isNullableFinite(value.createdAt);
+
+export const isMonetizationUsageSummary = (value: unknown): value is MonetizationUsageSummary =>
+  isRecord(value)
+  && value.schemaVersion === MONETIZATION_SCHEMA_VERSION
+  && isFiniteNumber(value.serverTime)
+  && isEnvironment(value.environment)
+  && isMonetizationPlanId(value.planId)
+  && isNullableFinite(value.validUntil)
+  && isNonNegativeInteger(value.creditBalance)
+  && isNonNegativeInteger(value.creditDebt)
+  && isRecord(value.access)
+  && (value.access.kind === 'standard' || value.access.kind === 'internal_test')
+  && typeof value.access.commercialQuotaBypass === 'boolean'
+  && isNullableFinite(value.access.grantExpiresAt)
+  && Array.isArray(value.features) && value.features.every(isFeatureUsage)
+  && Array.isArray(value.daily) && value.daily.every(isUsageDay)
+  && Array.isArray(value.ledger) && value.ledger.every(isLedgerItem);

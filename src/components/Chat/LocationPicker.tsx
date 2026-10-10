@@ -1225,7 +1225,6 @@ const styles = StyleSheet.create({
   mapKindCard: {},
   mapKindContent: { flexDirection: 'row', padding: 3, gap: 2 },
   mapKindItem: {
-    minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 12,
     borderRadius: 999,
@@ -1249,7 +1248,6 @@ const styles = StyleSheet.create({
   sheetCard: { flex: 1 },
   sheetContent: { flex: 1, paddingHorizontal: 16 },
   grabZone: {
-    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     marginHorizontal: -16,

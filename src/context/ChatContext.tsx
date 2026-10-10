@@ -1,3 +1,5 @@
+import { DecoyWriteBlockedError } from '@/services/duressDecoy';
+import { isDuressDecoyActive } from '@/services/privacyGuardService';
 import { db } from '@/firebase';
 import type { ChatMessage, ChatParticipant, ChatThread, ForwardedFrom, MediaMetadata, MessageType, PinnedMessageRef } from '@/models';
 import {
@@ -1636,6 +1638,10 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       if (existing) {
         return existing.chatId;
       }
+      // Creating the thread writes the caller's participant names. In the
+      // Privacy Guard duress world those are the decoy names, and the doc is
+      // shared with every member — so nothing is created there.
+      if (isDuressDecoyActive()) throw new DecoyWriteBlockedError();
 
       // DETERMINISTIC, not a fresh uuid. Two members opening a chat-less group
       // at the same moment each minted their own id and created a SEPARATE
@@ -1683,6 +1689,8 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
       const existing = threads.find((thread) => thread.chatId === chatId);
       if (existing) return chatId;
+      // See ensureGroupThread: no first write with decoy names under duress.
+      if (isDuressDecoyActive()) throw new DecoyWriteBlockedError();
 
       // SANITIZED HERE, not at the call sites. Firestore throws on an
       // `undefined` field value, and `photoURL` is optional — so a participant

@@ -9,7 +9,10 @@ import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useCallContext } from '@/context/CallContext';
 import { useChat } from '@/context/ChatContext';
-import { useGroups } from '@/context/GroupContext';
+import { useGroups, useRealGroups } from '@/context/GroupContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { useTheme } from '@/context/ThemeContext';
 import { usePressFeedback } from '@/hooks/usePressFeedback';
 import type { GroupMember } from '@/models';
@@ -25,6 +28,7 @@ import {
 import { computeFriendBalances, type CurrencyAmount } from '@/utils/friendBalances';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { resolveDisplayName, resolveInitials } from '@/utils/identity';
+import { formatCurrency } from '@/utils/currency';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
@@ -38,16 +42,30 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface FriendRow {
   friend: Friend;
+  /** What the screen shows — disguised while the Privacy Guard says so. */
   displayName: string;
+  /** The real name, for writes only (chat participants). Never rendered. */
+  realName: string;
   photoURL?: string;
   balances: CurrencyAmount[];
 }
 
 const formatBalance = (amount: number, currency: string): string => {
   const abs = Math.abs(amount);
-  // Two decimal places only for sub-$10 amounts; otherwise integer for cleanliness.
-  const formatted = abs >= 10 ? abs.toFixed(0) : abs.toFixed(2);
-  return `${currency} ${formatted}`;
+  // Whole units from 10 up keeps the row short; below that the cents matter.
+  // Locale-formatted with the currency's own symbol ("₹14,958", "$13") — the
+  // old "INR 14958" had neither a symbol nor digit grouping.
+  if (abs < 10) return formatCurrency(abs, currency);
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 0,
+      minimumFractionDigits: 0,
+    }).format(Math.round(abs));
+  } catch {
+    return formatCurrency(abs, currency);
+  }
 };
 
 const compareLastInteraction = (a: FriendRow, b: FriendRow): number => {
@@ -124,7 +142,16 @@ export const FriendsScreen = () => {
   const { user } = useAuth();
   const { theme } = useTheme();
   const { pressHighlightStyle, touchableProps } = usePressFeedback();
+  // Names come from the REAL groups and go through maskPersonName (so a friend
+  // reads the same as in every group, and nothing is masked twice); balances
+  // come from useGroups, which in the duress decoy world is already the scaled
+  // decoy ledger, so they add up to what the group screens show.
   const { groups } = useGroups();
+  const { groups: realGroups } = useRealGroups();
+  const { duress: guardDuress, isShielded: guardIsShielded } = usePrivacyGuard();
+  const { maskPersonName, hidePhoto } = usePrivacyMask();
+  const fmtMoney = useMoneyDisplay();
+  const maskAmounts = guardIsShielded('expenses') && !guardDuress;
   const { ensureDirectThread } = useChat();
   const { startCallSession } = useCallContext();
   const insets = useSafeAreaInsets();
@@ -167,20 +194,20 @@ export const FriendsScreen = () => {
   // intact — exactly the inconsistency we're closing.
   const memberLookup = useMemo(() => {
     const map = new Map<string, GroupMember>();
-    for (const group of groups) {
+    for (const group of realGroups) {
       for (const member of group.members ?? []) {
         if (!map.has(member.userId)) map.set(member.userId, member);
       }
     }
     // Archived members are a fallback only — never overwrite an active
     // membership which has fresher displayName/photo.
-    for (const group of groups) {
+    for (const group of realGroups) {
       for (const member of group.archivedMembers ?? []) {
         if (!map.has(member.userId)) map.set(member.userId, member);
       }
     }
     return map;
-  }, [groups]);
+  }, [realGroups]);
 
   const balanceMap = useMemo(
     () => (user?.userId ? computeFriendBalances(user.userId, groups) : {}),
@@ -194,16 +221,18 @@ export const FriendsScreen = () => {
       // folded into memberLookup) > the snapshot stored on the friend record
       // itself > a final last-resort label so we never render the literal
       // string "Friend" as a name.
-      const displayName = resolveDisplayName(member, resolveDisplayName(friend, 'Removed user'));
-      const photoURL = member?.photoURL || friend.photoURL;
+      const realName = resolveDisplayName(member, resolveDisplayName(friend, 'Removed user'));
+      const displayName = maskPersonName(realName);
+      const photoURL = hidePhoto() ? undefined : member?.photoURL || friend.photoURL;
       return {
         friend,
         displayName,
+        realName,
         photoURL,
         balances: balanceMap[friend.userId] ?? [],
       };
     });
-  }, [friends, memberLookup, balanceMap]);
+  }, [friends, memberLookup, balanceMap, maskPersonName, hidePhoto]);
 
   // Opportunistically refresh the denormalized snapshot on the friend record
   // whenever we see fresher info from a current group. Runs at most once per
@@ -211,6 +240,9 @@ export const FriendsScreen = () => {
   const lastSnapshotRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     if (!user?.userId) return;
+    // In the duress decoy world the group members are disguised — writing
+    // them back would store fake names on the real friend records.
+    if (guardDuress) return;
     for (const row of rows) {
       const live = memberLookup.get(row.friend.userId);
       const liveName = live?.displayName?.trim();
@@ -231,7 +263,7 @@ export const FriendsScreen = () => {
         photoURL: livePhoto,
       });
     }
-  }, [rows, memberLookup, user?.userId]);
+  }, [rows, memberLookup, user?.userId, guardDuress]);
 
   const sections = useMemo(() => {
     const pinned: FriendRow[] = [];
@@ -270,7 +302,8 @@ export const FriendsScreen = () => {
     try {
       const chatId = await ensureDirectThread({
         userId: row.friend.userId,
-        displayName: row.displayName,
+        // Real name: this may create the chat doc both people share.
+        displayName: row.realName,
         photoURL: row.photoURL,
         status: 'online',
       });
@@ -301,7 +334,8 @@ export const FriendsScreen = () => {
     try {
       const chatId = await ensureDirectThread({
         userId: row.friend.userId,
-        displayName: row.displayName,
+        // Real name: this may create the chat doc both people share.
+        displayName: row.realName,
         photoURL: row.photoURL,
         status: 'online',
       });
@@ -357,7 +391,9 @@ export const FriendsScreen = () => {
         : theme.colors.moneyNegative;
     const balanceText = row.balances.length === 0
       ? 'Settled up'
-      : row.balances.map((b) => formatBalance(b.amount, b.currency)).join(' · ');
+      : row.balances
+        .map((b) => (maskAmounts ? fmtMoney(Math.abs(b.amount), b.currency) : formatBalance(b.amount, b.currency)))
+        .join(' · ');
 
     return (
       <SwipeableFriendRow
@@ -410,7 +446,7 @@ export const FriendsScreen = () => {
               <Text variant="titleMedium" style={[styles.rowName, { color: theme.colors.onSurface }]} numberOfLines={1}>
                 {row.displayName}
               </Text>
-              <Text variant="bodySmall" style={[styles.rowSub, { color: balanceColor }]} numberOfLines={1}>
+              <Text variant="bodySmall" style={[styles.rowSub, { color: balanceColor }]} numberOfLines={2}>
                 {sum > 0 ? `Owes you ${balanceText}` : sum < 0 ? `You owe ${balanceText}` : balanceText}
               </Text>
             </View>
@@ -419,18 +455,21 @@ export const FriendsScreen = () => {
               <IconButton
                 icon={row.friend.isPinned ? 'pin' : 'pin-outline'}
                 size={20}
+                style={styles.rowIconButton}
                 onPress={() => togglePin(row)}
                 accessibilityLabel={row.friend.isPinned ? 'Unpin friend' : 'Pin friend'}
               />
               <IconButton
                 icon="phone"
                 size={20}
+                style={styles.rowIconButton}
                 onPress={() => callFriend(row, 'audio')}
                 accessibilityLabel="Audio call"
               />
               <IconButton
                 icon="video"
                 size={20}
+                style={styles.rowIconButton}
                 onPress={() => callFriend(row, 'video')}
                 accessibilityLabel="Video call"
               />
@@ -453,6 +492,45 @@ export const FriendsScreen = () => {
     );
   };
 
+  const friendList = (
+    <Animated.ScrollView
+      contentContainerStyle={[
+        styles.container,
+        { paddingTop: insets.top + TRANSPARENT_HEADER_CLEARANCE, paddingBottom: bottomPadding },
+      ]}
+      onScroll={Animated.event(
+        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+        { useNativeDriver: true },
+      )}
+      scrollEventThrottle={16}
+    >
+      <View style={styles.headerContainer}>
+        <Text variant="displaySmall" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+          Friends
+        </Text>
+        {/* Same on-device computation as the Expenses screen — see
+            components/BalanceHeadline. */}
+        <BalanceHeadline style={{ marginTop: 8 }} />
+      </View>
+
+      {rows.length === 0 && !loading ? (
+        <GlassView style={styles.emptyCard}>
+          <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>No friends yet</Text>
+          <Text style={[styles.emptyBody, { color: theme.colors.onSurfaceVariant }]}>
+            People appear here after you share a group or split an expense with them.
+          </Text>
+        </GlassView>
+      ) : (
+        <>
+          {renderSection('Pinned', sections.pinned)}
+          {renderSection('Owes you', sections.owesYou)}
+          {renderSection('You owe', sections.youOwe)}
+          {renderSection('Settled up', sections.settled)}
+        </>
+      )}
+    </Animated.ScrollView>
+  );
+
   return (
     <LiquidBackground>
       <Animated.View
@@ -465,55 +543,14 @@ export const FriendsScreen = () => {
         </StickyHeaderPill>
       </Animated.View>
 
+      {/* Duress: the list renders — names, photos and balances below are all
+      disguised (maskPersonName / decoy ledger), and an empty Friends page next
+      to groups full of people would contradict the decoy world. */}
       <Shield
         target="friends"
-        duressFallback={
-          <View style={[styles.container, { paddingTop: insets.top + TRANSPARENT_HEADER_CLEARANCE, flex: 1, justifyContent: 'center' }]}>
-            <GlassView style={styles.emptyCard}>
-              <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>No friends yet</Text>
-              <Text style={[styles.emptyBody, { color: theme.colors.onSurfaceVariant }]}>
-                People appear here after you share a group or split an expense with them.
-              </Text>
-            </GlassView>
-          </View>
-        }
+        duressFallback={friendList}
       >
-      <Animated.ScrollView
-        contentContainerStyle={[
-          styles.container,
-          { paddingTop: insets.top + TRANSPARENT_HEADER_CLEARANCE, paddingBottom: bottomPadding },
-        ]}
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: true },
-        )}
-        scrollEventThrottle={16}
-      >
-        <View style={styles.headerContainer}>
-          <Text variant="displaySmall" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-            Friends
-          </Text>
-          {/* Same on-device computation as the Expenses screen — see
-              components/BalanceHeadline. */}
-          <BalanceHeadline style={{ marginTop: 8 }} />
-        </View>
-
-        {rows.length === 0 && !loading ? (
-          <GlassView style={styles.emptyCard}>
-            <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>No friends yet</Text>
-            <Text style={[styles.emptyBody, { color: theme.colors.onSurfaceVariant }]}>
-              People appear here after you share a group or split an expense with them.
-            </Text>
-          </GlassView>
-        ) : (
-          <>
-            {renderSection('Pinned', sections.pinned)}
-            {renderSection('Owes you', sections.owesYou)}
-            {renderSection('You owe', sections.youOwe)}
-            {renderSection('Settled up', sections.settled)}
-          </>
-        )}
-      </Animated.ScrollView>
+      {friendList}
       </Shield>
     </LiquidBackground>
   );
@@ -579,6 +616,11 @@ const styles = StyleSheet.create({
   rowActions: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  // Paper's default 6pt margin around each 40pt button took 156pt from three
+  // of them, cutting names to "Alexandria Mo…". The 40pt target stays.
+  rowIconButton: {
+    margin: 0,
   },
   rowActionContainer: {
     flexDirection: 'row',

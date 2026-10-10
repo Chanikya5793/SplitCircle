@@ -554,28 +554,27 @@ export const SettingsScreen = () => {
           </View>
         </GlassCard>
 
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.xs }}>
-          {[
-            ['Appearance', SETTING_IDS.appearance],
-            ['Privacy', SETTING_IDS.appLock],
-            ['Data & devices', SETTING_IDS.linkedDevices],
-            ['AI', SETTING_IDS.onDeviceAi],
-          ].map(([label, id]) => (
-            <Button key={id} mode="text" contentStyle={{ minHeight: 44 }} onPress={() => scrollToAnchor(id)}>
-              {label}
-            </Button>
-          ))}
-        </View>
-
         <SectionLabel style={styles.sectionLabel}>Account & spending</SectionLabel>
         <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           <ListRow inset={rowInset}
             title="Plans & credits"
-            subtitle="Included uses, Mana Credits & account access"
+            subtitle="Subscriptions and Mana Credits"
             icon="wallet-outline"
             onPress={() => {
               lightHaptic();
               (navigation as any).navigate(ROUTES.APP.PLANS_AND_CREDITS, {
+                backTitle: ROOT_SCREEN_TITLES.settings,
+              });
+            }}
+          />
+          {divider}
+          <ListRow inset={rowInset}
+            title="Usage & limits"
+            subtitle="What you've used and when it resets"
+            icon="chart-timeline-variant"
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate(ROUTES.APP.USAGE, {
                 backTitle: ROOT_SCREEN_TITLES.settings,
               });
             }}
@@ -983,6 +982,8 @@ const styles = StyleSheet.create({
   },
   pageTitle: {
     fontWeight: 'bold',
+    // Same inset as the Expenses / Chats / Calls large titles.
+    paddingHorizontal: 8,
     paddingBottom: 20,
   },
   card: {

@@ -39,7 +39,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Image, Keyboard, KeyboardAvoidingView, Platform, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Image, Keyboard, KeyboardAvoidingView, Platform, Modal, ScrollView, StyleSheet, TouchableOpacity, View, type LayoutChangeEvent } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
 import { Button, Chip, Icon, PaperProvider, Text, TextInput } from 'react-native-paper';
 
@@ -126,6 +126,18 @@ export const AddExpenseScreen = ({
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  // KeyboardAvoidingView measures overlap from its PARENT-relative frame, but
+  // the keyboard reports screen coordinates. On iOS this screen is a page
+  // sheet that starts well below the top of the screen, so without the sheet's
+  // own offset the view under-lifts by exactly that much and the keyboard
+  // covers the docked Cancel / Save bar. The sheet always reaches the bottom
+  // of the screen, so its top is whatever height it does not fill.
+  // (`measureInWindow` reports 0 inside the native sheet, so it can't be used.)
+  const [sheetTop, setSheetTop] = useState(0);
+  const measureSheetTop = useCallback((event: LayoutChangeEvent) => {
+    const top = Dimensions.get('screen').height - event.nativeEvent.layout.height;
+    setSheetTop(Math.max(0, Math.round(top)));
+  }, []);
   useEffect(() => {
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardOpen(true));
     const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardOpen(false));
@@ -773,7 +785,7 @@ export const AddExpenseScreen = ({
             participantConfig: serializeSplitParticipantConfig(metadataMethod, participantsForPersistence),
           };
 
-      if (requiresAdvancedSplitAuthorizationOnSave(metadataMethod, expenseId)) {
+      if (requiresAdvancedSplitAuthorizationOnSave(metadataMethod, existingForReceipt?.splitMetadata?.method)) {
         if (!user?.userId) {
           appAlert('Sign in required', 'Sign in again to save this advanced split. Your draft is still here.');
           return;
@@ -913,439 +925,446 @@ export const AddExpenseScreen = ({
     <PaperProvider theme={theme}>
       <LiquidBackground>
         <GuardedScreen target="expenses" entityId={group.groupId} label="Hidden">
-          <KeyboardAvoidingView style={styles.screenFill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-            <ScrollView
-              style={styles.scrollFill}
-              contentContainerStyle={[styles.container, { paddingTop: insets.top + 16 }]}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
+          <View style={styles.screenFill} onLayout={measureSheetTop}>
+            <KeyboardAvoidingView
+              style={styles.screenFill}
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? sheetTop : 0}
             >
-              <GlassView style={styles.card}>
-                <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
-                  {expenseId ? 'Edit expense' : 'Add expense'}
-                </Text>
-
-                <View style={styles.row}>
-                  <AppTextInput
-                    label={`Amount (${group.currency || 'USD'})`}
-                    value={amount}
-                    onChangeText={setAmount}
-                    keyboardType="decimal-pad"
-                    style={[styles.field, theme.typography.headline]}
-                    errorText={
-                      amount && (!Number.isFinite(Number(amount)) || Number(amount) <= 0) ? 'Enter an amount greater than zero.' : undefined
-                    }
-                    containerStyle={{ flex: 1 }}
-                    left={<TextInput.Affix text={group.currency || 'USD'} />}
-                  />
-                </View>
-
-                {isRecurringExpense && (
-                  <View style={styles.infoBanner}>
-                    <Icon source="information-outline" size={15} color={theme.colors.primary} />
-                    <Text
-                      style={{
-                        color: theme.colors.onSurfaceVariant,
-                        fontSize: 13,
-                        flex: 1,
-                      }}
-                    >
-                      Editing this occurrence only. Future recurrences will use the original bill settings.
-                    </Text>
-                  </View>
-                )}
-
-                <AppTextInput label="Description" value={title} onChangeText={setTitle} style={styles.field} />
-
-                {recurringMatch && (
-                  <TouchableOpacity
-                    onPress={() => {
-                      lightHaptic();
-                      (navigation as any).navigate(ROUTES.APP.RECURRING_BILLS, {
-                        groupId: group.groupId,
-                        backTitle: group.name,
-                      });
-                    }}
-                    style={styles.infoBanner}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Set up ${recurringMatch.title} as a recurring bill`}
-                  >
-                    <Icon source="repeat" size={15} color={theme.colors.primary} />
-                    <Text
-                      style={{
-                        color: theme.colors.onSurfaceVariant,
-                        fontSize: 13,
-                        flex: 1,
-                      }}
-                    >
-                      “{recurringMatch.title}” shows up {recurringMatch.cadence} · set it up as a recurring bill?
-                    </Text>
-                  </TouchableOpacity>
-                )}
-
-                <View style={styles.row}>
-                  <Button
-                    mode="text"
-                    onPress={() => setShowCategoryMenu(true)}
-                    icon={getCategoryIcon(category)}
-                    style={{ borderColor: `${theme.colors.primary}55` }}
-                  >
-                    {category}
-                  </Button>
-
-                  <Button
-                    mode="text"
-                    onPress={() => setShowPayerDialog(true)}
-                    icon="account-cash"
-                    style={{ borderColor: `${theme.colors.primary}55` }}
-                  >
-                    Paid by {memberDisplayNames[paidBy] ?? 'Unknown'}
-                  </Button>
-                </View>
-
-                <SectionLabel style={styles.sectionLabel}>Split</SectionLabel>
-
-                {/* Split Options Button */}
-                <TouchableOpacity
-                  onPress={() => {
-                    if (!title.trim() || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
-                      appAlert('Missing details', 'Please enter an expense title and amount before configuring split options.');
-                      return;
-                    }
-                    mediumHaptic();
-                    setShowBillSplit(true);
-                  }}
-                  activeOpacity={0.7}
-                  style={[styles.splitOptionsBtn, { borderColor: `${theme.colors.primary}55` }]}
-                >
-                  <View style={styles.splitOptionsBtnContent}>
-                    <View style={[styles.splitOptionsIconChip, { backgroundColor: `${theme.colors.primary}16` }]}>
-                      <Icon source={splitType === 'equal' ? 'equal' : 'tune-variant'} size={20} color={theme.colors.primary} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text
-                        variant="labelLarge"
-                        style={{
-                          color: theme.colors.onSurface,
-                          fontWeight: '700',
-                        }}
-                      >
-                        {splitMethodLabel}
-                      </Text>
-                      <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                        {selectedMembers.length} {selectedMembers.length === 1 ? 'person' : 'people'} · tap to change
-                      </Text>
-                    </View>
-                    <View style={[styles.splitOptionsCta, { backgroundColor: `${theme.colors.primary}16` }]}>
-                      <Text
-                        variant="labelMedium"
-                        style={{
-                          color: theme.colors.primary,
-                          fontWeight: '700',
-                        }}
-                      >
-                        Split
-                      </Text>
-                      <Icon source="chevron-right" size={16} color={theme.colors.primary} />
-                    </View>
-                  </View>
-                </TouchableOpacity>
-
-                {/* Smart split suggestion (on-device) — a slim inline row attached
-                right under Split Options, not a second independent card. */}
-                {splitSuggestion ? (
-                  <TouchableOpacity onPress={applySplitSuggestion} activeOpacity={0.7} style={styles.suggestionRow}>
-                    <Icon source="lightbulb-on-outline" size={16} color={theme.colors.primary} />
-                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }} numberOfLines={1}>
-                      {splitSuggestion.method === 'equal' ? 'Split equally' : 'Match how this group usually splits'}
-                      {' · '}
-                      {Math.round(splitSuggestion.confidence * 100)}% match
-                    </Text>
-                    <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                      Apply
-                    </Text>
-                  </TouchableOpacity>
-                ) : null}
-
-                {/* Split Summary Preview — every member is a toggle. Tap to add or
-                drop them from the split right here, no need to open the editor. */}
-                <View style={styles.splitPreview}>
-                  <View style={styles.members}>
-                    {splitBaseMembers.map((member) => {
-                      const isIn = selectedMembers.includes(member.userId);
-                      const isDeparted = departedParticipants.some((m) => m.userId === member.userId);
-                      // Name never captured (e.g. Sign in with Apple's one-time grant was
-                      // missed/raced — doc 30) — same calm, provisional styling as a
-                      // departed member, never plain body text indistinguishable from a
-                      // real name in this money-attribution UI.
-                      const isNameless = needsDisplayName(member);
-                      const share = participantShares.find((participant) => participant.userId === member.userId)?.share;
-                      return (
-                        <Chip
-                          key={member.userId}
-                          onPress={() => toggleMember(member.userId)}
-                          showSelectedCheck={false}
-                          disabled={isDeparted}
-                          style={{
-                            backgroundColor: isIn ? theme.colors.secondaryContainer : 'transparent',
-                            borderWidth: StyleSheet.hairlineWidth,
-                            borderColor: isIn ? 'transparent' : theme.colors.outline,
-                            opacity: isDeparted ? 0.6 : isIn ? 1 : 0.7,
-                          }}
-                          textStyle={{
-                            color: isNameless
-                              ? theme.colors.onSurfaceVariant
-                              : isIn
-                                ? theme.colors.onSecondaryContainer
-                                : theme.colors.onSurfaceVariant,
-                            fontStyle: isDeparted || isNameless ? 'italic' : 'normal',
-                          }}
-                        >
-                          {resolveDisplayName(member)}
-                          {isDeparted ? ' · left the group' : ''}
-                          {isIn && typeof share === 'number' ? ` · ${formatCurrency(share, group.currency)}` : ''}
-                        </Chip>
-                      );
-                    })}
-                  </View>
-                  <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                    Tap a name to include or exclude them. Open split options to change the mode or amounts.
+              <ScrollView
+                style={styles.scrollFill}
+                // iOS presents this as a page sheet that already sits below the
+                // status bar; Android's modal is full-screen and needs the inset.
+                contentContainerStyle={[styles.container, Platform.OS !== 'ios' && { paddingTop: insets.top + 16 }]}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <GlassView style={styles.card}>
+                  <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
+                    {expenseId ? 'Edit expense' : 'Add expense'}
                   </Text>
-                </View>
 
-                <SectionLabel style={styles.sectionLabel}>Receipt</SectionLabel>
+                  <View style={styles.row}>
+                    <AppTextInput
+                      label={`Amount (${group.currency || 'USD'})`}
+                      value={amount}
+                      onChangeText={setAmount}
+                      keyboardType="decimal-pad"
+                      style={[styles.field, theme.typography.title]}
+                      errorText={
+                        amount && (!Number.isFinite(Number(amount)) || Number(amount) <= 0) ? 'Enter an amount greater than zero.' : undefined
+                      }
+                      containerStyle={{ flex: 1 }}
+                    />
+                  </View>
 
-                {/* One compact row: Scan (OCR auto-extract) is the primary action,
-                Attach (camera/gallery/document, no OCR) is the secondary icon
-                button beside it — was two separate full-width boxes. */}
-                <View style={styles.row}>
-                  {!expenseId && (
+                  {isRecurringExpense && (
+                    <View style={styles.infoBanner}>
+                      <Icon source="information-outline" size={15} color={theme.colors.primary} />
+                      <Text
+                        style={{
+                          color: theme.colors.onSurfaceVariant,
+                          fontSize: 13,
+                          flex: 1,
+                        }}
+                      >
+                        Editing this occurrence only. Future recurrences will use the original bill settings.
+                      </Text>
+                    </View>
+                  )}
+
+                  <AppTextInput label="Description" value={title} onChangeText={setTitle} style={styles.field} />
+
+                  {recurringMatch && (
                     <TouchableOpacity
                       onPress={() => {
-                        mediumHaptic();
-                        setShowReceiptScanner(true);
+                        lightHaptic();
+                        (navigation as any).navigate(ROUTES.APP.RECURRING_BILLS, {
+                          groupId: group.groupId,
+                          backTitle: group.name,
+                        });
                       }}
-                      activeOpacity={0.7}
+                      style={styles.infoBanner}
                       accessibilityRole="button"
-                      accessibilityLabel="Scan receipt"
-                      style={[styles.scanReceiptBtn, { borderColor: theme.colors.outline }]}
+                      accessibilityLabel={`Set up ${recurringMatch.title} as a recurring bill`}
                     >
-                      <View style={styles.scanReceiptBtnContent}>
-                        <Icon source="camera-document" size={20} color={theme.colors.primary} />
-                        <View style={{ flex: 1 }}>
+                      <Icon source="repeat" size={15} color={theme.colors.primary} />
+                      <Text
+                        style={{
+                          color: theme.colors.onSurfaceVariant,
+                          fontSize: 13,
+                          flex: 1,
+                        }}
+                      >
+                        “{recurringMatch.title}” shows up {recurringMatch.cadence} · set it up as a recurring bill?
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <View style={styles.row}>
+                    <Button
+                      mode="text"
+                      onPress={() => setShowCategoryMenu(true)}
+                      icon={getCategoryIcon(category)}
+                      style={{ borderColor: `${theme.colors.primary}55` }}
+                    >
+                      {category}
+                    </Button>
+
+                    <Button
+                      mode="text"
+                      onPress={() => setShowPayerDialog(true)}
+                      icon="account-cash"
+                      style={{ borderColor: `${theme.colors.primary}55` }}
+                    >
+                      Paid by {memberDisplayNames[paidBy] ?? 'Unknown'}
+                    </Button>
+                  </View>
+
+                  <SectionLabel style={styles.sectionLabel}>Split</SectionLabel>
+
+                  {/* Split Options Button */}
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (!title.trim() || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+                        appAlert('Missing details', 'Please enter an expense title and amount before configuring split options.');
+                        return;
+                      }
+                      mediumHaptic();
+                      setShowBillSplit(true);
+                    }}
+                    activeOpacity={0.7}
+                    style={[styles.splitOptionsBtn, { borderColor: `${theme.colors.primary}55` }]}
+                  >
+                    <View style={styles.splitOptionsBtnContent}>
+                      <View style={[styles.splitOptionsIconChip, { backgroundColor: `${theme.colors.primary}16` }]}>
+                        <Icon source={splitType === 'equal' ? 'equal' : 'tune-variant'} size={20} color={theme.colors.primary} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          variant="labelLarge"
+                          style={{
+                            color: theme.colors.onSurface,
+                            fontWeight: '700',
+                          }}
+                        >
+                          {splitMethodLabel}
+                        </Text>
+                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                          {selectedMembers.length} {selectedMembers.length === 1 ? 'person' : 'people'} · tap to change
+                        </Text>
+                      </View>
+                      <View style={[styles.splitOptionsCta, { backgroundColor: `${theme.colors.primary}16` }]}>
+                        <Text
+                          variant="labelMedium"
+                          style={{
+                            color: theme.colors.primary,
+                            fontWeight: '700',
+                          }}
+                        >
+                          Split
+                        </Text>
+                        <Icon source="chevron-right" size={16} color={theme.colors.primary} />
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Smart split suggestion (on-device) — a slim inline row attached
+                  right under Split Options, not a second independent card. */}
+                  {splitSuggestion ? (
+                    <TouchableOpacity onPress={applySplitSuggestion} activeOpacity={0.7} style={styles.suggestionRow}>
+                      <Icon source="lightbulb-on-outline" size={16} color={theme.colors.primary} />
+                      <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }} numberOfLines={1}>
+                        {splitSuggestion.method === 'equal' ? 'Split equally' : 'Match how this group usually splits'}
+                        {' · '}
+                        {Math.round(splitSuggestion.confidence * 100)}% match
+                      </Text>
+                      <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                        Apply
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+
+                  {/* Split Summary Preview — every member is a toggle. Tap to add or
+                  drop them from the split right here, no need to open the editor. */}
+                  <View style={styles.splitPreview}>
+                    <View style={styles.members}>
+                      {splitBaseMembers.map((member) => {
+                        const isIn = selectedMembers.includes(member.userId);
+                        const isDeparted = departedParticipants.some((m) => m.userId === member.userId);
+                        // Name never captured (e.g. Sign in with Apple's one-time grant was
+                        // missed/raced — doc 30) — same calm, provisional styling as a
+                        // departed member, never plain body text indistinguishable from a
+                        // real name in this money-attribution UI.
+                        const isNameless = needsDisplayName(member);
+                        const share = participantShares.find((participant) => participant.userId === member.userId)?.share;
+                        return (
+                          <Chip
+                            key={member.userId}
+                            onPress={() => toggleMember(member.userId)}
+                            showSelectedCheck={false}
+                            disabled={isDeparted}
+                            style={{
+                              backgroundColor: isIn ? theme.colors.secondaryContainer : 'transparent',
+                              borderWidth: StyleSheet.hairlineWidth,
+                              borderColor: isIn ? 'transparent' : theme.colors.outline,
+                              opacity: isDeparted ? 0.6 : isIn ? 1 : 0.7,
+                            }}
+                            textStyle={{
+                              color: isNameless
+                                ? theme.colors.onSurfaceVariant
+                                : isIn
+                                  ? theme.colors.onSecondaryContainer
+                                  : theme.colors.onSurfaceVariant,
+                              fontStyle: isDeparted || isNameless ? 'italic' : 'normal',
+                            }}
+                          >
+                            {resolveDisplayName(member)}
+                            {isDeparted ? ' · left the group' : ''}
+                            {isIn && typeof share === 'number' ? ` · ${formatCurrency(share, group.currency)}` : ''}
+                          </Chip>
+                        );
+                      })}
+                    </View>
+                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                      Tap a name to include or exclude them. Open split options to change the mode or amounts.
+                    </Text>
+                  </View>
+
+                  <SectionLabel style={styles.sectionLabel}>Receipt</SectionLabel>
+
+                  {/* One compact row: Scan (OCR auto-extract) is the primary action,
+                  Attach (camera/gallery/document, no OCR) is the secondary icon
+                  button beside it — was two separate full-width boxes. */}
+                  <View style={styles.row}>
+                    {!expenseId && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          mediumHaptic();
+                          setShowReceiptScanner(true);
+                        }}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel="Scan receipt"
+                        style={[styles.scanReceiptBtn, { borderColor: theme.colors.outline }]}
+                      >
+                        <View style={styles.scanReceiptBtnContent}>
+                          <Icon source="camera-document" size={20} color={theme.colors.primary} />
+                          <View style={{ flex: 1 }}>
+                            <Text
+                              variant="labelLarge"
+                              style={{
+                                color: theme.colors.primary,
+                                fontWeight: '700',
+                              }}
+                            >
+                              Scan receipt
+                            </Text>
+                            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                              Review items, tax and total
+                            </Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      onPress={() => setShowReceiptMenu(true)}
+                      activeOpacity={0.7}
+                      style={[
+                        styles.attachReceiptBtn,
+                        { borderColor: `${theme.colors.primary}55` },
+                        expenseId ? { flex: 1, width: undefined } : null,
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel={receiptUri ? 'Change receipt' : 'Attach receipt'}
+                    >
+                      <Icon source="paperclip" size={20} color={theme.colors.primary} />
+                      {expenseId ? (
+                        <Text
+                          variant="labelLarge"
+                          style={{
+                            color: theme.colors.primary,
+                            fontWeight: '700',
+                          }}
+                        >
+                          {receiptUri ? 'Change receipt' : 'Add receipt'}
+                        </Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  </View>
+
+                  {receiptUri && (
+                    <View style={styles.imagePreviewContainer}>
+                      {receiptType === 'image' ? (
+                        <Image
+                          source={{ uri: receiptUri }}
+                          style={[styles.imagePreview, { backgroundColor: isDark ? '#333' : '#f0f0f0' }]}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <View
+                          style={[
+                            styles.documentPreview,
+                            {
+                              backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#f0f0f0',
+                            },
+                          ]}
+                        >
                           <Text
-                            variant="labelLarge"
+                            variant="bodyLarge"
+                            style={{
+                              marginBottom: 8,
+                              color: theme.colors.onSurface,
+                            }}
+                          >
+                            📄 {receiptName || 'Document attached'}
+                          </Text>
+                        </View>
+                      )}
+                      <Button
+                        onPress={() => {
+                          setReceiptUri(null);
+                          setReceiptType(null);
+                          setReceiptName(null);
+                        }}
+                        textColor={theme.colors.error}
+                      >
+                        Remove
+                      </Button>
+                    </View>
+                  )}
+
+                  {/* Natural-language entry (on-device, eligible devices only) — collapsed
+                  by default so it doesn't cost vertical space for the people who type
+                  fields directly; tapping the pill reveals the input in place. */}
+                  {nlAvailable && !expenseId ? (
+                    nlExpanded ? (
+                      <View style={styles.nlCard}>
+                        <View style={styles.nlCardHeader}>
+                          <Icon source="creation" size={16} color={theme.colors.primary} />
+                          <Text
+                            variant="labelMedium"
                             style={{
                               color: theme.colors.primary,
                               fontWeight: '700',
+                              flex: 1,
                             }}
                           >
-                            Scan receipt
+                            Type it in plain English
                           </Text>
-                          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                            Review items, tax and total
-                          </Text>
+                          <TouchableOpacity
+                            onPress={() => setNlExpanded(false)}
+                            hitSlop={8}
+                            accessibilityRole="button"
+                            accessibilityLabel="Close assisted entry"
+                            style={{
+                              minWidth: 44,
+                              minHeight: 44,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            <Icon source="close" size={16} color={theme.colors.onSurfaceVariant} />
+                          </TouchableOpacity>
                         </View>
+                        <TextInput
+                          mode="outlined"
+                          value={nlText}
+                          onChangeText={setNlText}
+                          placeholder={`e.g. ${group.currency || 'USD'} 40 dinner with Alex & Sam, split equally`}
+                          multiline
+                          autoFocus
+                          onSubmitEditing={handleNlParse}
+                          outlineColor={`${theme.colors.primary}${isDark ? '85' : '70'}`}
+                          activeOutlineColor={theme.colors.primary}
+                          outlineStyle={{ borderWidth: 1.5, borderRadius: 12 }}
+                          style={{ backgroundColor: 'transparent' }}
+                          right={
+                            <TextInput.Icon
+                              icon={nlBusy ? 'loading' : 'arrow-right-circle'}
+                              disabled={nlBusy || !nlText.trim()}
+                              onPress={handleNlParse}
+                            />
+                          }
+                        />
                       </View>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    onPress={() => setShowReceiptMenu(true)}
-                    activeOpacity={0.7}
-                    style={[
-                      styles.attachReceiptBtn,
-                      { borderColor: `${theme.colors.primary}55` },
-                      expenseId ? { flex: 1, width: undefined } : null,
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel={receiptUri ? 'Change receipt' : 'Attach receipt'}
-                  >
-                    <Icon source="paperclip" size={20} color={theme.colors.primary} />
-                    {expenseId ? (
-                      <Text
-                        variant="labelLarge"
-                        style={{
-                          color: theme.colors.primary,
-                          fontWeight: '700',
-                        }}
-                      >
-                        {receiptUri ? 'Change receipt' : 'Add receipt'}
-                      </Text>
-                    ) : null}
-                  </TouchableOpacity>
-                </View>
-
-                {receiptUri && (
-                  <View style={styles.imagePreviewContainer}>
-                    {receiptType === 'image' ? (
-                      <Image
-                        source={{ uri: receiptUri }}
-                        style={[styles.imagePreview, { backgroundColor: isDark ? '#333' : '#f0f0f0' }]}
-                        resizeMode="contain"
-                      />
                     ) : (
-                      <View
-                        style={[
-                          styles.documentPreview,
-                          {
-                            backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#f0f0f0',
-                          },
-                        ]}
+                      <TouchableOpacity
+                        onPress={() => {
+                          lightHaptic();
+                          setNlExpanded(true);
+                        }}
+                        activeOpacity={0.7}
+                        style={styles.nlPill}
+                        accessibilityRole="button"
+                        accessibilityLabel="Type the expense in plain English"
                       >
-                        <Text
-                          variant="bodyLarge"
-                          style={{
-                            marginBottom: 8,
-                            color: theme.colors.onSurface,
-                          }}
-                        >
-                          📄 {receiptName || 'Document attached'}
-                        </Text>
-                      </View>
-                    )}
-                    <Button
-                      onPress={() => {
-                        setReceiptUri(null);
-                        setReceiptType(null);
-                        setReceiptName(null);
-                      }}
-                      textColor={theme.colors.error}
-                    >
-                      Remove
-                    </Button>
-                  </View>
-                )}
-
-                {/* Natural-language entry (on-device, eligible devices only) — collapsed
-                by default so it doesn't cost vertical space for the people who type
-                fields directly; tapping the pill reveals the input in place. */}
-                {nlAvailable && !expenseId ? (
-                  nlExpanded ? (
-                    <View style={styles.nlCard}>
-                      <View style={styles.nlCardHeader}>
                         <Icon source="creation" size={16} color={theme.colors.primary} />
                         <Text
                           variant="labelMedium"
                           style={{
                             color: theme.colors.primary,
                             fontWeight: '700',
-                            flex: 1,
                           }}
                         >
-                          Type it in plain English
+                          Type it in plain English instead
                         </Text>
-                        <TouchableOpacity
-                          onPress={() => setNlExpanded(false)}
-                          hitSlop={8}
-                          accessibilityRole="button"
-                          accessibilityLabel="Close assisted entry"
-                          style={{
-                            minWidth: 44,
-                            minHeight: 44,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          <Icon source="close" size={16} color={theme.colors.onSurfaceVariant} />
-                        </TouchableOpacity>
+                      </TouchableOpacity>
+                    )
+                  ) : null}
+
+                  {/* On-device anomaly warnings (duplicate / unusually large) */}
+                  {expenseAnomalies.length > 0 ? (
+                    <View style={styles.warningBanner}>
+                      <Icon source="alert-outline" size={18} color="#FF9500" />
+                      <View style={{ flex: 1, gap: 2 }}>
+                        {expenseAnomalies.map((a) => (
+                          <Text
+                            key={a.type}
+                            variant="bodySmall"
+                            style={{
+                              color: theme.colors.onSurfaceVariant,
+                              lineHeight: 18,
+                            }}
+                          >
+                            {a.message}
+                          </Text>
+                        ))}
                       </View>
-                      <TextInput
-                        mode="outlined"
-                        value={nlText}
-                        onChangeText={setNlText}
-                        placeholder={`e.g. ${group.currency || 'USD'} 40 dinner with Alex & Sam, split equally`}
-                        multiline
-                        autoFocus
-                        onSubmitEditing={handleNlParse}
-                        outlineColor={`${theme.colors.primary}${isDark ? '85' : '70'}`}
-                        activeOutlineColor={theme.colors.primary}
-                        outlineStyle={{ borderWidth: 1.5, borderRadius: 12 }}
-                        style={{ backgroundColor: 'transparent' }}
-                        right={
-                          <TextInput.Icon
-                            icon={nlBusy ? 'loading' : 'arrow-right-circle'}
-                            disabled={nlBusy || !nlText.trim()}
-                            onPress={handleNlParse}
-                          />
-                        }
-                      />
                     </View>
-                  ) : (
-                    <TouchableOpacity
-                      onPress={() => {
-                        lightHaptic();
-                        setNlExpanded(true);
-                      }}
-                      activeOpacity={0.7}
-                      style={styles.nlPill}
-                      accessibilityRole="button"
-                      accessibilityLabel="Type the expense in plain English"
-                    >
-                      <Icon source="creation" size={16} color={theme.colors.primary} />
-                      <Text
-                        variant="labelMedium"
-                        style={{
-                          color: theme.colors.primary,
-                          fontWeight: '700',
-                        }}
-                      >
-                        Type it in plain English instead
-                      </Text>
-                    </TouchableOpacity>
-                  )
-                ) : null}
+                  ) : null}
+                </GlassView>
+              </ScrollView>
 
-                {/* On-device anomaly warnings (duplicate / unusually large) */}
-                {expenseAnomalies.length > 0 ? (
-                  <View style={styles.warningBanner}>
-                    <Icon source="alert-outline" size={18} color="#FF9500" />
-                    <View style={{ flex: 1, gap: 2 }}>
-                      {expenseAnomalies.map((a) => (
-                        <Text
-                          key={a.type}
-                          variant="bodySmall"
-                          style={{
-                            color: theme.colors.onSurfaceVariant,
-                            lineHeight: 18,
-                          }}
-                        >
-                          {a.message}
-                        </Text>
-                      ))}
-                    </View>
-                  </View>
-                ) : null}
-              </GlassView>
-            </ScrollView>
-
-            {/* Docked action bar — Cancel / Save are always in reach, no scroll to
-            the bottom of the form required. */}
-            <GlassCard
-              role="floating"
-              style={styles.dockedGlass}
-              contentStyle={[
-                styles.dockedActions,
-                {
-                  paddingBottom: keyboardOpen ? 6 : Math.max(insets.bottom, 12),
-                  flexWrap: 'wrap',
-                },
-              ]}
-            >
-              <Button mode="text" onPress={onClose} style={[styles.dockedCancel, { borderColor: `${theme.colors.primary}55` }]}>
-                Cancel
-              </Button>
-              <PrimaryButton
-                onPress={handleSubmit}
-                disabled={!formValid}
-                requestKey={expenseId ? `expense-update-${expenseId}` : `expense-create-${group.groupId}`}
-                loadingMessage={expenseId ? 'Saving expense...' : 'Creating expense...'}
-                showGlobalOverlay
-                style={styles.dockedSave}
+              {/* Docked action bar — Cancel / Save are always in reach, no scroll to
+              the bottom of the form required. */}
+              <GlassCard
+                role="floating"
+                style={styles.dockedGlass}
+                contentStyle={[
+                  styles.dockedActions,
+                  {
+                    paddingBottom: keyboardOpen ? 6 : Math.max(insets.bottom, 12),
+                    flexWrap: 'wrap',
+                  },
+                ]}
               >
-                {expenseId ? 'Save changes' : 'Save expense'}
-              </PrimaryButton>
-            </GlassCard>
-          </KeyboardAvoidingView>
+                <Button mode="text" onPress={onClose} style={[styles.dockedCancel, { borderColor: `${theme.colors.primary}55` }]}>
+                  Cancel
+                </Button>
+                <PrimaryButton
+                  onPress={handleSubmit}
+                  disabled={!formValid}
+                  requestKey={expenseId ? `expense-update-${expenseId}` : `expense-create-${group.groupId}`}
+                  loadingMessage={expenseId ? 'Saving expense...' : 'Creating expense...'}
+                  showGlobalOverlay
+                  style={styles.dockedSave}
+                >
+                  {expenseId ? 'Save changes' : 'Save expense'}
+                </PrimaryButton>
+              </GlassCard>
+            </KeyboardAvoidingView>
+          </View>
         </GuardedScreen>
       </LiquidBackground>
 

@@ -10,6 +10,7 @@ import { FloatingDetailHeader, floatingDetailHeaderHeight } from '@/components/u
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { useGroups } from '@/context/GroupContext';
 import type { ChatThread } from '@/models';
 import { getChatThreadTitle } from '@/navigation/screenTitles';
@@ -23,7 +24,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 export const ArchivedChatsScreen = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
-  const { threads } = useChat();
+  const { threads: allThreads } = useChat();
+  // Same vanish rule as the chat list: a chat hidden there (and every shielded
+  // chat in duress) must not be one tap away under this folder.
+  const { isVanished } = usePrivacyGuard();
+  const threads = useMemo(() => allThreads.filter((t) => !isVanished('chats', t.chatId)), [allThreads, isVanished]);
   const { groups } = useGroups();
   const { user } = useAuth();
 

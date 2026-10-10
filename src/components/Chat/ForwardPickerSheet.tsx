@@ -1,3 +1,4 @@
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassCard, ScrimBackdrop } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
@@ -35,6 +36,7 @@ export const ForwardPickerSheet = ({
   onSelect,
 }: ForwardPickerSheetProps) => {
   const { theme, isDark } = useTheme();
+  const { hidePhoto } = usePrivacyMask();
   const { threads } = useChat();
   const { user } = useAuth();
   const { groups } = useGroups();
@@ -164,7 +166,7 @@ export const ForwardPickerSheet = ({
                   accessibilityLabel={titleFor(item)}
                   accessibilityState={{ checked: selected }}
                 >
-                  {photo ? (
+                  {photo && !hidePhoto() ? (
                     <Avatar.Image size={42} source={{ uri: photo }} />
                   ) : (
                     <Avatar.Text
@@ -276,7 +278,7 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     backgroundColor: 'transparent',
-    minHeight: 44,
+    height: 40,
   },
   list: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12 },
   row: {

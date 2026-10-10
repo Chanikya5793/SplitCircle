@@ -21,6 +21,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import type { ExpenseAiSource } from '@/services/aiService';
 import { processAssistantTurn, type ConversationState, type ProposedAction } from '@/services/assistantService';
+import { finishMeteredAccess, requestMeteredAccess } from '@/services/meteredAccess';
 import { buildFactsBlock } from '@/services/onDeviceAiService';
 import { noteTurn, thumbsDown, thumbsUp } from '@/services/aiFeedbackService';
 import { prewarmOnDeviceModel } from '../../../modules/splitcircle-ai';
@@ -217,10 +218,23 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
       const text = (raw ?? input).trim();
       if (!text || busy) return;
       Keyboard.dismiss();
+      setBusy(true);
+      // Reserve the message before it leaves the box: if the allowance is
+      // used up, the text stays put and nothing is shown as sent.
+      const grant = await requestMeteredAccess({
+        ownerUid: currentUserId,
+        featureId: 'ai.expense_on_device_turn',
+        executionRoute: 'on_device_apple',
+        backTitle: 'Ask AI',
+      });
+      if (!grant) {
+        setBusy(false);
+        return;
+      }
       mediumHaptic();
       append({ id: uid(), role: 'user', text });
       setInput('');
-      setBusy(true);
+      let answered = false;
       try {
         // Doc 24: hand the pipeline this chat as a thread view (messages BEFORE
         // this turn — the new text rides as userText) + a compact facts blob.
@@ -264,10 +278,13 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
         });
         // Doc 25: register the turn snapshot so a later 👎 can capture it.
         noteTurn(replyId, turn.trace);
+        answered = true;
       } catch (err) {
         console.warn('[AiChat] Reply failed:', err);
         append({ id: uid(), role: 'assistant', text: 'I couldn’t answer that right now. Try again.' });
       } finally {
+        // A failed reply never counts against the allowance.
+        finishMeteredAccess(grant, answered ? 'completed' : 'failed');
         setBusy(false);
         setPending(null);
       }
@@ -343,6 +360,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           <TouchableOpacity
             onPress={() => void toggleHistory()}
             style={styles.headerIcon}
+            hitSlop={4}
             accessibilityRole="button"
             accessibilityLabel="Conversation history"
           >
@@ -351,6 +369,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           <TouchableOpacity
             onPress={() => void startNewThread()}
             style={styles.headerIcon}
+            hitSlop={4}
             accessibilityRole="button"
             accessibilityLabel="New conversation"
           >
@@ -573,14 +592,14 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
               </Text>
             ) : (
               <View style={styles.thumbRow}>
-                <TouchableOpacity onPress={() => onThumb(item, true)} style={styles.thumbButton} accessibilityRole="button" accessibilityLabel="Good answer">
+                <TouchableOpacity onPress={() => onThumb(item, true)} hitSlop={12} accessibilityRole="button" accessibilityLabel="Good answer">
                   <Icon
                     source={feedback[item.id] === 'up' ? 'thumb-up' : 'thumb-up-outline'}
                     size={13}
                     color={feedback[item.id] === 'up' ? theme.colors.primary : theme.colors.onSurfaceVariant}
                   />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => onThumb(item, false)} style={styles.thumbButton} accessibilityRole="button" accessibilityLabel="Bad answer">
+                <TouchableOpacity onPress={() => onThumb(item, false)} hitSlop={12} accessibilityRole="button" accessibilityLabel="Bad answer">
                   <Icon source="thumb-down-outline" size={13} color={theme.colors.onSurfaceVariant} />
                 </TouchableOpacity>
               </View>
@@ -767,7 +786,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   headerRight: { flexDirection: 'row' },
-  headerIcon: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  headerIcon: { padding: 6 },
   historyPanel: {
     position: 'absolute',
     left: 12,
@@ -787,23 +806,22 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', width: '100%' },
   bubble: { maxWidth: '88%', borderRadius: 18, paddingVertical: 10, paddingHorizontal: 14 },
   sources: { marginTop: 10, gap: 4 },
-  sourceRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   pendingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  thumbRow: { flexDirection: 'row', gap: 6, marginTop: 6 },
-  thumbButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  choiceChip: { minHeight: 44, justifyContent: 'center', borderRadius: 22, borderWidth: 1.5, paddingVertical: 6, paddingHorizontal: 14 },
+  thumbRow: { flexDirection: 'row', gap: 14, marginTop: 6 },
+  choiceChip: { justifyContent: 'center', borderRadius: 16, borderWidth: 1.5, paddingVertical: 6, paddingHorizontal: 14 },
   actionCard: { marginTop: 10, borderWidth: 1, borderRadius: 12, padding: 10 },
   actionButtons: { flexDirection: 'row', gap: 8, justifyContent: 'flex-end' },
-  actionBtn: { minHeight: 44, justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1 },
+  actionBtn: { justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1 },
   // SCREEN_GUTTER so the suggestion chips line up with the composer beneath
   // them — at 12 they sat 4pt further out than everything else on the screen.
   quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: SCREEN_GUTTER, paddingBottom: 8 },
-  quickChip: { minHeight: 44, justifyContent: 'center', borderRadius: 22, paddingVertical: 6, paddingHorizontal: 12 },
+  quickChip: { justifyContent: 'center', borderRadius: 16, paddingVertical: 6, paddingHorizontal: 12 },
   inputBarShell: { marginHorizontal: SCREEN_GUTTER, marginTop: 4, borderRadius: 24 },
   inputBarRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingLeft: 16, paddingRight: 6, paddingVertical: 4 },
   textInput: { flex: 1, backgroundColor: 'transparent', maxHeight: 120, fontSize: 15 },
-  sendBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { paddingBottom: 6 },
 });
 
 export default AiChatScreen;

@@ -16,8 +16,9 @@ import { resolveDisplayName } from '@/utils/identity';
 import { useNavigation } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, Modal, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, Image, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Chip, Icon, IconButton, Text, TextInput } from 'react-native-paper';
 
 // Category to Icon mapping
@@ -46,6 +47,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   const { groups, deleteExpense, updateExpense } = useGroups();
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
   const group = groups.find((g) => g.groupId === groupId);
   const expense = group?.expenses.find((e) => e.expenseId === expenseId);
@@ -175,7 +177,10 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   return (
     <LiquidBackground>
       <GuardedScreen target="expenses" entityId={groupId} label="Expense hidden">
-      <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }] }]}>
+      <Animated.View
+        style={[styles.stickyHeader, { paddingTop: insets.top + 2, transform: [{ translateY: headerTranslate }] }]}
+        pointerEvents="none"
+      >
         <GlassView role="floating" style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
             {expense.title}
@@ -191,7 +196,9 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
         )}
         scrollEventThrottle={16}
       >
-        <View style={{ height: 60 }} />
+        {/* The navigation header is transparent and floats over this list, so
+        the first card has to start below the back button rather than under it. */}
+        <View style={{ height: insets.top + NAV_BAR_HEIGHT + 8 - spacing.md }} />
         <GlassView style={styles.card}>
           <View style={styles.header}>
             <View>
@@ -580,6 +587,8 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   );
 };
 
+const NAV_BAR_HEIGHT = Platform.OS === 'ios' ? 44 : 56;
+
 const styles = StyleSheet.create({
   container: {
     padding: spacing.md,
@@ -732,8 +741,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 100,
-    paddingTop: 50,
-    paddingHorizontal: spacing.md,
+    // Clear of the (chevron-only) back button; vertical offset comes from the
+    // safe area.
+    paddingHorizontal: 72,
     paddingBottom: 10,
     alignItems: 'center',
     justifyContent: 'center',

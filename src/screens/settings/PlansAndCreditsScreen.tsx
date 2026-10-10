@@ -24,7 +24,8 @@ import {
   type PlanPresentation,
 } from '@/utils/monetizationPresentation';
 import { appAlert } from '@/utils/appAlert';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { ROUTES } from '@/constants/routes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -127,9 +128,7 @@ const PlanCard = ({
   const { theme } = useTheme();
   const { fontScale, width } = useWindowDimensions();
   const stackRows = fontScale >= 1.3 || width < 360;
-  const rows = [
-    { label: 'Advanced splits', value: plan.advancedSplits },
-  ];
+  const rows = plan.allowances.map((allowance) => ({ label: allowance.label, value: allowance.value }));
 
   return (
     <GlassCard
@@ -154,17 +153,21 @@ const PlanCard = ({
 
           </View>
           <View style={styles.priceLine}>
+            {/* No price yet (store still loading or unreachable): a quiet note,
+            not the word "Unavailable" set in the price's headline size. */}
             <Text
               style={[
                 styles.price,
-                {
-                  color: theme.colors.onSurface,
-                  fontSize: theme.typography.headline.fontSize,
-                  lineHeight: theme.typography.headline.lineHeight,
-                },
+                displayPrice
+                  ? {
+                      color: theme.colors.onSurface,
+                      fontSize: theme.typography.headline.fontSize,
+                      lineHeight: theme.typography.headline.lineHeight,
+                    }
+                  : [theme.typography.body, { color: theme.colors.muted, fontWeight: '400' }],
               ]}
             >
-              {displayPrice ?? 'Unavailable'}
+              {displayPrice ?? 'Price not available yet'}
             </Text>
             {displayPrice ? (
               <Text style={{ color: theme.colors.muted }}>
@@ -207,6 +210,7 @@ const PlanCard = ({
 
 export const PlansAndCreditsScreen = () => {
   const { theme } = useTheme();
+  const navigation = useNavigation<any>();
   const { fontScale, width } = useWindowDimensions();
   const stackRows = fontScale >= 1.3 || width < 360;
   const [billingPeriod, setBillingPeriod] = useState<MonetizationBillingPeriod>('annual');
@@ -509,7 +513,7 @@ export const PlansAndCreditsScreen = () => {
                     {currentPlanLabel}
                   </Text>
                   <Text style={{ color: theme.colors.muted }}>
-                    {describeAdvancedSplitAccess(snapshot.catalog, currentPlanId)} for advanced splits
+                    Advanced splits: {describeAdvancedSplitAccess(snapshot.catalog, currentPlanId)}
                   </Text>
                   {currentAccessThrough ? (
                     <Text style={{ color: theme.colors.muted }}>{currentAccessThrough}</Text>
@@ -532,6 +536,14 @@ export const PlansAndCreditsScreen = () => {
               <Text style={{ color: theme.colors.muted }}>
                 Included uses reset with your plan. Purchased credits do not expire and are used only after you approve the charge for a feature.
               </Text>
+              <AppButton
+                variant="secondary"
+                compact
+                icon="chart-timeline-variant"
+                onPress={async () => navigation.navigate(ROUTES.APP.USAGE, { backTitle: 'Plans' })}
+              >
+                See your usage
+              </AppButton>
               {creditDebt > 0 ? (
                 <Text style={{ color: theme.colors.warning }}>
                   Refund adjustment: {creditDebt.toLocaleString()} future {creditDebt === 1 ? 'credit' : 'credits'} will be applied before new credits become spendable.
@@ -640,7 +652,7 @@ export const PlansAndCreditsScreen = () => {
               <BillingSelector value={billingPeriod} onChange={setBillingPeriod} />
             </View>
             <Text style={[theme.typography.body, { color: theme.colors.onSurfaceVariant, marginBottom: theme.spacing.md }]}>
-              Every plan includes core expenses, groups and chat. Mana Credit top-ups are available with any plan. Compare included advanced splits and the total billing price below.
+              Every plan includes everyday expenses, groups, chat and calls. Plans add more of the features below each period; Mana Credits top up any plan.
             </Text>
             <View style={styles.planList}>{primaryPlans.map(renderPlan)}</View>
 
@@ -701,8 +713,8 @@ export const PlansAndCreditsScreen = () => {
                           {pack.credits.toLocaleString()}
                         </Text>
                         <Text style={{ color: theme.colors.muted }}>Mana Credits</Text>
-                        <Text style={[styles.creditPackPrice, { color: theme.colors.onSurface }]}>
-                          {displayPrice ?? 'Unavailable'}
+                        <Text style={[styles.creditPackPrice, { color: displayPrice ? theme.colors.onSurface : theme.colors.muted }]}>
+                          {displayPrice ?? 'Price not available yet'}
                         </Text>
                       </View>
                       <AppButton

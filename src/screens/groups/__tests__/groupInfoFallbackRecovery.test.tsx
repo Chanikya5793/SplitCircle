@@ -98,6 +98,18 @@ vi.mock('@/context/ChatContext', () => ({
 
 const groupsState: { groups: any[] } = { groups: [] };
 
+vi.mock('@/context/PrivacyGuardContext', () => ({
+  usePrivacyGuard: () => ({ duress: false, isShielded: () => false }),
+}));
+vi.mock('@/hooks/usePrivacyMask', () => ({
+  usePrivacyMask: () => ({
+    maskGroupName: (name: string) => name,
+    maskGroupText: (text: string) => text,
+  }),
+}));
+vi.mock('@/hooks/useMoneyDisplay', () => ({
+  useMoneyDisplay: () => (value: number, currency?: string) => `${currency ?? ''} ${value.toFixed(2)}`,
+}));
 vi.mock('@/context/GroupContext', () => ({
   useGroups: () => ({
     groups: groupsState.groups,

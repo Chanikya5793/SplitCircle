@@ -53,7 +53,7 @@ export const SwipeableExpenseCard = ({
   groupId,
 }: SwipeableExpenseCardProps) => {
   const fmtMoney = useMoneyDisplay(groupId);
-  const { maskGroupText } = usePrivacyMask();
+  const { maskGroupText, maskGroupDate } = usePrivacyMask();
   const { theme } = useTheme();
   const isFlat = theme?.surfaceStyle === 'flat';
   const swipeableRef = useRef<Swipeable>(null);
@@ -149,28 +149,28 @@ export const SwipeableExpenseCard = ({
             <Animated.View style={[styles.content, isFlat && styles.contentFlat, pressHighlightStyle]}>
               <View style={styles.header}>
                 <View style={styles.titleRow}>
-                  <View style={styles.iconContainer}>
+                  <View style={[styles.iconContainer, { backgroundColor: theme.colors.primaryContainer }]}>
                     <Icon
                       source={getCategoryIcon(expense.category)}
-                      size={20}
+                      size={18}
                       color={theme.colors.primary}
                     />
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{maskGroupText(expense.title, groupId, 'title')}</Text>
-                    <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
+                  <View style={styles.copy}>
+                    <Text variant="titleMedium" numberOfLines={2} style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{maskGroupText(expense.title, groupId, 'title')}</Text>
+                    <Text variant="bodySmall" numberOfLines={2} style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
                       {isSettlement
-                        ? `${maskGroupText(expense.category, groupId, 'category')} · Paid by ${payerName}`
-                        : `${maskGroupText(expense.category, groupId, 'category')} · ${maskGroupText(splitLabel, groupId, 'note')} · Paid by ${payerName}`}
-                    </Text>
-                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                      {maskGroupText(new Date(expense.createdAt).toLocaleDateString(), groupId)}
+                        ? `Paid by ${payerName} · ${maskGroupText(expense.category, groupId, 'category')}`
+                        : `Paid by ${payerName} · ${maskGroupText(expense.category, groupId, 'category')} · ${maskGroupText(splitLabel, groupId, 'note')}`}
                     </Text>
                   </View>
                 </View>
                 <View style={styles.amountContainer}>
-                  <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                  <Text variant="titleMedium" numberOfLines={1} style={{ fontWeight: 'bold', color: theme.colors.onSurface, fontVariant: ['tabular-nums'] }}>
                     {fmtMoney(expense.amount, currency)}
+                  </Text>
+                  <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
+                    {maskGroupDate(expense.createdAt, groupId, (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}
                   </Text>
                 </View>
               </View>
@@ -216,12 +216,16 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
+  },
+  copy: {
+    flex: 1,
+    minWidth: 0,
   },
   iconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -231,7 +235,8 @@ const styles = StyleSheet.create({
   amountContainer: {
     alignItems: 'flex-end',
     justifyContent: 'center',
-    marginLeft: 16,
+    marginLeft: 12,
+    gap: 2,
   },
   rightAction: {
     width: 120,

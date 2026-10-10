@@ -558,8 +558,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   testButton: {
-    minHeight: 44,
-    borderRadius: 22,
+    minHeight: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',

@@ -31,6 +31,8 @@ import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useAppSearch } from '@/hooks/useAppSearch';
 import { runAgenticTurn } from '@/services/aiPipelineService';
+import { finishMeteredAccess, openUsage, requestMeteredAccess } from '@/services/meteredAccess';
+import { describeResetTime } from '@/utils/monetizationPresentation';
 import { buildFactsBlock } from '@/services/onDeviceAiService';
 import { groupByType, highlightSegments, looksLikeQuestion, SECTION_LABELS, type RankedItem } from '@/services/searchService';
 import type { AiThread } from '@/utils/aiThreads';
@@ -45,7 +47,7 @@ import {
 import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -127,7 +129,9 @@ const HighlightedText = ({
             {seg.text}
           </Text>
         ) : (
-          <Text key={i}>{seg.text}</Text>
+          // Bare string: a nested Paper <Text> re-applies `onSurface` and
+          // would override the muted colour a subtitle passes down.
+          <Fragment key={i}>{seg.text}</Fragment>
         ),
       )}
     </Text>
@@ -375,6 +379,8 @@ export const SearchScreen = () => {
     source?: 'ondevice' | 'pcc';
     done: boolean;
     failed?: boolean;
+    /** The AI allowance is used up; when it comes back. */
+    limitedUntil?: number | null;
   }
   const [answer, setAnswer] = useState<SearchAnswer | null>(null);
   const answerSeq = useRef(0);
@@ -392,13 +398,28 @@ export const SearchScreen = () => {
   }, [guard.active, nativeMode]);
 
   const runSearchAnswer = useCallback(
-    (raw: string) => {
+    async (raw: string) => {
       const text = raw.trim();
       if (!text || !looksLikeQuestion(text) || !user || guard.active) return;
       const seq = ++answerSeq.current;
+      setAnswer({ query: text, status: 'Thinking…', done: false });
+      const grant = await requestMeteredAccess({
+        ownerUid: user.userId,
+        featureId: 'ai.expense_on_device_turn',
+        executionRoute: 'on_device_apple',
+        backTitle: 'Search',
+        onDenied: (decision) => {
+          if (answerSeq.current === seq) {
+            setAnswer({ query: text, done: true, limitedUntil: decision.resetsAt });
+          }
+        },
+      });
+      if (!grant || answerSeq.current !== seq) {
+        finishMeteredAccess(grant, 'cancelled');
+        return;
+      }
       const named = visibleGroups.find((g) => text.toLowerCase().includes(g.name.toLowerCase()));
       const scope = named ? named.groupId : 'personal';
-      setAnswer({ query: text, status: 'Thinking…', done: false });
       const patch = (fn: (a: SearchAnswer) => SearchAnswer) =>
         setAnswer((prev) => (answerSeq.current === seq && prev ? fn(prev) : prev));
       const thread: AiThread = {
@@ -431,6 +452,8 @@ export const SearchScreen = () => {
         onDelta: (partial) => patch((a) => ({ ...a, partial })),
       })
         .then((reply) => {
+          const answered = Boolean(reply && reply.role === 'assistant');
+          finishMeteredAccess(grant, answered ? 'completed' : 'failed');
           if (answerSeq.current !== seq) return;
           if (reply && reply.role === 'assistant') {
             setAnswer({ query: text, text: reply.text, source: reply.source, done: true });
@@ -439,6 +462,7 @@ export const SearchScreen = () => {
           }
         })
         .catch(() => {
+          finishMeteredAccess(grant, 'failed');
           if (answerSeq.current === seq) setAnswer({ query: text, done: true, failed: true });
         });
     },
@@ -672,6 +696,7 @@ export const SearchScreen = () => {
                   accessibilityRole="button"
                   accessibilityLabel="Clear search text"
                   style={styles.clearSearchButton}
+                  hitSlop={13}
                 >
                   <Ionicons name="close-circle" size={18} color={theme.colors.onSurfaceVariant} />
                 </TouchableOpacity>
@@ -781,9 +806,9 @@ export const SearchScreen = () => {
                       // Doc 25 Q3: the streamed inline answer (a RESULT ROW —
                       // the doc-20 native-tab contract is untouched).
                       <TouchableOpacity
-                        onPress={askAi}
+                        onPress={answer.limitedUntil !== undefined ? () => openUsage('Search') : askAi}
                         accessibilityRole="button"
-                        accessibilityLabel="Continue in the assistant"
+                        accessibilityLabel={answer.limitedUntil !== undefined ? 'See your AI usage' : 'Continue in the assistant'}
                       >
                         <View style={styles.answerBody}>
                           {!answer.done && (
@@ -804,7 +829,13 @@ export const SearchScreen = () => {
                               Tap to ask the assistant about “{answer.query}”.
                             </Text>
                           )}
-                          {answer.done && !answer.failed && (
+                          {answer.done && answer.limitedUntil !== undefined && (
+                            <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                              You’ve used your AI assistant messages
+                              {answer.limitedUntil ? ` — more ${describeResetTime(answer.limitedUntil)}` : ''}. Tap to see your usage.
+                            </Text>
+                          )}
+                          {answer.done && !answer.failed && answer.limitedUntil === undefined && (
                             <Text
                               variant="labelSmall"
                               style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}
@@ -940,22 +971,22 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, fontSize: 16, paddingVertical: 0 },
   closeButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
   block: { marginTop: 18 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  clearSearchButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  clearPill: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 22 },
+  clearSearchButton: { alignItems: 'center', justifyContent: 'center' },
+  clearPill: { justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14 },
   recentsList: { overflow: 'hidden' },
   recentRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 12 },
   recentArrow: { transform: [{ rotate: '-45deg' }] },
   recentDelete: { width: 64, alignItems: 'center', justifyContent: 'center' },
   suggestionStack: { alignItems: 'flex-start', gap: 10 },
-  suggestionPill: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 22 },
+  suggestionPill: { justifyContent: 'center', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 },
   predictWrap: { paddingHorizontal: 16, paddingBottom: 6, alignItems: 'flex-start' },
   predictPanel: {
     borderRadius: 14,
@@ -963,7 +994,7 @@ const styles = StyleSheet.create({
     maxWidth: '78%',
     overflow: 'hidden',
   },
-  predictRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 },
+  predictRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 },
   resultsArea: { gap: 4, paddingTop: 8 },
   section: { marginBottom: 14 },
   sectionTitle: { fontWeight: '600', marginBottom: 2 },

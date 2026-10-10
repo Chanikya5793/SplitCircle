@@ -68,15 +68,16 @@ export const MoneyText = ({
   // believable scaled decoy, never the dots/blocks placeholder: an obvious
   // "hidden" marker immediately tips off a coercer that something's hidden,
   // defeating the whole point of the fake-unlock decoy world.
+  // In duress the amount already comes from the scaled decoy ledger
+  // (useGroups), so it renders exactly like an unshielded one — sign and ≈
+  // included, since their absence would itself be a tell.
   const { isShielded, action, duress, settings } = usePrivacyGuard();
-  const scrambleAmounts = isShielded('expenses', groupId);
+  const scrambleAmounts = isShielded('expenses', groupId) && !duress;
 
   const type = theme.typography[size];
   const magnitude = !scrambleAmounts
     ? formatCurrency(Math.abs(displayAmount), displayCurrency)
-    : duress
-      ? formatCurrency(decoyAmount(Math.abs(displayAmount), groupId ?? 'global'), displayCurrency)
-      : action === 'vanish'
+    : action === 'vanish'
         ? '···'
         : settings.amountStyle === 'zeros'
           ? formatCurrency(0, displayCurrency)

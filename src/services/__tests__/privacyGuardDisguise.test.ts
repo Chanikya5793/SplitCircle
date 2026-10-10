@@ -63,9 +63,10 @@ describe('disguiseText', () => {
 });
 
 describe('maskTextValue', () => {
-  it('renders dots and blocks with clamped length', () => {
-    expect(maskTextValue('ab', 'dots')).toBe('••••');
-    expect(maskTextValue('a'.repeat(40), 'blocks')).toBe('█'.repeat(14));
+  it('renders dots and blocks at a fixed length that hides the input length', () => {
+    expect(maskTextValue('ab', 'dots')).toBe('•'.repeat(8));
+    expect(maskTextValue('a'.repeat(40), 'blocks')).toBe('█'.repeat(8));
+    expect(maskTextValue('Mom', 'dots')).toBe(maskTextValue('Goa Trip 2026', 'dots'));
   });
 
   it('routes garble style through the dictionaries', () => {

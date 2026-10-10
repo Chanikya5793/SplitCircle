@@ -21,7 +21,7 @@ interface ExpenseCardProps {
 
 export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0, groupId }: ExpenseCardProps) => {
   const fmtMoney = useMoneyDisplay(groupId);
-  const { maskGroupText } = usePrivacyMask();
+  const { maskGroupText, maskGroupDate } = usePrivacyMask();
   const { theme, isDark } = useTheme();
   const { pendingSyncIds } = useGroups();
   const isPendingSync = pendingSyncIds.has(expense.expenseId);
@@ -43,12 +43,12 @@ export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0, 
                     : `${maskGroupText(expense.category, groupId, 'category')} · ${maskGroupText(splitLabel, groupId, 'note')} · Paid by ${payerName}`}
                 </Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                  {maskGroupText(new Date(expense.createdAt).toLocaleDateString(), groupId)}
+                  {maskGroupDate(expense.createdAt, groupId, (d) => d.toLocaleDateString())}
                 </Text>
                 {isPendingSync ? <SyncBadge style={{ marginTop: 4 }} /> : null}
               </View>
               <View style={styles.amountContainer}>
-                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                <Text variant="titleMedium" numberOfLines={1} style={{ fontWeight: 'bold', color: theme.colors.onSurface, fontVariant: ['tabular-nums'] }}>
                   {fmtMoney(expense.amount, currency)}
                 </Text>
                 {isSettlement && <Icon source="check-circle" size={20} color={theme.colors.primary} />}

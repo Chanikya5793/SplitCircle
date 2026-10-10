@@ -183,7 +183,7 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
   const maskChatTitle = (t: string, chatId?: string) =>
     maskChatTitleRaw(t, chatId, thread.type === 'group' ? 'group' : 'person');
 
-  const chatsAnyShielded = isShielded('chats');
+  const chatsAnyShielded = isShielded('chats', thread.chatId);
   const pinnedChats = user?.pinnedChats;
   const archivedChats = user?.archivedChats;
 

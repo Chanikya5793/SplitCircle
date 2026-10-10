@@ -1183,7 +1183,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   shuffleBtn: {
-    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1199,7 +1198,6 @@ const styles = StyleSheet.create({
   },
   segmentItem: {
     flex: 1,
-    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 8,
@@ -1210,7 +1208,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 14,
-    minHeight: 52,
     paddingVertical: 4,
   },
   scopeAction: {
@@ -1224,7 +1221,6 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   scopeRow: {
-    minHeight: 52,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -1257,7 +1253,6 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   heroButton: {
-    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1312,7 +1307,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   doneBtn: {
-    minHeight: 44,
     justifyContent: 'center',
     paddingVertical: 10,
     paddingHorizontal: 26,

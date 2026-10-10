@@ -41,6 +41,7 @@ import { AiChatScreen } from '@/screens/ai/AiChatScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { NotificationSettingsScreen } from '@/screens/settings/NotificationSettingsScreen';
 import { PlansAndCreditsScreen } from '@/screens/settings/PlansAndCreditsScreen';
+import { UsageScreen } from '@/screens/settings/UsageScreen';
 import { AiEvalsScreen } from '@/screens/settings/AiEvalsScreen';
 import { AiMemoryScreen } from '@/screens/settings/AiMemoryScreen';
 import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
@@ -112,7 +113,14 @@ const GroupsStack = createNativeStackNavigator();
 const IOS_NATIVE_ACCESSORY_SUPPORTED =
   Platform.OS === 'ios' && Number.parseInt(String(Platform.Version), 10) >= 26;
 
+// Screens whose back label is user content of any length (a group's name)
+// AND that float their own title pill beside it on scroll. Spelled out, the
+// label ran straight into that pill, so these show the chevron alone — the
+// label still reaches VoiceOver.
+const COMPACT_BACK_ROUTES = new Set<string>([ROUTES.APP.EXPENSE_DETAILS, ROUTES.APP.GROUP_INFO]);
+
 type IOSBackButtonProps = {
+  compact?: boolean;
   label?: string;
   onPress: () => void;
   tintColor?: string;
@@ -154,7 +162,7 @@ const getResolvedIOSBackLabel = ({
   return undefined;
 };
 
-const IOSBackButton = ({ label, onPress, tintColor }: IOSBackButtonProps) => {
+const IOSBackButton = ({ compact, label, onPress, tintColor }: IOSBackButtonProps) => {
   const { theme } = useTheme();
   const resolvedTintColor = tintColor ?? theme.colors.primary;
   const resolvedLabel = label?.trim();
@@ -165,10 +173,10 @@ const IOSBackButton = ({ label, onPress, tintColor }: IOSBackButtonProps) => {
       accessibilityLabel={resolvedLabel ? `Back to ${resolvedLabel}` : 'Go back'}
       activeOpacity={0.82}
       onPress={onPress}
-      style={styles.iosBackButton}
+      style={[styles.iosBackButton, compact && styles.iosBackButtonCompact]}
     >
       <Icon source="chevron-left" size={20} color={resolvedTintColor} />
-      {resolvedLabel ? (
+      {resolvedLabel && !compact ? (
         <Text
           numberOfLines={1}
           style={[styles.iosBackButtonLabel, { color: resolvedTintColor }]}
@@ -485,6 +493,7 @@ const GroupsStackNavigator = () => {
           ? ({ canGoBack, label, tintColor }) =>
               canGoBack ? (
                 <IOSBackButton
+                  compact={COMPACT_BACK_ROUTES.has(route.name)}
                   label={getResolvedIOSBackLabel({
                     navigation,
                     route,
@@ -1044,12 +1053,23 @@ const AppStackNavigator = () => {
       <AppStack.Navigator
         screenOptions={({ navigation, route }) => ({
           contentStyle: { backgroundColor: screenBackground },
+          // Floating header titles sit in a glass pill (DESIGN.md: "text never
+          // floats bare over scrolling content"). Screens that draw their own
+          // title set headerTitle: '' and are unaffected.
+          headerTitle: ({ children }: { children: string }) => (children ? (
+            <StickyHeaderPill>
+              <Text numberOfLines={1} style={[theme.typography.subtitle, { color: theme.colors.onSurface }]}>
+                {children}
+              </Text>
+            </StickyHeaderPill>
+          ) : null),
           headerBackButtonDisplayMode: Platform.OS === 'ios' ? 'default' : undefined,
           headerBackVisible: Platform.OS === 'ios' ? false : undefined,
           headerLeft: Platform.OS === 'ios'
             ? ({ canGoBack, label, tintColor }) =>
                 canGoBack ? (
                   <IOSBackButton
+                    compact={COMPACT_BACK_ROUTES.has(route.name)}
                     label={getResolvedIOSBackLabel({
                       navigation,
                       route,
@@ -1216,13 +1236,15 @@ const AppStackNavigator = () => {
         component={PlansAndCreditsScreen}
         options={{
           title: SCREEN_TITLES.plansAndCredits,
-          headerTitle: () => (
-            <StickyHeaderPill>
-              <Text numberOfLines={1} style={[theme.typography.subtitle, { color: theme.colors.onSurface }]}>
-                {SCREEN_TITLES.plansAndCredits}
-              </Text>
-            </StickyHeaderPill>
-          ),
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.USAGE}
+        component={UsageScreen}
+        options={{
+          title: SCREEN_TITLES.usage,
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
@@ -1660,6 +1682,13 @@ const styles = StyleSheet.create({
     marginLeft: -6,
     gap: 2,
   },
+  // Chevron alone: the label-side offsets above would push it off-centre
+  // inside the system glass circle.
+  iosBackButtonCompact: {
+    marginLeft: 0,
+    paddingRight: 0,
+    paddingHorizontal: 2,
+  },
   iosBackButtonLabel: {
     flexShrink: 1,
     fontSize: 17,
@@ -1694,8 +1723,6 @@ const styles = StyleSheet.create({
   },
   groupAccessoryUtilityButton: {
     flex: 1,
-    minHeight: 44,
-    minWidth: 44,
     borderRadius: 50,
     overflow: 'hidden',
   },
@@ -1711,7 +1738,6 @@ const styles = StyleSheet.create({
     lineHeight: 13,
   },
   groupAccessoryPill: {
-    minHeight: 44,
     borderRadius: 50,
     overflow: 'hidden',
   },
@@ -1754,21 +1780,18 @@ const styles = StyleSheet.create({
   },
   groupAccessoryInlineUtilityButton: {
     flex: 1,
-    minWidth: 44,
-    minHeight: 44,
     borderRadius: 50,
     overflow: 'hidden',
   },
   groupAccessoryInlineUtilityButtonInner: {
-    width: 44,
-    height: 44,
+    width: 34,
+    height: 34,
     alignSelf: 'center',
     alignItems: 'center',
     justifyContent: 'center',
   },
   groupAccessoryInlinePrimary: {
     minWidth: 52,
-    minHeight: 44,
     borderRadius: 50,
     overflow: 'hidden',
   },
@@ -1780,14 +1803,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   groupAccessoryInlineQuick: {
-    minWidth: 44,
-    minHeight: 44,
     borderRadius: 50,
     overflow: 'hidden',
   },
   groupAccessoryInlineQuickInner: {
-    width: 44,
-    height: 44,
+    width: 34,
+    height: 34,
     alignItems: 'center',
     justifyContent: 'center',
   },

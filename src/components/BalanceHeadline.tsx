@@ -34,7 +34,7 @@ export const BalanceHeadline = ({ groupIds, prominent = false, style }: BalanceH
   const { theme } = useTheme();
   const { user } = useAuth();
   const { groups, loading } = useGroups();
-  const { isShielded, duress } = usePrivacyGuard();
+  const { isShielded, isVanished, duress } = usePrivacyGuard();
 
   const scoped = useMemo(
     () => (groupIds ? groups.filter((g) => groupIds.includes(g.groupId)) : groups),
@@ -43,7 +43,13 @@ export const BalanceHeadline = ({ groupIds, prominent = false, style }: BalanceH
 
   // Hidden groups are excluded — a hidden 1:1 ledger must not surface its
   // balance on a screen the user can hand to someone else.
-  const visible = useMemo(() => scoped.filter((g) => !g.hidden && !isShielded('expenses', g.groupId)), [scoped, isShielded]);
+  // In duress the shielded groups ARE shown (as the decoy ledger useGroups
+  // supplies) — leaving them out made this read "You're all settled up" above
+  // rows that each show money owed. Only vanished groups stay out.
+  const visible = useMemo(
+    () => scoped.filter((g) => !g.hidden && (duress ? !isVanished('expenses', g.groupId) : !isShielded('expenses', g.groupId))),
+    [scoped, isShielded, isVanished, duress],
+  );
 
   const totals = useMemo(
     () => computeOverallBalance(user?.userId, visible),

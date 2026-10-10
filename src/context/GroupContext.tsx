@@ -58,6 +58,9 @@ import {
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { v4 as uuid } from 'uuid';
 import { useAuth } from './AuthContext';
+import { usePrivacyGuard } from './PrivacyGuardContext';
+import { DecoyWriteBlockedError, decoyGroup } from '@/services/duressDecoy';
+import { getGuardSync } from '@/services/privacyGuardService';
 
 interface GroupContextValue {
   groups: Group[];
@@ -1620,10 +1623,79 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
   return <GroupContext.Provider value={value}>{children}</GroupContext.Provider>;
 };
 
+// Writes the duress decoy world must never let through for a shielded group:
+// they would either push the coercer's input into the real ledger (and to
+// every member) or act on the disguised copy as if it were real.
+const DECOY_BLOCKED_WRITES = [
+  'addExpense',
+  'updateExpense',
+  'deleteExpense',
+  'settleUp',
+  'updateSettlement',
+  'deleteSettlement',
+  'updateGroup',
+  'convertGroupCurrency',
+  'updateMoneyInChat',
+  'updateGroupBudgets',
+  'updateMemberRole',
+  'removeMember',
+  'leaveGroup',
+  'deleteGroup',
+] as const satisfies readonly (keyof GroupContextValue)[];
+
+const decoyCache = new WeakMap<Group, { salt: string; decoy: Group }>();
+const cachedDecoy = (group: Group): Group => {
+  const salt = getGuardSync().disguiseSalt;
+  const hit = decoyCache.get(group);
+  if (hit && hit.salt === salt) return hit.decoy;
+  const decoy = decoyGroup(group);
+  decoyCache.set(group, { salt, decoy });
+  return decoy;
+};
+
+/**
+ * The undisguised context, for system flows that act on the user's behalf
+ * without showing anything (e.g. draining Siri-queued expenses). Never use it
+ * to render — that is exactly what the duress decoy exists to prevent.
+ */
+export const useRealGroups = () => {
+  const context = useContext(GroupContext);
+  if (!context) {
+    throw new Error('useRealGroups must be used within GroupProvider');
+  }
+  return context;
+};
+
+/**
+ * Screens read groups through here. In the Privacy Guard duress decoy world
+ * every shielded group arrives already disguised (see services/duressDecoy.ts)
+ * and writes to those groups fail like an ordinary error. Providers above
+ * PrivacyGuardProvider (chat, calls, notifications) keep the real data — the
+ * guard's default context reports no duress there.
+ */
 export const useGroups = () => {
   const context = useContext(GroupContext);
   if (!context) {
     throw new Error('useGroups must be used within GroupProvider');
   }
-  return context;
+  const { duress, isShielded } = usePrivacyGuard();
+  return useMemo(() => {
+    if (!duress) return context;
+    const shielded = (groupId: string) => isShielded('expenses', groupId);
+    const blocked = Object.fromEntries(
+      DECOY_BLOCKED_WRITES.map((key) => {
+        const real = context[key] as (groupId: string, ...rest: unknown[]) => Promise<unknown>;
+        return [
+          key,
+          (groupId: string, ...rest: unknown[]) =>
+            shielded(groupId) ? Promise.reject(new DecoyWriteBlockedError()) : real(groupId, ...rest),
+        ];
+      }),
+    ) as Partial<GroupContextValue>;
+    return {
+      ...context,
+      ...blocked,
+      groups: context.groups.map((g) => (shielded(g.groupId) ? cachedDecoy(g) : g)),
+    };
+  }, [context, duress, isShielded]);
 };

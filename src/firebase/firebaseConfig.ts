@@ -3,15 +3,18 @@ import Constants from 'expo-constants';
 import { FirebaseApp, getApp, getApps, initializeApp, type FirebaseOptions } from 'firebase/app';
 import type { Auth } from 'firebase/auth';
 import * as FirebaseAuth from 'firebase/auth';
+import { connectDatabaseEmulator, getDatabase } from 'firebase/database';
 import {
     CACHE_SIZE_UNLIMITED,
+    connectFirestoreEmulator,
     initializeFirestore,
     persistentLocalCache,
     persistentMultipleTabManager,
     type Firestore,
 } from 'firebase/firestore';
+import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { getMessaging, isSupported, type Messaging } from 'firebase/messaging';
-import { getStorage, type FirebaseStorage } from 'firebase/storage';
+import { connectStorageEmulator, getStorage, type FirebaseStorage } from 'firebase/storage';
 import { Platform } from 'react-native';
 
 type LegacyManifestExtra = {
@@ -57,7 +60,27 @@ const getValidatedFirebaseConfig = (config: Record<string, unknown> | undefined)
   };
 };
 
-const firebaseConfig = getValidatedFirebaseConfig(rawFirebaseConfig);
+/**
+ * Local Firebase Emulator Suite, for exercising the whole app (auth, data,
+ * Cloud Functions, quotas, credits) against a disposable backend.
+ *
+ * Inert unless `EXPO_PUBLIC_FIREBASE_EMULATOR_HOST` is set when the bundle is
+ * BUILT — babel inlines `EXPO_PUBLIC_*`, so a shipped bundle that was built
+ * without it cannot be switched over at runtime. The client's project id is
+ * replaced with a `demo-` project, which the emulators guarantee never reaches
+ * a real Google service. Start the backend with `npm run emulators`.
+ */
+const emulatorHost = process.env.EXPO_PUBLIC_FIREBASE_EMULATOR_HOST?.trim() || null;
+export const FIREBASE_EMULATOR_PROJECT_ID = 'demo-manasplit';
+
+const firebaseConfig: FirebaseOptions = emulatorHost
+  ? {
+      ...getValidatedFirebaseConfig(rawFirebaseConfig),
+      projectId: FIREBASE_EMULATOR_PROJECT_ID,
+      databaseURL: `http://${emulatorHost}:9000?ns=${FIREBASE_EMULATOR_PROJECT_ID}`,
+      storageBucket: `${FIREBASE_EMULATOR_PROJECT_ID}.appspot.com`,
+    }
+  : getValidatedFirebaseConfig(rawFirebaseConfig);
 
 const app: FirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
@@ -118,6 +141,18 @@ const db: Firestore = Platform.OS === 'web'
     });
 
 const storage: FirebaseStorage = getStorage(app);
+
+if (emulatorHost) {
+  // Every other module reaches these services through the same per-app
+  // singletons (`getFunctions(app)`, `getDatabase()`, `getStorage()`), so
+  // connecting them once here, before any of them is used, covers the app.
+  FirebaseAuth.connectAuthEmulator(auth, `http://${emulatorHost}:9099`, { disableWarnings: true });
+  connectFirestoreEmulator(db, emulatorHost, 8080);
+  connectDatabaseEmulator(getDatabase(app), emulatorHost, 9000);
+  connectFunctionsEmulator(getFunctions(app), emulatorHost, 5001);
+  connectStorageEmulator(storage, emulatorHost, 9199);
+  console.error(`[firebase] using the local emulator suite at ${emulatorHost}`);
+}
 
 let messagingPromise: Promise<Messaging | null> | null = null;
 

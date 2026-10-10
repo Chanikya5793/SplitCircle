@@ -212,7 +212,7 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   stickyInner: {
-    minHeight: 44,
+    height: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

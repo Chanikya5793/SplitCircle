@@ -1,3 +1,4 @@
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
@@ -24,7 +25,7 @@ import {
     View,
 } from 'react-native';
 import { Avatar, Text } from 'react-native-paper';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface MessageInfoRouteParams {
   message: ChatMessage;
@@ -80,6 +81,7 @@ export const MessageInfoScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const { theme, isDark } = useTheme();
+  const { hidePhoto } = usePrivacyMask();
   const { isOnline } = useOfflineSync();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
@@ -192,7 +194,7 @@ export const MessageInfoScreen = () => {
   const neutralTickColor = isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.5)';
 
   const renderAvatar = (participant: ChatParticipant) => {
-    if (participant.photoURL) {
+    if (participant.photoURL && !hidePhoto()) {
       return <Avatar.Image size={42} source={{ uri: participant.photoURL }} />;
     }
 
@@ -264,7 +266,9 @@ export const MessageInfoScreen = () => {
   return (
     <LiquidBackground>
       <GuardedScreen target="chats" label="Hidden" duressBehavior="blank" duressLabel="Message unavailable.">
-      <SafeAreaView style={styles.container} edges={['bottom']}>
+      {/* Plain View: a bottom-edge SafeAreaView sliced the list off at the
+      home indicator. The inset is in the list's bottom padding instead. */}
+      <View style={styles.container}>
         <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }], paddingTop: insets.top }]}>
           <GlassView role="floating" style={styles.stickyHeaderGlass}>
             <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>
@@ -275,7 +279,7 @@ export const MessageInfoScreen = () => {
 
         <Animated.ScrollView
           style={styles.scrollView}
-          contentContainerStyle={{ paddingTop: insets.top + 48, paddingBottom: 100 }}
+          contentContainerStyle={{ paddingTop: insets.top + 48, paddingBottom: 100 + insets.bottom }}
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
             { useNativeDriver: true }
@@ -361,7 +365,7 @@ export const MessageInfoScreen = () => {
             </GlassView>
           )}
         </Animated.ScrollView>
-      </SafeAreaView>
+      </View>
     </GuardedScreen>
     </LiquidBackground>
   );

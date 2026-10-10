@@ -22,10 +22,11 @@ import { SpendingChart } from '@/components/SpendingChart';
 import { useAuth } from '@/context/AuthContext';
 import { useDisplayCurrency } from '@/context/DisplayCurrencyContext';
 import { useTheme } from '@/context/ThemeContext';
+import { useInsightNarrative } from '@/hooks/useInsightNarrative';
+import { InsightReportPrompt } from '@/components/stats/InsightReportPrompt';
 import { Group } from '@/models';
 import { resolveMoneyInChat } from '@/models/group';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
-import { narrateInsights, type InsightNarrative } from '@/services/insightsAiService';
 import { getRecurringBillsForGroup } from '@/services/recurringBillService';
 import { upsertFactByPrefix } from '@/services/aiMemoryService';
 import { detectRecurringCandidates } from '@/utils/recurringDetection';
@@ -51,7 +52,7 @@ import {
 } from '@/utils/statsInsights';
 import { lightHaptic } from '@/utils/haptics';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 import { PieChart } from 'react-native-chart-kit';
 import { Icon, Text } from 'react-native-paper';
 
@@ -77,12 +78,9 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
   const { getConversion } = useDisplayCurrency();
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
-  const { width: screenWidth } = useWindowDimensions();
 
   const [analysisExpanded, setAnalysisExpanded] = useState(false);
   const [range, setRange] = useState<StatsRange>('month');
-  const [narrative, setNarrative] = useState<InsightNarrative | null>(null);
-  const [narrativeLoading, setNarrativeLoading] = useState(false);
   const [aiExpanded, setAiExpanded] = useState(false);
   const [aiLineCount, setAiLineCount] = useState(0);
   const [chatOpen, setChatOpen] = useState(false);
@@ -171,6 +169,10 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group, user?.userId, range, recurringMonthly, billTitles, fairnessVisible, settings.nudges.staleDays]);
 
+  const report = useInsightNarrative(bundle?.facts ?? null, { backTitle: 'Group Stats' });
+  const narrative = report.narrative;
+  const narrativeLoading = report.loading;
+
   // Deep link from a digest/insight chat card: open the chat once the
   // narrative (the thread's seed) has arrived. One-shot per mount.
   const deepLinkConsumed = useRef(false);
@@ -181,28 +183,11 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
     }
   }, [openInsightsChat, narrative]);
 
-  // AI narrative tier (on-device → PCC → nothing). Heuristic cards always show.
+  // AI narrative tier (on-device → PCC → nothing). Heuristic cards always
+  // show; the narrative is a metered AI insight report (cached ones are free).
   useEffect(() => {
-    let cancelled = false;
-    setNarrative(null);
     setAiExpanded(false);
     setAiLineCount(0);
-    if (!bundle) {
-      setNarrativeLoading(false);
-      return;
-    }
-    setNarrativeLoading(true);
-    narrateInsights(bundle.facts)
-      .then((n) => {
-        if (!cancelled) setNarrative(n);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setNarrativeLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [bundle?.facts]);
 
   const chartConfig = useMemo(
@@ -351,7 +336,7 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
                 <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
                   Group spend
                 </Text>
-                <Text variant="titleLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                <Text variant="titleLarge" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
                   {fmtMoney(bundle.aggregate.total, group.currency)}
                 </Text>
               </View>
@@ -359,7 +344,7 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
                 <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
                   Your share
                 </Text>
-                <Text variant="titleLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                <Text variant="titleLarge" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ color: theme.colors.primary, fontWeight: '700' }}>
                   {fmtMoney(bundle.aggregate.userShare, group.currency)}
                 </Text>
               </View>
@@ -381,32 +366,145 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
             )}
           </GlassView>
 
+          {/* AI summary and insight cards sit right under the totals, as they did
+          before the 2026-10-03 restyle moved them behind "More analysis" — that
+          also hid the only way into the insights chat (doc 23). */}
+          {/* AI narrative (labeled by engine) */}
+          {narrative ? (
+            <GlassView style={styles.card}>
+              <TouchableOpacity
+                activeOpacity={0.88}
+                onPress={() => {
+                  lightHaptic();
+                  setChatOpen(true);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Chat about these insights"
+              >
+                <View>
+              <View style={styles.aiHeader}>
+                <Icon
+                  source={narrative.source === 'pcc' ? 'cloud-lock-outline' : 'chip'}
+                  size={16}
+                  color={theme.colors.primary}
+                />
+                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }}>
+                  {narrative.source === 'pcc' ? 'Private Cloud Compute' : 'On-device intelligence'}
+                </Text>
+                <Icon source="chat-outline" size={16} color={theme.colors.primary} />
+              </View>
+              <Text
+                variant="bodyMedium"
+                style={{ color: theme.colors.onSurface }}
+                // First render is unclamped so onTextLayout sees the true line
+                // count; after that we clamp to 3 until the user expands.
+                numberOfLines={aiCollapsible && !aiExpanded ? 3 : undefined}
+                onTextLayout={(e) => {
+                  if (aiLineCount === 0) setAiLineCount(e.nativeEvent.lines.length);
+                }}
+              >
+                {narrative.text}
+              </Text>
+                </View>
+              </TouchableOpacity>
+              {aiCollapsible && (
+                <TouchableOpacity
+                  onPress={() => {
+                    lightHaptic();
+                    setAiExpanded((v) => !v);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={aiExpanded ? 'Show less' : 'Show more'}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600', marginTop: 4 }}>
+                    {aiExpanded ? 'Less' : 'More'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </GlassView>
+          ) : (
+            narrativeLoading ? (
+              <AiNarrativeSkeleton />
+            ) : (
+              <InsightReportPrompt
+                canGenerate={report.canGenerate}
+                limitedUntil={report.limitedUntil}
+                onGenerate={report.generate}
+                backTitle="Group Stats"
+              />
+            )
+          )}
+
+          {/* Insight cards (deterministic — always available) */}
+          {bundle.cards.length > 0 && (
+            <View style={styles.cardsStack}>
+              {bundle.cards.map((c) => (
+                <GlassView key={c.id} style={styles.insightCard}>
+                  <View style={[styles.insightIcon, { backgroundColor: `${severityColor(c.severity)}22` }]}>
+                    <Icon source={CARD_ICONS[c.kind]} size={18} color={severityColor(c.severity)} />
+                  </View>
+                  <View style={styles.insightBody}>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                      {c.title}
+                    </Text>
+                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                      {c.body}
+                    </Text>
+                  </View>
+                  {c.amount != null && (
+                    <Text variant="bodyMedium" style={{ color: severityColor(c.severity), fontWeight: '700' }}>
+                      {fmtMoney(c.amount, group.currency)}
+                    </Text>
+                  )}
+                </GlassView>
+              ))}
+            </View>
+          )}
+
           {/* Category pie + budgets */}
           <GlassView style={styles.card}>
             <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
               By category
             </Text>
             {pieData.length > 0 ? (
-              <PieChart
-                data={pieData}
-                width={screenWidth - 64}
-                height={200}
-                chartConfig={chartConfig}
-                accessor={'amount'}
-                backgroundColor={'transparent'}
-                paddingLeft={'15'}
-                center={[10, 0]}
-                absolute
-              />
+              <View style={styles.pieRow}>
+                {/* chart-kit's own legend printed the raw number ("12450
+                General"), unformatted and in no currency, so the legend is
+                drawn here instead. Pie centre = width / 4 + paddingLeft. */}
+                <PieChart
+                  data={pieData}
+                  width={PIE_SIZE}
+                  height={PIE_SIZE}
+                  chartConfig={chartConfig}
+                  accessor={'amount'}
+                  backgroundColor={'transparent'}
+                  paddingLeft={String(PIE_SIZE / 4)}
+                  hasLegend={false}
+                />
+                <View style={styles.pieLegend}>
+                  {bundle.aggregate.byCategory.map((category, index) => (
+                    <View key={category.category} style={styles.pieLegendRow}>
+                      <View
+                        style={[
+                          styles.pieLegendDot,
+                          { backgroundColor: index < pieData.length ? pieData[index].color : theme.colors.muted },
+                        ]}
+                      />
+                      <View style={styles.pieLegendText}>
+                        <Text numberOfLines={1} style={{ color: theme.colors.onSurface }}>{category.category}</Text>
+                        <Text numberOfLines={1} style={[theme.typography.caption, { color: theme.colors.onSurfaceVariant, fontVariant: ['tabular-nums'] }]}>
+                          {fmtMoney(category.total, group.currency)}
+                          {bundle.aggregate.total > 0 ? ` · ${Math.round((category.total / bundle.aggregate.total) * 100)}%` : ''}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
             ) : (
               <Text style={{ color: theme.colors.onSurfaceVariant }}>No expenses in this range.</Text>
             )}
-            {bundle.aggregate.byCategory.map((category) => (
-              <View key={category.category} style={{ gap: 2, marginTop: 8 }}>
-                <Text style={{ color: theme.colors.onSurface }}>{category.category}</Text>
-                <Text style={{ color: theme.colors.onSurfaceVariant }}>{fmtMoney(category.total, group.currency)}</Text>
-              </View>
-            ))}
             {bundle.budgets.length > 0 && (
               <View style={styles.budgetBlock}>
                 <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>Budgets · this month</Text>
@@ -508,90 +606,6 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
               <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                 Comparisons and forecasts use their own periods, shown below. They may differ from the selected range.
               </Text>
-          {/* AI narrative (labeled by engine) */}
-          {narrative ? (
-            <GlassView style={styles.card}>
-              <TouchableOpacity
-                activeOpacity={0.88}
-                onPress={() => {
-                  lightHaptic();
-                  setChatOpen(true);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel="Chat about these insights"
-              >
-                <View>
-              <View style={styles.aiHeader}>
-                <Icon
-                  source={narrative.source === 'pcc' ? 'cloud-lock-outline' : 'chip'}
-                  size={16}
-                  color={theme.colors.primary}
-                />
-                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }}>
-                  {narrative.source === 'pcc' ? 'Private Cloud Compute' : 'On-device intelligence'}
-                </Text>
-                <Icon source="chat-outline" size={16} color={theme.colors.primary} />
-              </View>
-              <Text
-                variant="bodyMedium"
-                style={{ color: theme.colors.onSurface }}
-                // First render is unclamped so onTextLayout sees the true line
-                // count; after that we clamp to 3 until the user expands.
-                numberOfLines={aiCollapsible && !aiExpanded ? 3 : undefined}
-                onTextLayout={(e) => {
-                  if (aiLineCount === 0) setAiLineCount(e.nativeEvent.lines.length);
-                }}
-              >
-                {narrative.text}
-              </Text>
-                </View>
-              </TouchableOpacity>
-              {aiCollapsible && (
-                <TouchableOpacity
-                  onPress={() => {
-                    lightHaptic();
-                    setAiExpanded((v) => !v);
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel={aiExpanded ? 'Show less' : 'Show more'}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600', marginTop: 4 }}>
-                    {aiExpanded ? 'Less' : 'More'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </GlassView>
-          ) : (
-            narrativeLoading && <AiNarrativeSkeleton />
-          )}
-
-          {/* Insight cards (deterministic — always available) */}
-          {bundle.cards.length > 0 && (
-            <View style={styles.cardsStack}>
-              {bundle.cards.map((c) => (
-                <GlassView key={c.id} style={styles.insightCard}>
-                  <View style={[styles.insightIcon, { backgroundColor: `${severityColor(c.severity)}22` }]}>
-                    <Icon source={CARD_ICONS[c.kind]} size={18} color={severityColor(c.severity)} />
-                  </View>
-                  <View style={styles.insightBody}>
-                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                      {c.title}
-                    </Text>
-                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                      {c.body}
-                    </Text>
-                  </View>
-                  {c.amount != null && (
-                    <Text variant="bodyMedium" style={{ color: severityColor(c.severity), fontWeight: '700' }}>
-                      {fmtMoney(c.amount, group.currency)}
-                    </Text>
-                  )}
-                </GlassView>
-              ))}
-            </View>
-          )}
-
           {/* Momentum: this month vs last, per category */}
           {momentumRows.length > 0 && (
             <GlassView style={styles.card}>
@@ -716,6 +730,8 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
   );
 };
 
+const PIE_SIZE = 150;
+
 const styles = StyleSheet.create({
   container: {
     paddingBottom: 180,
@@ -756,6 +772,29 @@ const styles = StyleSheet.create({
   totalCol: {
     flex: 1,
     gap: 2,
+  },
+  pieRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  pieLegend: {
+    flex: 1,
+    gap: 10,
+  },
+  pieLegendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  pieLegendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  pieLegendText: {
+    flex: 1,
+    gap: 1,
   },
   aiHeader: {
     flexDirection: 'row',

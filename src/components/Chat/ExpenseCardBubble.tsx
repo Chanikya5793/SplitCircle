@@ -486,15 +486,17 @@ const styles = StyleSheet.create({
     marginVertical: 6,
     width: '100%',
   },
+  // A definite width, not a min/max range: the card inside is `width: 100%`,
+  // which can't resolve against a parent that is itself sizing to content, so
+  // the range collapsed to icon + amount and the title/payer/time column got
+  // zero width — an INR card showed only "₹12,450.00 >".
   cardPress: {
-    maxWidth: '88%',
-    minWidth: '70%',
+    width: '80%',
   },
-  /** Tight rows take the full 88% the card is already allowed. Shrink-to-fit
-   *  left it at ~62% of the screen while the title wrapped inside it — width
-   *  going unused next to text with nowhere to go. */
+  /** Tight rows (large text) take the full 88%: the title wraps there, and the
+   *  extra width keeps it to as few lines as possible. */
   cardPressWide: {
-    minWidth: '88%',
+    width: '88%',
   },
   card: {
     width: '100%',

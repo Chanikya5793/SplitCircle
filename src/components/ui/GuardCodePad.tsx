@@ -471,7 +471,6 @@ const styles = StyleSheet.create({
   },
   switchBtn: {
     marginTop: 16,
-    minHeight: 44,
     paddingHorizontal: 12,
     justifyContent: 'center',
   },

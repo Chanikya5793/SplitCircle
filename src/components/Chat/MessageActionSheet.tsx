@@ -442,9 +442,9 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   reactionButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
   },

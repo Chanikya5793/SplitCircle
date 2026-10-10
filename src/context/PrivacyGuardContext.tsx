@@ -22,6 +22,9 @@ import { AppState, Platform, Settings } from 'react-native';
 import { GuardCodePad } from '@/components/ui/GuardCodePad';
 import { authenticate, isBiometricAvailable } from '@/services/biometrics';
 import { setScreenCaptureBlocked, subscribeScreenshot } from '@/services/screenCaptureGuard';
+import { useAuth } from '@/context/AuthContext';
+import { useChat } from '@/context/ChatContext';
+import { useRealGroups } from '@/context/GroupContext';
 
 type GuardTarget = keyof GuardTargets;
 
@@ -241,6 +244,27 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
     void setScreenCaptureBlocked(active && settings.blockScreenRecording);
   }, [settings.active, settings.codeHash, settings.blockScreenRecording]);
 
+  const { threads } = useChat();
+  const { groups: realGroups } = useRealGroups();
+  const { user } = useAuth();
+  const chatGroupIds = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const thread of threads) {
+      if (thread.type === 'group' && thread.groupId) map.set(thread.chatId, thread.groupId);
+    }
+    return map;
+  }, [threads]);
+  // Direct chat → the other person, for the duress rule below.
+  const directPeers = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const thread of threads) {
+      if (thread.type !== 'direct') continue;
+      const other = thread.participants.find((p) => p.userId !== user?.userId);
+      if (other) map.set(thread.chatId, other.userId);
+    }
+    return map;
+  }, [threads, user?.userId]);
+
   const value = useMemo<PrivacyGuardContextValue>(() => {
     // `enabled` arms the SHAKE listener only; `active` raises the shields no
     // matter how they were tripped (shake or the manual Activate button).
@@ -248,9 +272,32 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
     const active = settings.active && Boolean(settings.codeHash);
     const duress = active && settings.duressActive;
 
+    const groupShielded = (groupId?: string) =>
+      settings.targets.everything || (settings.targets.expenses && inScope(settings.groupScope, groupId));
+    const disguisedPeople = new Set<string>();
+    if (active && settings.duressActive) {
+      for (const g of realGroups) {
+        if (!groupShielded(g.groupId)) continue;
+        for (const m of g.members) disguisedPeople.add(m.userId);
+      }
+    }
     const isShielded = (target: Exclude<GuardTarget, 'everything'>, entityId?: string) => {
       if (!active) return false;
       if (settings.targets.everything) return true;
+      // A group's chat is part of the group: while the group is hidden its chat
+      // is too, whatever the Chats target says. Otherwise hiding "Goa Trip"
+      // left its chat — real name, real messages, real senders — one tap away
+      // (and in duress, under the decoy group's fake name).
+      if (target === 'chats' && entityId) {
+        const groupId = chatGroupIds.get(entityId);
+        if (groupId && groupShielded(groupId)) return true;
+        // Duress: people in a disguised group appear under fake names
+        // everywhere (groups, Friends, Calls), so a DM with one of them — real
+        // name, real messages — would contradict the decoy. It counts as
+        // shielded there, and so drops out of the chat list like the rest.
+        const peer = directPeers.get(entityId);
+        if (peer && settings.duressActive && disguisedPeople.has(peer)) return true;
+      }
       if (!settings.targets[target]) return false;
       if (target === 'expenses' || target === 'charts') return inScope(settings.groupScope, entityId);
       if (target === 'chats') return inScope(settings.chatScope, entityId);
@@ -259,6 +306,10 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
 
     const isVanished = (target: Exclude<GuardTarget, 'everything'>, entityId?: string) => {
       if (!entityId || !isShielded(target, entityId)) return false;
+      // "Vanish" promises hidden surfaces show nothing at all — a masked row
+      // with "···" for its amount is not nothing. (Never in duress: the decoy
+      // world keeps its disguised groups, and an empty app would be the tell.)
+      if (!duress && settings.action === 'vanish') return true;
       if (target === 'chats') {
         // Duress: every shielded chat vanishes — a visible fake chat whose
         // room is empty would give the game away on the first tap.
@@ -296,7 +347,7 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
         return { ok: false, lockedForMs };
       },
     };
-  }, [settings]);
+  }, [settings, chatGroupIds, directPeers, realGroups]);
 
   return (
     <PrivacyGuardContext.Provider value={value}>

@@ -17,11 +17,13 @@ import {
   enrollSecurityIdentity,
   getSecurityCenter,
   removeSecurityIdentity,
+  newSecurityScanRequestId,
   startSecurityScan,
   updateSecurityFinding,
   updateSecurityPreferences,
   verifySecurityIdentity,
 } from '@/services/securityMonitoringService';
+import { runServerMeteredCall } from '@/services/meteredAccess';
 import { checkPwnedPassword, type PwnedPasswordResult } from '@/services/pwnedPasswordService';
 import { appAlert } from '@/utils/appAlert';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
@@ -40,6 +42,7 @@ import {
 } from 'react-native';
 import { Button, Checkbox, Icon, Switch, Text, TextInput } from 'react-native-paper';
 import Animated, { SlideInDown } from 'react-native-reanimated';
+import { v4 as uuidv4 } from 'uuid';
 import { SecurityFindingCard } from './SecurityFindingCard';
 
 type FindingFilter = 'active' | 'resolved' | 'muted';
@@ -249,7 +252,14 @@ export const SecurityCenterScreen = () => {
     }
     setScanning(true);
     try {
-      const result = await startSecurityScan();
+      // One request id per tap: approving credits retries the same attempt.
+      const requestId = newSecurityScanRequestId();
+      const result = await runServerMeteredCall(
+        'provider.manual_monitor_run',
+        (useCredits) => startSecurityScan({ requestId, useCredits }),
+        { backTitle: 'Security Center' },
+      );
+      if (!result) return;
       successHaptic();
       await load(true);
       appAlert(
@@ -373,7 +383,14 @@ export const SecurityCenterScreen = () => {
     setCheckingUrl(true);
     setUrlResult(null);
     try {
-      setUrlResult(await analyzeSecurityUrl(url.trim()));
+      const operationId = uuidv4();
+      const result = await runServerMeteredCall(
+        'provider.security_check',
+        (useCredits) => analyzeSecurityUrl(url.trim(), { operationId, useCredits }),
+        { backTitle: 'Security Center' },
+      );
+      if (!result) return;
+      setUrlResult(result);
       setUrl('');
       await load(true);
     } catch (error) {
@@ -431,8 +448,9 @@ export const SecurityCenterScreen = () => {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={theme.colors.primary} />}
         keyboardShouldPersistTaps="handled"
       >
+        {/* The header pill already says "Security Center"; a second large
+        heading right under it only repeated it. */}
         <View style={styles.heroCopy}>
-          <Text variant="headlineMedium" style={{ color: theme.colors.onSurface, fontWeight: '800' }}>Security Center</Text>
           <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, lineHeight: 20 }}>
             See what has been checked and what needs your attention.
           </Text>

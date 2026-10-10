@@ -6,7 +6,7 @@ import {
 } from "./commerceCatalog";
 
 export const MONETIZATION_SCHEMA_VERSION = 1 as const;
-export const MONETIZATION_CATALOG_VERSION = "2026-09-06.commerce-v1" as const;
+export const MONETIZATION_CATALOG_VERSION = "2026-10-09.usage-v2" as const;
 
 export const PLAN_IDS = ["free", "essential", "plus", "pro", "power", "max"] as const;
 export type PlanId = (typeof PLAN_IDS)[number];
@@ -56,9 +56,23 @@ export const METERED_FEATURE_IDS = [
 ] as const;
 export type MeteredFeatureId = (typeof METERED_FEATURE_IDS)[number];
 
+/**
+ * Where the quota is enforced.
+ * - client_authorized: the work runs on the device (local math, Apple
+ *   Foundation Models), so the app must obtain a server reservation first.
+ * - server_internal: the work runs on our servers or a paid provider, so the
+ *   callable that does the work authorizes and finalizes it itself and the
+ *   client cannot reserve it directly.
+ */
+export type MeteredEnforcement = "client_authorized" | "server_internal";
+
 export interface MeteredFeatureDefinition {
     id: MeteredFeatureId;
+    /** Short user-facing name, e.g. "AI assistant messages". */
     label: string;
+    /** Singular and plural nouns for one completed use. */
+    unit: { one: string; other: string };
+    enforcement: MeteredEnforcement;
     quotaKey: string;
     costClass: CostClass;
     allowedExecutionRoutes: readonly ExecutionRoute[];
@@ -83,7 +97,9 @@ const monthlyLocalQuotas: PlanQuotas = {
 export const METERED_FEATURES: Record<MeteredFeatureId, MeteredFeatureDefinition> = {
     "advanced_split.completion": {
         id: "advanced_split.completion",
-        label: "Eligible advanced split completion",
+        label: "Advanced splits",
+        unit: { one: "split", other: "splits" },
+        enforcement: "client_authorized",
         quotaKey: "advanced_split.completion",
         costClass: "deterministic_local",
         allowedExecutionRoutes: ["local_deterministic"],
@@ -94,7 +110,9 @@ export const METERED_FEATURES: Record<MeteredFeatureId, MeteredFeatureDefinition
     },
     "insights.advanced_report": {
         id: "insights.advanced_report",
-        label: "Generated advanced local report",
+        label: "AI insight reports",
+        unit: { one: "report", other: "reports" },
+        enforcement: "client_authorized",
         quotaKey: "insights.advanced_report",
         costClass: "deterministic_local",
         allowedExecutionRoutes: ["local_deterministic", "on_device_apple"],
@@ -103,7 +121,9 @@ export const METERED_FEATURES: Record<MeteredFeatureId, MeteredFeatureDefinition
     },
     "ai.expense_on_device_turn": {
         id: "ai.expense_on_device_turn",
-        label: "On-device expense assistant turn",
+        label: "AI assistant messages",
+        unit: { one: "message", other: "messages" },
+        enforcement: "client_authorized",
         quotaKey: "ai.expense_on_device_turn",
         costClass: "apple_device_capability",
         allowedExecutionRoutes: ["on_device_apple"],
@@ -121,7 +141,9 @@ export const METERED_FEATURES: Record<MeteredFeatureId, MeteredFeatureDefinition
     },
     "provider.ai_or_ocr_job": {
         id: "provider.ai_or_ocr_job",
-        label: "Provider-backed AI or OCR job",
+        label: "Cloud AI jobs",
+        unit: { one: "job", other: "jobs" },
+        enforcement: "server_internal",
         quotaKey: "provider.ai_or_ocr_job",
         costClass: "provider_variable",
         allowedExecutionRoutes: ["provider"],
@@ -137,7 +159,9 @@ export const METERED_FEATURES: Record<MeteredFeatureId, MeteredFeatureDefinition
     },
     "provider.security_check": {
         id: "provider.security_check",
-        label: "Provider-backed security check",
+        label: "Link safety checks",
+        unit: { one: "check", other: "checks" },
+        enforcement: "server_internal",
         quotaKey: "provider.security_check",
         costClass: "provider_variable",
         allowedExecutionRoutes: ["provider"],
@@ -153,7 +177,9 @@ export const METERED_FEATURES: Record<MeteredFeatureId, MeteredFeatureDefinition
     },
     "provider.manual_monitor_run": {
         id: "provider.manual_monitor_run",
-        label: "Manual provider-backed monitoring run",
+        label: "Manual security scans",
+        unit: { one: "scan", other: "scans" },
+        enforcement: "server_internal",
         quotaKey: "provider.manual_monitor_run",
         costClass: "provider_variable",
         allowedExecutionRoutes: ["provider"],
@@ -187,12 +213,16 @@ export const MONETIZATION_CATALOG = {
         power: { label: "Power", storefrontStatus: "storefront" as const },
         max: { label: "Max", storefrontStatus: "storefront" as const },
     },
-    // Only features with a complete server-side enforcement boundary are
-    // published to purchasing clients. The remaining definitions stay
-    // available to privacy-safe shadow telemetry until their call sites are
-    // wired end to end.
+    // Only features with a live call path AND a complete enforcement boundary
+    // are published. "provider.ai_or_ocr_job" stays unpublished: nothing in
+    // the app calls a cloud AI/OCR provider today, and advertising an
+    // allowance for a feature that does not exist would mislead people.
     features: {
         "advanced_split.completion": METERED_FEATURES["advanced_split.completion"],
+        "ai.expense_on_device_turn": METERED_FEATURES["ai.expense_on_device_turn"],
+        "insights.advanced_report": METERED_FEATURES["insights.advanced_report"],
+        "provider.security_check": METERED_FEATURES["provider.security_check"],
+        "provider.manual_monitor_run": METERED_FEATURES["provider.manual_monitor_run"],
     },
     capacities: {
         premiumSavedLooks: {
@@ -264,6 +294,12 @@ export const MONETIZATION_CATALOG = {
         purchasedCreditChargingEnabled: true,
     },
 } as const;
+
+export const PUBLISHED_FEATURE_IDS = Object.keys(MONETIZATION_CATALOG.features) as MeteredFeatureId[];
+
+/** Features the app may reserve directly through authorizeMonetizedOperation. */
+export const CLIENT_AUTHORIZED_FEATURE_IDS = PUBLISHED_FEATURE_IDS
+    .filter((id) => METERED_FEATURES[id].enforcement === "client_authorized");
 
 export function isPlanId(value: unknown): value is PlanId {
     return typeof value === "string" && (PLAN_IDS as readonly string[]).includes(value);

@@ -120,7 +120,6 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   compactCard: {
-    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,

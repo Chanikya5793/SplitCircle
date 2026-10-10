@@ -122,6 +122,13 @@ interface Props {
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
+// The outer ring fits about seven characters: lead with the first name and
+// clip only a first name that is itself too long.
+const wheelLabel = (name: string): string => {
+  const first = name.trim().split(/\s+/)[0] || name;
+  return first.length > 7 ? `${first.slice(0, 6)}…` : first;
+};
+
 const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
   ({ participants, percentages, onOuterSpinComplete, onInnerSpinComplete, disabled, highlightedUserId, remainingPct, onHubPress, colorIndexById }, ref) => {
     const { theme } = useTheme();
@@ -260,7 +267,7 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
               alignmentBaseline="central"
               transform={`rotate(${mid}, ${labelPos.x}, ${labelPos.y})`}
             >
-              {outerCount > 8 ? resolveInitials(p.name) : p.name.length > 7 ? p.name.slice(0, 6) + '…' : p.name}
+              {outerCount > 8 ? resolveInitials(p.name) : wheelLabel(p.name)}
             </SvgText>
           </G>
         );

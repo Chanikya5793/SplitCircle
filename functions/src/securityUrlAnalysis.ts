@@ -5,6 +5,7 @@ import { domainToUnicode } from "node:url";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { defineSecret } from "firebase-functions/params";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { providerOperationKey, runMeteredProviderOperation } from "./monetizedProvider";
 import { assessSecurityRisk } from "./security/riskEngine";
 import type { NormalizedSecurityFinding } from "./security/types";
 
@@ -328,7 +329,15 @@ export async function analyzeUrl(
 export const analyzeSecurityUrl = onCall({ secrets: [webRiskApiKey] }, async (request) => {
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Authentication required.");
-    const result = await analyzeUrl(typeof request.data?.url === "string" ? request.data.url.trim() : "");
+    const { result, usage } = await runMeteredProviderOperation({
+        request,
+        featureId: "provider.security_check",
+        operationKey: providerOperationKey("url-check", request.data?.operationId),
+        useCredits: request.data?.useCredits === true,
+        run: () => analyzeUrl(typeof request.data?.url === "string" ? request.data.url.trim() : ""),
+        // Only a check the reputation provider actually answered is billable.
+        succeeded: (analysis) => analysis.providerStatus === "success",
+    });
     const rootRef = getFirestore().collection("securityMonitors").doc(uid);
     if (result.indicators.length > 0) {
         const findingId = createHash("sha256").update(`url:v1:${result.hostname}`).digest("base64url");
@@ -354,7 +363,7 @@ export const analyzeSecurityUrl = onCall({ secrets: [webRiskApiKey] }, async (re
         }, { merge: true });
         await rootRef.collection("timeline").add({ type: "url_analyzed", findingId, createdAt: FieldValue.serverTimestamp() });
     }
-    return result;
+    return { ...result, usage };
 });
 
 export const securityUrlSecrets = { webRiskApiKey };

@@ -422,7 +422,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   rowCopy: { flex: 1 },
   statusIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  listRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48 },
+  listRow: { flexDirection: 'row', alignItems: 'center', gap: 10,  },
   note: { lineHeight: 18 },
 });
 

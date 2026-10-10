@@ -2,6 +2,7 @@ import { app, auth } from '@/firebase';
 import {
   isFinalizeMonetizedOperationResult,
   isMonetizationSnapshot,
+  isMonetizationUsageSummary,
   isMonetizedOperationAuthorization,
   isVerifyAppleTransactionResult,
   type AuthorizeMonetizedOperationInput,
@@ -9,6 +10,7 @@ import {
   type FinalizeMonetizedOperationResult,
   type MonetizationSnapshot,
   type MonetizationUsageDecision,
+  type MonetizationUsageSummary,
   type MonetizedOperationAuthorization,
   type RecordMonetizationUsageInput,
   type VerifyAppleTransactionInput,
@@ -21,6 +23,11 @@ const functions = getFunctions(app);
 const getSnapshotCallable = httpsCallable<Record<string, never>, unknown>(
   functions,
   'getMonetizationSnapshot',
+);
+
+const getUsageCallable = httpsCallable<Record<string, never>, unknown>(
+  functions,
+  'getMonetizationUsage',
 );
 
 const recordUsageCallable = httpsCallable<
@@ -64,6 +71,15 @@ export const getMonetizationSnapshot = async (): Promise<MonetizationSnapshot> =
   const response = await getSnapshotCallable({});
   if (!isMonetizationSnapshot(response.data)) {
     throw new Error('The access service returned an unsupported response.');
+  }
+  return response.data;
+};
+
+/** Plan meters, 30-day activity and recent credit history for this account. */
+export const getMonetizationUsage = async (): Promise<MonetizationUsageSummary> => {
+  const response = await getUsageCallable({});
+  if (!isMonetizationUsageSummary(response.data)) {
+    throw new Error('The usage service returned an unsupported response.');
   }
   return response.data;
 };

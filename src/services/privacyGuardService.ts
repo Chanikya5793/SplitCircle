@@ -305,8 +305,9 @@ export const maskTextValue = (
 ): string => {
   if (style === 'garble') return disguiseText(input, kind);
   const glyph = style === 'blocks' ? '█' : '•';
-  const len = Math.max(4, Math.min(input.length, 14));
-  return glyph.repeat(len);
+  // Fixed length: a run sized to the input told an onlooker how long each
+  // hidden name was, which is enough to tell "Mom" from "Goa Trip 2026".
+  return glyph.repeat(8);
 };
 
 /**
@@ -332,6 +333,18 @@ export const decoyAmount = (value: number, seedKey: string = 'global'): number =
   return Math.round(value * decoyScaleFor(seedKey) * 100) / 100;
 };
 
+/**
+ * Decoy date for the duress world: the real timestamp moved back by a stable
+ * per-group number of days (4–45). A garbled date ("Oku 85") is an instant
+ * tell that the unlock is fake; a shifted one reads as ordinary history while
+ * still hiding when things really happened. Order within a group is kept.
+ */
+export const decoyTimestamp = (timestamp: number, seedKey: string = 'global'): number => {
+  if (!Number.isFinite(timestamp)) return timestamp;
+  const days = 4 + Math.floor(mulberry(`decoy-date:${salt()}:${seedKey}`)() * 42);
+  return timestamp - days * 86_400_000;
+};
+
 /** Acceleration magnitude (in g) that counts as a shake, per sensitivity. */
 export const SHAKE_THRESHOLDS: Record<GuardSensitivity, number> = {
   gentle: 1.8,
@@ -349,6 +362,16 @@ export const onGuardChanged = (listener: () => void): (() => void) => {
 };
 
 export const getGuardSync = (): PrivacyGuardSettings => cache ?? DEFAULT_GUARD_SETTINGS;
+
+/**
+ * The duress decoy world is live — same rule as PrivacyGuardContext's `duress`.
+ * For code above the guard provider (contexts, services) that must not write
+ * decoy data back to the server.
+ */
+export const isDuressDecoyActive = (): boolean => {
+  const settings = getGuardSync();
+  return settings.active && Boolean(settings.codeHash) && settings.duressActive;
+};
 
 export const hydrateGuard = async (): Promise<PrivacyGuardSettings> => {
   if (cache) return cache;

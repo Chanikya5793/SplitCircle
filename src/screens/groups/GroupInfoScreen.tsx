@@ -9,6 +9,9 @@ import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { useTheme } from '@/context/ThemeContext';
 import type { GroupMember } from '@/models';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -84,6 +87,9 @@ export const GroupInfoScreen = () => {
     const { groups, updateGroup, updateMemberRole, removeMember, leaveGroup, deleteGroup } = useGroups();
     const { ensureGroupThread } = useChat();
     const { theme } = useTheme();
+    const { maskGroupName, maskGroupText } = usePrivacyMask();
+    const { duress } = usePrivacyGuard();
+    const fmtMoney = useMoneyDisplay(groupId);
     const [isEditingName, setIsEditingName] = useState(false);
     const [editedName, setEditedName] = useState('');
     const [isEditingDescription, setIsEditingDescription] = useState(false);
@@ -136,9 +142,19 @@ export const GroupInfoScreen = () => {
     }
 
     const me = group.members.find((m) => m.userId === user?.userId);
-    const isOwner = me?.role === 'owner';
-    const isAdmin = isOwner || me?.role === 'admin';
-    const groupInitials = group.name.slice(0, 2).toUpperCase();
+    // Duress decoy world: everything shown is disguised, and nothing here may
+    // change the REAL group — no rename (the editor would be seeded with the
+    // real name), no member management, no leave/delete. Rendering as a plain
+    // member keeps those affordances absent rather than visibly disabled.
+    const isOwner = !duress && me?.role === 'owner';
+    const isAdmin = !duress && (isOwner || me?.role === 'admin');
+    const groupName = maskGroupName(group.name, group.groupId);
+    const nameOf = (member?: { displayName?: string | null }, fallback?: string) =>
+        maskGroupText(resolveDisplayName(member, fallback), group.groupId, 'person');
+    const description = group.description?.trim()
+        ? maskGroupText(group.description, group.groupId, 'note')
+        : '';
+    const inviteCode = maskGroupText(group.inviteCode, group.groupId);
 
     // Transform slide-in, not opacity — fractional alpha on an ancestor kills
   // UIVisualEffectView glass materials (see StickyHeaderPill).
@@ -233,7 +249,7 @@ export const GroupInfoScreen = () => {
             screen: ROUTES.APP.GROUPS_TAB,
             params: {
                 screen: ROUTES.APP.GROUP_DETAILS,
-                params: { groupId: group.groupId, initialTitle: group.name },
+                params: { groupId: group.groupId, initialTitle: groupName },
             },
         });
     };
@@ -275,13 +291,13 @@ export const GroupInfoScreen = () => {
     const confirmRemoveMember = (member: GroupMember) => {
         const settled = Math.abs(member.balance) < 0.005;
         const balanceLabel = member.balance > 0
-            ? `is still owed ${group.currency} ${member.balance.toFixed(2)}`
-            : `still owes ${group.currency} ${Math.abs(member.balance).toFixed(2)}`;
+            ? `is still owed ${fmtMoney(member.balance, group.currency)}`
+            : `still owes ${fmtMoney(Math.abs(member.balance), group.currency)}`;
         appAlert(
             'Remove member',
             settled
-                ? `Remove ${resolveDisplayName(member)} from "${group.name}"? Their balance history stays in the group ledger.`
-                : `${resolveDisplayName(member)} ${balanceLabel}. Removing them keeps this visible under Former members, but they won't be able to settle it themselves anymore. Remove anyway?`,
+                ? `Remove ${nameOf(member)} from "${groupName}"? Their balance history stays in the group ledger.`
+                : `${nameOf(member)} ${balanceLabel}. Removing them keeps this visible under Former members, but they won't be able to settle it themselves anymore. Remove anyway?`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
@@ -347,7 +363,7 @@ export const GroupInfoScreen = () => {
         if (options.length === 0) return;
 
         lightHaptic();
-        appAlert(resolveDisplayName(member), member.role.charAt(0).toUpperCase() + member.role.slice(1), [
+        appAlert(nameOf(member), member.role.charAt(0).toUpperCase() + member.role.slice(1), [
             ...options,
             { text: 'Cancel', style: 'cancel' },
         ]);
@@ -355,6 +371,11 @@ export const GroupInfoScreen = () => {
 
     const handleLeaveGroup = () => {
         if (!me) return;
+        if (duress) {
+            // Looks like an ordinary failure; the real membership is untouched.
+            appAlert('Could not leave group', 'Please try again.');
+            return;
+        }
         if (me.role === 'owner') {
             appAlert(
                 'Transfer ownership first',
@@ -364,7 +385,7 @@ export const GroupInfoScreen = () => {
         }
         appAlert(
             'Leave group',
-            `Leave "${group.name}"? Your balance history will remain visible to other members.`,
+            `Leave "${groupName}"? Your balance history will remain visible to other members.`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
@@ -393,7 +414,7 @@ export const GroupInfoScreen = () => {
         if (!isOwner) return;
         appAlert(
             'Delete group',
-            `Permanently delete "${group.name}"? Expenses, settlements, and the group chat will be removed for everyone. This cannot be undone.`,
+            `Permanently delete "${groupName}"? Expenses, settlements, and the group chat will be removed for everyone. This cannot be undone.`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
@@ -448,7 +469,7 @@ export const GroupInfoScreen = () => {
                     size={18}
                     onPress={() => openMemberMenu(member)}
                     style={{ margin: 0 }}
-                    accessibilityLabel={`Actions for ${resolveDisplayName(member)}`}
+                    accessibilityLabel={`Actions for ${nameOf(member)}`}
                 />,
             );
         }
@@ -460,16 +481,20 @@ export const GroupInfoScreen = () => {
     return (
         <LiquidBackground>
             <GuardedScreen target="expenses" entityId={group.groupId} label="Group hidden">
-            <SafeAreaView style={styles.container} edges={['bottom']}>
+            {/* A plain View, not a bottom-edge SafeAreaView: that stopped the
+            list at the home indicator, so content was sliced off along a hard
+            line instead of scrolling on under it. The inset goes into the
+            list's own bottom padding. */}
+            <View style={styles.container}>
                 <Animated.View
                     style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }], paddingTop: insets.top }]}
                     pointerEvents="none"
                 >
                     <GlassView role="floating" style={styles.stickyHeaderGlass}>
                         <View style={styles.stickyHeaderContent}>
-                            <GroupAvatar photoURL={group.photoURL} name={group.name} size={32} />
+                            <GroupAvatar photoURL={group.photoURL} name={groupName} size={32} />
                             <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                                {group.name}
+                                {groupName}
                             </Text>
                         </View>
                     </GlassView>
@@ -477,7 +502,7 @@ export const GroupInfoScreen = () => {
 
                 <Animated.ScrollView
                     style={styles.scrollView}
-                    contentContainerStyle={{ paddingBottom: 100 }}
+                    contentContainerStyle={{ paddingBottom: 100 + insets.bottom }}
                     onScroll={Animated.event(
                         [{ nativeEvent: { contentOffset: { y: scrollY } } }],
                         { useNativeDriver: true },
@@ -521,7 +546,7 @@ export const GroupInfoScreen = () => {
                                 >
                                     <View style={styles.nameRow}>
                                         <Text variant="headlineSmall" style={[styles.groupName, { color: theme.colors.onSurface }]}>
-                                            {group.name}
+                                            {groupName}
                                         </Text>
                                         <MaterialCommunityIcons name="pencil" size={20} color={theme.colors.primary} />
                                     </View>
@@ -529,7 +554,7 @@ export const GroupInfoScreen = () => {
                                 ) : (
                                     <View style={styles.nameRow}>
                                         <Text variant="headlineSmall" style={[styles.groupName, { color: theme.colors.onSurface }]}>
-                                            {group.name}
+                                            {groupName}
                                         </Text>
                                     </View>
                                 )
@@ -563,22 +588,20 @@ export const GroupInfoScreen = () => {
                                     activeOpacity={0.7}
                                     style={styles.descriptionRow}
                                     accessibilityRole="button"
-                                    accessibilityLabel={group.description?.trim() ? 'Edit group description' : 'Add group description'}
+                                    accessibilityLabel={description ? 'Edit group description' : 'Add group description'}
                                 >
                                     <Text
                                         variant="bodyMedium"
                                         style={[styles.description, { color: theme.colors.onSurfaceVariant }]}
                                     >
-                                        {group.description?.trim()
-                                            ? group.description
-                                            : 'Add a description'}
+                                        {description || 'Add a description'}
                                     </Text>
                                     <MaterialCommunityIcons name="pencil" size={16} color={theme.colors.primary} />
                                 </TouchableOpacity>
                                 ) : (
                                     <View style={styles.descriptionRow}>
                                         <Text variant="bodyMedium" style={[styles.description, { color: theme.colors.onSurfaceVariant }]}>
-                                            {group.description?.trim() ? group.description : 'No description'}
+                                            {description || 'No description'}
                                         </Text>
                                     </View>
                                 )
@@ -634,7 +657,7 @@ export const GroupInfoScreen = () => {
                                     const chatId = await ensureGroupThread(group.groupId, participants);
                                     navigation.navigate(ROUTES.APP.STARRED_MESSAGES, {
                                         chatId,
-                                        title: group.name,
+                                        title: groupName,
                                     });
                                 } catch (error) {
                                     console.warn('GroupInfoScreen starred-open failed', error);
@@ -661,7 +684,7 @@ export const GroupInfoScreen = () => {
                         <Divider />
                         <List.Item
                             title="Created by"
-                            description={resolveDisplayName(group.members.find((m) => m.userId === group.createdBy), 'Unknown')}
+                            description={nameOf(group.members.find((m) => m.userId === group.createdBy), 'Unknown')}
                             left={(props) => <List.Icon {...props} icon="account" />}
                         />
                         <Divider />
@@ -693,11 +716,11 @@ export const GroupInfoScreen = () => {
                         <Divider />
                         <List.Item
                             title="Invite code"
-                            description={`${group.inviteCode} · tap to copy`}
+                            description={`${inviteCode} · tap to copy`}
                             left={(props) => <List.Icon {...props} icon="ticket-confirmation-outline" />}
                             onPress={async () => {
                                 successHaptic();
-                                await Clipboard.setStringAsync(group.inviteCode);
+                                await Clipboard.setStringAsync(inviteCode);
                             }}
                             right={(props) => (
                                 <IconButton
@@ -707,7 +730,7 @@ export const GroupInfoScreen = () => {
                                     onPress={() => {
                                         lightHaptic();
                                         void Share.share({
-                                            message: `Join "${group.name}". Use invite code ${group.inviteCode}`,
+                                            message: `Join "${groupName}". Use invite code ${inviteCode}`,
                                         });
                                     }}
                                 />
@@ -723,7 +746,7 @@ export const GroupInfoScreen = () => {
                             const isSelf = member.userId === user?.userId;
                             const isInteractive = !isSelf;
                             const removable = canRemoveMember(member);
-                            const resolvedName = resolveDisplayName(member);
+                            const resolvedName = nameOf(member);
                             const isPlaceholder = needsDisplayName(member);
                             const memberRow = (
                                 <List.Item
@@ -734,7 +757,7 @@ export const GroupInfoScreen = () => {
                                     left={() => (
                                         <Avatar.Text
                                             size={40}
-                                            label={resolveInitials(member.displayName)}
+                                            label={resolveInitials(nameOf(member))}
                                             style={{ backgroundColor: theme.colors.primary }}
                                             color={theme.colors.onPrimary}
         maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
@@ -775,14 +798,14 @@ export const GroupInfoScreen = () => {
                             {group.archivedMembers!.map((member, index) => {
                                 const balanceLabel = Math.abs(member.balance) >= 0.005
                                     ? member.balance > 0
-                                        ? `Owed ${group.currency} ${member.balance.toFixed(2)}`
-                                        : `Owes ${group.currency} ${Math.abs(member.balance).toFixed(2)}`
+                                        ? `Owed ${fmtMoney(member.balance, group.currency)}`
+                                        : `Owes ${fmtMoney(Math.abs(member.balance), group.currency)}`
                                     : 'Settled up';
                                 const isPlaceholder = needsDisplayName(member);
                                 return (
                                     <View key={member.userId}>
                                         <List.Item
-                                            title={resolveDisplayName(member)}
+                                            title={nameOf(member)}
                                             description={`${
                                                 member.archivedReason === 'left'
                                                     ? 'Left'
@@ -796,7 +819,7 @@ export const GroupInfoScreen = () => {
                                             left={() => (
                                                 <Avatar.Text
                                                     size={40}
-                                                    label={resolveInitials(member.displayName)}
+                                                    label={resolveInitials(nameOf(member))}
                                                     style={{ backgroundColor: theme.colors.surfaceVariant }}
                                                     color={theme.colors.onSurfaceVariant}
         maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
@@ -848,7 +871,7 @@ export const GroupInfoScreen = () => {
                         )}
                     </GlassView>
                 </Animated.ScrollView>
-            </SafeAreaView>
+            </View>
             <WallpaperPickerSheet
                 visible={wallpaperSheetOpen}
                 slot={`group:${group.groupId}`}
@@ -889,7 +912,8 @@ const styles = StyleSheet.create({
         right: 0,
         zIndex: 100,
         paddingTop: 8,
-        paddingHorizontal: 16,
+        // Clear of the chevron-only back button.
+        paddingHorizontal: 72,
         paddingBottom: 10,
         alignItems: 'center',
     },

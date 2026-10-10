@@ -184,7 +184,7 @@ export const AiEvidenceSheet = ({
 };
 
 const styles = StyleSheet.create({
-  trigger: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, alignSelf: 'flex-start', minHeight: 44 },
+  trigger: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, alignSelf: 'flex-start',  },
   modalRoot: { flex: 1, justifyContent: 'flex-end' },
   backdrop: { ...StyleSheet.absoluteFillObject },
   sheet: { maxHeight: '78%', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 20 },
@@ -193,7 +193,7 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 16, paddingBottom: 12, gap: 10 },
   section: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, padding: 12, gap: 8 },
   sectionTitle: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, paddingVertical: 3 },
+  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 8,  paddingVertical: 3 },
 });
 
 export default AiEvidenceSheet;

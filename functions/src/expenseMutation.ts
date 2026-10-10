@@ -196,6 +196,27 @@ function isAdvancedExpense(expense: z.infer<typeof expenseSchema>): boolean {
     return ADVANCED_SPLIT_METHODS.has(expense.splitMetadata?.method ?? "");
 }
 
+function storedSplitMethod(expense: DocumentData): string {
+    const metadata = expense.splitMetadata;
+    return metadata && typeof metadata === "object" && typeof metadata.method === "string"
+        ? metadata.method
+        : "";
+}
+
+/**
+ * Editing an existing advanced split — fixing its title, amount, payer or
+ * roster — is not a new premium result, and any member must be able to correct
+ * it without an allowance (blueprint: recipients never need a purchase to
+ * correct a split). Only moving an expense INTO an eligible advanced method,
+ * or to a different one, produces a new result that consumes a use.
+ */
+export function editRequiresAdvancedAuthorization(
+    current: DocumentData,
+    next: z.infer<typeof expenseSchema>,
+): boolean {
+    return isAdvancedExpense(next) && storedSplitMethod(current) !== (next.splitMetadata?.method ?? "");
+}
+
 function currentRevision(value: unknown): number {
     return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : 1;
 }
@@ -257,6 +278,43 @@ function assertExpectedCurrency(group: DocumentData, expectedCurrency: string | 
             reasonCode: "STALE_GROUP_CURRENCY",
         });
     }
+}
+
+/**
+ * Older clients reserve a use for every advanced edit. When the edit turns out
+ * not to need one, release that reservation in the same transaction so it is
+ * never charged. Anything unexpected is left alone for the reaper to release.
+ */
+async function releaseUnneededAuthorization(params: {
+    transaction: FirebaseFirestore.Transaction;
+    db: Firestore;
+    uid: string;
+    environment: "sandbox" | "production";
+    authorization: z.infer<typeof authorizationSchema> | undefined;
+    nowMs: number;
+}): Promise<void> {
+    if (!params.authorization) return;
+    const accountId = accountDocumentId(params.environment, params.uid);
+    const reservationRef = params.db.collection(MONETIZATION_USAGE_ACCOUNT_COLLECTION)
+        .doc(accountId)
+        .collection("reservations")
+        .doc(params.authorization.authorizationId);
+    const reservation = (await params.transaction.get(reservationRef)).data();
+    if (reservation?.featureId !== "advanced_split.completion" || reservation?.status !== "reserved" ||
+        reservation?.operationDigest !== operationDigest(params.authorization.operationId)) {
+        return;
+    }
+    await finalizeReservationInTransaction({
+        transaction: params.transaction,
+        db: params.db,
+        accountId,
+        reservationId: params.authorization.authorizationId,
+        expectedAuthorizationId: params.authorization.authorizationId,
+        expectedOperationDigest: operationDigest(params.authorization.operationId),
+        outcome: "cancelled",
+        nowMs: params.nowMs,
+        allowExpiredRelease: true,
+    });
 }
 
 async function consumeAdvancedSplitAuthorization(params: {
@@ -400,8 +458,7 @@ export async function applyExpenseMutation(params: {
         if (!current) throw new HttpsError("not-found", "Expense not found.");
         assertExpectedCurrency(group, input.expectedCurrency);
         assertExpectation(current, input.expectation);
-        const requiresAuthorization = isAdvancedExpense(input.expense);
-        if (requiresAuthorization) {
+        if (editRequiresAdvancedAuthorization(current, input.expense)) {
             await consumeAdvancedSplitAuthorization({
                 transaction,
                 db,
@@ -411,6 +468,15 @@ export async function applyExpenseMutation(params: {
                 variant: input.expense.splitMetadata?.method ?? "",
                 nowMs,
                 allowFinalizedDuplicate: false,
+            });
+        } else {
+            await releaseUnneededAuthorization({
+                transaction,
+                db,
+                uid: params.uid,
+                environment: params.environment,
+                authorization: input.authorization,
+                nowMs,
             });
         }
         const updated = {

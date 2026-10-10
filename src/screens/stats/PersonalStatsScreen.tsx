@@ -9,17 +9,17 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { AiNarrativeSkeleton } from '@/components/stats/AiNarrativeSkeleton';
 import { InsightChatOverlay } from '@/components/stats/InsightChatOverlay';
+import { InsightReportPrompt } from '@/components/stats/InsightReportPrompt';
 import { HBar } from '@/components/stats/StatsVisuals';
 import { GuardedScreen, SCREEN_GUTTER } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { useInsightNarrative } from '@/hooks/useInsightNarrative';
 import {
   getPccEnabled,
-  narrateInsights,
   pccAvailability,
   setPccEnabled,
-  type InsightNarrative,
 } from '@/services/insightsAiService';
 import { formatCurrency } from '@/utils/currency';
 import { buildPersonalStats, RANGE_LABELS, type StatsRange } from '@/utils/statsInsights';
@@ -48,10 +48,7 @@ export const PersonalStatsScreen = () => {
   const { theme, isDark } = useTheme();
 
   const [range, setRange] = useState<StatsRange>('month');
-  const [showAnalysis, setShowAnalysis] = useState(false);
   const [showBudgets, setShowBudgets] = useState(false);
-  const [narrative, setNarrative] = useState<InsightNarrative | null>(null);
-  const [narrativeLoading, setNarrativeLoading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [pccOn, setPccOn] = useState(true);
   const [pccStatus, setPccStatus] = useState<{ available: boolean; reason: string } | null>(null);
@@ -101,27 +98,11 @@ export const PersonalStatsScreen = () => {
     });
   }, [bundle, range]);
 
-  // Deep-analysis narrative: whole-history facts, PCC-preferred.
-  useEffect(() => {
-    let cancelled = false;
-    setNarrative(null);
-    if (!personalFacts) {
-      setNarrativeLoading(false);
-      return;
-    }
-    setNarrativeLoading(true);
-    narrateInsights(personalFacts, { deep: true })
-      .then((n) => {
-        if (!cancelled) setNarrative(n);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setNarrativeLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [personalFacts]);
+  // Deep-analysis narrative: whole-history facts, PCC-preferred. Metered as
+  // an AI insight report; cached reports reopen free.
+  const report = useInsightNarrative(personalFacts, { deep: true, backTitle: 'Your spending' });
+  const narrative = report.narrative;
+  const narrativeLoading = report.loading;
 
   const togglePcc = (next: boolean) => {
     lightHaptic();
@@ -209,6 +190,47 @@ export const PersonalStatsScreen = () => {
             )) : <Text style={{ color: theme.colors.onSurfaceVariant }}>No spending recorded in this period. Try another period or add an expense.</Text>}
           </GlassView>
 
+          {/* The AI summary sits under the totals, always visible. The
+          2026-10-03 restyle had folded it behind a "More analysis" toggle,
+          which also hid the way into the insights chat. */}
+          {narrative ? (
+            <TouchableOpacity
+              activeOpacity={0.88}
+              onPress={() => {
+                lightHaptic();
+                setChatOpen(true);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Chat about your spending insights"
+            >
+            <GlassView style={styles.card}>
+              <View style={styles.aiHeader}>
+                <Icon
+                  source={narrative.source === 'pcc' ? 'cloud-lock-outline' : 'chip'}
+                  size={16}
+                  color={theme.colors.primary}
+                />
+                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }}>
+                  {narrative.source === 'pcc' ? 'Private Cloud Compute' : 'On-device intelligence'}
+                </Text>
+                <Icon source="chat-outline" size={16} color={theme.colors.primary} />
+              </View>
+              <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+                {narrative.text}
+              </Text>
+            </GlassView>
+            </TouchableOpacity>
+          ) : narrativeLoading ? (
+            <AiNarrativeSkeleton />
+          ) : (
+            <InsightReportPrompt
+              canGenerate={report.canGenerate}
+              limitedUntil={report.limitedUntil}
+              onGenerate={report.generate}
+              backTitle="Your spending"
+            />
+          )}
+
           <GlassView style={styles.card}>
             <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
               Your share by group
@@ -270,42 +292,6 @@ export const PersonalStatsScreen = () => {
             </GlassView>
           ))}
 
-          <Button mode="text" accessibilityState={{ expanded: showAnalysis }} onPress={() => setShowAnalysis((value) => !value)}>
-            {showAnalysis ? 'Hide analysis' : 'More analysis'}
-          </Button>
-          {showAnalysis ? <View>
-          {narrative ? (
-            <TouchableOpacity
-              activeOpacity={0.88}
-              onPress={() => {
-                lightHaptic();
-                setChatOpen(true);
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Chat about your spending insights"
-            >
-            <GlassView style={styles.card}>
-              <View style={styles.aiHeader}>
-                <Icon
-                  source={narrative.source === 'pcc' ? 'cloud-lock-outline' : 'chip'}
-                  size={16}
-                  color={theme.colors.primary}
-                />
-                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }}>
-                  {narrative.source === 'pcc' ? 'Private Cloud Compute' : 'On-device intelligence'}
-                </Text>
-                <Icon source="chat-outline" size={16} color={theme.colors.primary} />
-              </View>
-              <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
-                {narrative.text}
-              </Text>
-            </GlassView>
-            </TouchableOpacity>
-          ) : (
-            narrativeLoading && <AiNarrativeSkeleton />
-          )}
-
-          </View> : null}
 
           {budgetRows.length > 0 ? (
             <Button mode="text" accessibilityState={{ expanded: showBudgets }} onPress={() => setShowBudgets((value) => !value)}>
@@ -462,7 +448,6 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   rangeChip: {
-    minHeight: 44,
     justifyContent: 'center',
     paddingVertical: 7,
     paddingHorizontal: 14,
@@ -534,7 +519,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    minHeight: 48,
   },
   pccCopy: {
     flex: 1,

@@ -1091,8 +1091,8 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   minimizeBtnGlass: {
-    width: 44,
-    height: 44,
+    width: 36,
+    height: 36,
   },
   minimizeBtnContent: {
     flex: 1,

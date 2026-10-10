@@ -28,6 +28,10 @@ export const needsDisplayName = (source: NameSource): boolean => !source?.displa
  */
 export const resolveInitials = (name?: string | null, fallback = '?'): string => {
   const words = name?.trim().split(/\s+/).filter(Boolean) ?? [];
+  // Prefer words that start with a letter, so a trailing year or number
+  // doesn't become an initial ("Goa Trip 2026" → "GT", not "G2").
+  const lettered = words.filter((word) => /^\p{L}/u.test(word));
+  if (lettered.length >= 2) return (lettered[0][0] + lettered[lettered.length - 1][0]).toUpperCase();
   if (words.length >= 2) return (words[0][0] + words[words.length - 1][0]).toUpperCase();
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return fallback;

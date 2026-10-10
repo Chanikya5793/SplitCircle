@@ -29,10 +29,11 @@ export const useMoneyDisplay = (groupId?: string) => {
         const formatted = formatCurrency(displayValue, displayCurrency);
         return conversion ? `≈${formatted}` : formatted;
       }
-      // Duress decoy world: dots/zeros/'···' on screen would betray the fake
-      // unlock, so amounts always render as the consistent scaled ledger.
+      // Duress decoy world: the amount already comes from the scaled decoy
+      // ledger (useGroups), and dots/zeros would betray the fake unlock.
       if (duress) {
-        return formatCurrency(decoyAmount(displayValue, groupId ?? 'global'), displayCurrency);
+        const formatted = formatCurrency(displayValue, displayCurrency);
+        return conversion ? `≈${formatted}` : formatted;
       }
       if (action === 'vanish') return '···';
       switch (settings.amountStyle) {

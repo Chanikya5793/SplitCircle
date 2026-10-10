@@ -50,6 +50,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { finishMeteredAccess, requestMeteredAccess } from '@/services/meteredAccess';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { ActivityIndicator, Icon, Text } from 'react-native-paper';
 import Animated, {
@@ -372,9 +373,20 @@ export const InsightChatOverlay = ({
   const send = async (raw?: string) => {
     const text = (raw ?? input).trim();
     if (!text || busy || !thread) return;
+    setBusy(true);
+    const grant = await requestMeteredAccess({
+      ownerUid: currentUserId,
+      featureId: 'ai.expense_on_device_turn',
+      executionRoute: 'on_device_apple',
+      backTitle: 'Insights',
+    });
+    if (!grant) {
+      setBusy(false);
+      return;
+    }
     mediumHaptic();
     setInput('');
-    setBusy(true);
+    let answered = false;
     // Optimistic user bubble; the service returns the authoritative thread.
     const optimistic: AiThreadMessage = {
       id: `optimistic-${Date.now()}`,
@@ -402,6 +414,7 @@ export const InsightChatOverlay = ({
       });
       setThread(result.thread);
       setDrifted(false);
+      answered = true;
     } catch {
       setThread((t) =>
         t
@@ -420,6 +433,7 @@ export const InsightChatOverlay = ({
           : t,
       );
     } finally {
+      finishMeteredAccess(grant, answered ? 'completed' : 'failed');
       setBusy(false);
       setPending(null);
       scrollToEnd();
@@ -716,6 +730,7 @@ export const InsightChatOverlay = ({
                 <TouchableOpacity
                   onPress={() => onThumb(item, true)}
                   style={styles.thumbButton}
+                  hitSlop={12}
                   accessibilityRole="button"
                   accessibilityLabel="Good answer"
                   accessibilityState={{ selected: feedback[item.id] === 'up' }}
@@ -729,6 +744,7 @@ export const InsightChatOverlay = ({
                 <TouchableOpacity
                   onPress={() => onThumb(item, false)}
                   style={styles.thumbButton}
+                  hitSlop={12}
                   accessibilityRole="button"
                   accessibilityLabel="Bad answer"
                 >
@@ -1184,9 +1200,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   glassCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1223,11 +1239,9 @@ const styles = StyleSheet.create({
   starterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
   clarifyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   pendingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  thumbRow: { flexDirection: 'row', gap: 6, marginTop: 6 },
+  thumbRow: { flexDirection: 'row', gap: 14, marginTop: 6 },
+  // The thumbs stay small inside the bubble; hitSlop gives them a full target.
   thumbButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1237,7 +1251,6 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 1,
     borderRadius: 10,
-    minHeight: 44,
     paddingVertical: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1245,7 +1258,6 @@ const styles = StyleSheet.create({
   starterChip: {
     borderRadius: 16,
     borderWidth: 1.5,
-    minHeight: 44,
     paddingVertical: 6,
     paddingHorizontal: 12,
     justifyContent: 'center',
@@ -1271,11 +1283,5 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 12,
   },
-  sendBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  sendBtn: { paddingBottom: 8 },
 });

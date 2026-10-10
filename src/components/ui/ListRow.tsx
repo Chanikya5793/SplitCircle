@@ -114,6 +114,11 @@ export const ListRow = ({
       ) : null}
       <View style={styles.copy}>
         <Text
+          // Titles may take a second line rather than cut mid-word — a
+          // switch row read "Allow notifications in Man…". Subtitles stop at
+          // two. At accessibility text sizes truncation would hide most of the
+          // text, so there the copy wraps freely instead.
+          numberOfLines={largeText ? undefined : 2}
           style={{
             color: destructive ? theme.colors.danger : theme.colors.onSurface,
             fontSize: theme.typography.body.fontSize,
@@ -130,6 +135,7 @@ export const ListRow = ({
         </Text>
         {subtitle ? (
           <Text
+            numberOfLines={largeText ? undefined : 2}
             style={{
               color: theme.colors.muted,
               fontSize: theme.typography.caption.fontSize,

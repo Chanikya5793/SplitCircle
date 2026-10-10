@@ -2,11 +2,11 @@
 
 Current design contract. Rules only — history lives in git.
 
-## Refinement direction
+## Ambient background
 
-- Selected direction: **B, Refined Glass**. Keep the glass identity while reducing
-  competing emphasis through calmer ambient color, coherent surface groups, and
-  quiet inner rows. Apply the audit findings one at a time.
+- The liquid blob background is a locked decision (doc 37): it ships at full
+  strength and is never dimmed in code. A calmer backdrop is the user's choice,
+  via the solid wallpaper presets.
 - Ambient background motion respects Reduce Motion and stays still until the OS
   preference is known. Stop its loops when the screen loses focus or the app becomes
   inactive; resume after interactions settle. Disabling motion freezes the current
@@ -96,19 +96,24 @@ over the worst blob with no material to lift it. Solid background presets exist
 for this (`constants/solidBackgrounds.ts`) and are contrast-tested; never add
 one without running `solidBackgroundContrast.test.ts`.
 
-### Refined Glass composition
+### Glass mode — the original contract
 
-Glass is the default material, with one calm ambient canvas and coherent content
-groups. Give useful content and the main action more emphasis than the material.
-Use quiet inner rows and dividers instead of nested decorative cards. Financial
-forms, split editors and stats keep a readable data hierarchy. Their material
-still resolves through GlassCard, including Flat and accessibility fallbacks.
+**EVERY screen/overlay ships GLASS-FIRST** (LiquidBackground canvas + glass cards,
+bubbles, chrome) — lists, home, settings, chats, browsing, stats, conversational
+surfaces, and `BillSplitScreen` (the split-method editor). Any popup/menu/dialog a
+screen presents directly (payer picker, category picker, receipt picker, etc.) MUST
+be glass. When in doubt: glass. Use quiet inner rows and dividers instead of nested
+decorative cards.
 
-The default ambient blob layer uses 40% of its prior intensity (effective 18%
-per blob); explicitly selected blob/photo/solid wallpapers keep their own
-presentation. Expenses leads with distinct, uncapped per-currency balances.
-New group is the sole floating action; Friends and Join via code remain visible
-as quiet in-flow controls. At large text sizes creation moves into the footer.
+**Expenses (home)** leads with the one-line balance headline ("You are owed …",
+one amount per currency) under the large title — never oversized per-currency
+figures. New group, Friends and Join via code sit together in the bottom action row
+above the tab bar, New group as the filled primary.
+
+**Sizes stay compact.** Controls keep the size their screen was designed at;
+a 44pt touch target comes from `hitSlop`, not from inflating the visible control.
+(A 2026-10-03 pass grew ~150 controls to 44/48pt and broke split avatars, swatches,
+chat and receipt buttons; it was reverted.)
 
 App-owned sheets, menus and pickers use `role="floating"`. Native authentication,
 permission, media and call controls retain their platform treatment. Avatars,

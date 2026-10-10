@@ -1,7 +1,7 @@
 import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { spacing } from '@/theme';
-import { formatCurrency, getCurrencySymbol } from '@/utils/currency';
+import { formatCurrency } from '@/utils/currency';
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Icon, Text } from 'react-native-paper';
@@ -101,8 +101,8 @@ export const SplitFooter = React.memo(({
       return `${includedCount} ${includedCount === 1 ? 'player' : 'players'} · tap Spin`;
     }
     if (!validation.isValid && !isGame) {
-      if (remaining > 0.01) return `${getCurrencySymbol(currency)}${remaining.toFixed(2)} left to assign`;
-      if (remaining < -0.01) return `${getCurrencySymbol(currency)}${Math.abs(remaining).toFixed(2)} over`;
+      if (remaining > 0.01) return `${formatCurrency(remaining, currency)} left to assign`;
+      if (remaining < -0.01) return `${formatCurrency(Math.abs(remaining), currency)} over`;
       return validation.message;
     }
     return `${includedCount} of ${participants.length} included`;

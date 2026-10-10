@@ -180,9 +180,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 14,
-    minHeight: 48,
+    height: 38,
     paddingVertical: 10,
-    borderRadius: 24,
+    borderRadius: 19,
     borderWidth: 1,
   },
   explanation: {

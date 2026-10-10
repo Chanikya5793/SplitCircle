@@ -510,9 +510,17 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
   return (
     <LiquidBackground wallpaperSlots={[`group:${group.groupId}`, 'app']}>
-      <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }] }]}>
+      <Animated.View
+        style={[
+          styles.stickyHeader,
+          // Centered on the native header row (44pt tall, starting at the safe
+          // area) so it lines up with the back and action buttons beside it.
+          { paddingTop: insets.top + STICKY_TITLE_OFFSET, transform: [{ translateY: headerTranslate }] },
+        ]}
+        pointerEvents="none"
+      >
         <GlassView role="floating" style={styles.stickyHeaderGlass}>
-          <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>{groupDisplayName}</Text>
+          <Text variant="titleMedium" numberOfLines={1} style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>{groupDisplayName}</Text>
         </GlassView>
       </Animated.View>
 
@@ -888,15 +896,15 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 style={styles.compactButtonSmall}
                 borderless
               >
-                {/* forceBlur: this button sits inside expandedContainer's continuous
-                    scroll-linked opacity cross-fade — an ancestor with fractional
-                    opacity kills the native iOS 26 glass material (DESIGN.md's kill
-                    list). Not a one-shot mount animation, so it can't be restructured
-                    to transform-only like an entering/exiting preset. */}
-                <GlassCard role="floating" style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
+                {/* Opaque, not glass: these chips sit inside expandedContainer's
+                    scroll-linked opacity cross-fade, which kills native glass
+                    (DESIGN.md's kill list), and the forced-blur fallback rendered
+                    patchy and let list text show through the labels. They float
+                    over unrelated scrolling content, so they need a real fill. */}
+                <View style={[styles.compactButtonSmallGlass, styles.compactButtonSmallInner, { backgroundColor: theme.colors.flatSurface, borderColor: theme.colors.flatBorder }]}>
                   <Icon source="chart-pie" size={18} color={theme.colors.primary} />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
-                </GlassCard>
+                </View>
               </TouchableRipple>
 
               <TouchableRipple
@@ -906,10 +914,10 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 style={styles.compactButtonSmall}
                 borderless
               >
-                <GlassCard role="floating" style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
+                <View style={[styles.compactButtonSmallGlass, styles.compactButtonSmallInner, { backgroundColor: theme.colors.flatSurface, borderColor: theme.colors.flatBorder }]}>
                   <Icon source="chat" size={18} color={theme.colors.primary} />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
-                </GlassCard>
+                </View>
               </TouchableRipple>
 
               <TouchableRipple
@@ -919,10 +927,10 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 style={styles.compactButtonSmall}
                 borderless
               >
-                <GlassCard role="floating" style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
+                <View style={[styles.compactButtonSmallGlass, styles.compactButtonSmallInner, { backgroundColor: theme.colors.flatSurface, borderColor: theme.colors.flatBorder }]}>
                   <Icon source="repeat" size={18} color={theme.colors.primary} />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
-                </GlassCard>
+                </View>
               </TouchableRipple>
             </View>
           </Animated.View>
@@ -994,6 +1002,10 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
     </LiquidBackground>
   );
 };
+
+/** (44pt header row − 40pt pill) / 2. */
+const STICKY_TITLE_OFFSET = 2;
+const STICKY_TITLE_SIDE_CLEARANCE = 124;
 
 const styles = StyleSheet.create({
   container: {
@@ -1074,7 +1086,6 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
   },
   compactButtonInner: {
-    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1089,13 +1100,14 @@ const styles = StyleSheet.create({
   },
   compactButtonSmallGlass: {
     flex: 1,
+    borderRadius: 50,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   compactButtonSmallInner: {
-    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 4,
+    paddingVertical: 8,
     paddingHorizontal: 6,
     gap: 2,
   },
@@ -1133,7 +1145,6 @@ const styles = StyleSheet.create({
     flex: 1.25,
   },
   androidDockButtonInner: {
-    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1147,15 +1158,15 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 100,
-    paddingTop: 50,
-    paddingHorizontal: 16,
+    // Keeps the pill clear of the back button and the action pair.
+    paddingHorizontal: STICKY_TITLE_SIDE_CLEARANCE,
     paddingBottom: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   stickyHeaderGlass: {
     paddingVertical: 8,
-    paddingHorizontal: 20,
+    paddingHorizontal: 14,
     borderRadius: 20,
   },
   stickyHeaderTitle: {
@@ -1166,7 +1177,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   filterButtonContent: {
-    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 6,
@@ -1203,13 +1213,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   monthHeaderCompact: {
-    minHeight: 44,
     borderRadius: 50,
     paddingVertical: 4,
     paddingHorizontal: 8,
   },
   yearHeaderCompact: {
-    minHeight: 44,
     borderRadius: 50,
     paddingVertical: 4,
     paddingHorizontal: 8,

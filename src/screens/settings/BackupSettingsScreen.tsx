@@ -623,7 +623,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
-    minHeight: 48,
   },
   switchLabel: { flex: 1 },
 });

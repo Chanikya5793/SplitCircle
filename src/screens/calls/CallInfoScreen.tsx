@@ -1,3 +1,4 @@
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
@@ -38,17 +39,20 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
   const { threads } = useChat();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
+  const { hidePhoto, maskCallerName, maskGroupName } = usePrivacyMask();
+  const callerName = maskCallerName(resolveDisplayName(entry.otherParticipant, 'Unknown'));
+  const infoTitle = maskCallerName(getCallInfoTitle(entry));
 
   const [relatedCalls, setRelatedCalls] = useState<CallHistoryEntry[]>([]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: getCallInfoTitle(entry),
+      title: infoTitle,
       headerTitle: '',
       headerTransparent: true,
       headerTintColor: theme.colors.primary,
     });
-  }, [entry, navigation, theme.colors.primary]);
+  }, [infoTitle, navigation, theme.colors.primary]);
 
   // Load all calls with same participant
   useEffect(() => {
@@ -67,10 +71,10 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
   const groupName = useMemo(() => {
     if (entry.groupId) {
       const group = groups.find((g) => g.groupId === entry.groupId);
-      return group?.name;
+      return group ? maskGroupName(group.name, group.groupId) : undefined;
     }
     return undefined;
-  }, [entry.groupId, groups]);
+  }, [entry.groupId, groups, maskGroupName]);
 
   const isMissed = (e: CallHistoryEntry) =>
     e.status === 'missed' || e.status === 'declined';
@@ -90,7 +94,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
     return e.direction === 'incoming' ? 'phone-incoming' : 'phone-outgoing';
   };
 
-  const initials = resolveInitials(entry.otherParticipant.displayName, 'U');
+  const initials = resolveInitials(callerName, 'U');
 
   const handleDelete = () => {
     const performDelete = async () => {
@@ -138,7 +142,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
       >
         {/* Profile Card */}
         <View style={styles.profileSection}>
-          {entry.otherParticipant.photoURL ? (
+          {entry.otherParticipant.photoURL && !hidePhoto() ? (
             <Avatar.Image
               size={80}
               source={{ uri: entry.otherParticipant.photoURL }}
@@ -153,7 +157,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
       />
           )}
           <Text style={[styles.profileName, { color: theme.colors.onSurface }]}>
-            {resolveDisplayName(entry.otherParticipant, 'Unknown')}
+            {callerName}
           </Text>
           {groupName && (
             <Text style={[styles.groupLabel, { color: theme.colors.onSurfaceVariant }]}>
@@ -210,8 +214,8 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
                 if (thread) {
                   navigation.navigate(ROUTES.APP.GROUP_CHAT, {
                     chatId: entry.chatId,
-                    initialTitle: groupName || resolveDisplayName(entry.otherParticipant, 'Chat'),
-                    backTitle: getCallInfoTitle(entry),
+                    initialTitle: groupName || callerName,
+                    backTitle: infoTitle,
                   });
                 }
               }}

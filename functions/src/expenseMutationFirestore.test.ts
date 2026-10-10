@@ -159,6 +159,46 @@ describeWithEmulator("server-owned expense mutation boundary", () => {
         expect(stored.exists).toBe(true);
     });
 
+    it("lets any member correct an existing advanced split without an allowance", async () => {
+        const input: ExpenseMutationInput = {
+            action: "update",
+            groupId: "group-1",
+            expense: { ...expense("income", "advanced-1"), title: "Dinner (corrected)", paidBy: "friend" },
+            expectation: { expectedRevision: 1 },
+        };
+        await expect(applyExpenseMutation({ uid: "friend", environment: "sandbox", input, nowMs: NOW, db }))
+            .resolves.toMatchObject({ success: true, expense: { title: "Dinner (corrected)", revision: 2 } });
+    });
+
+    it("releases an allowance an older client reserved for a same-method edit", async () => {
+        const operationId = "11111111-1111-4111-8111-111111111113";
+        const authorizationId = "b".repeat(64);
+        await seedAuthorization(operationId, authorizationId);
+        const input: ExpenseMutationInput = {
+            action: "update",
+            groupId: "group-1",
+            expense: { ...expense("income", "advanced-1"), title: "Dinner again" },
+            expectation: { expectedRevision: 2 },
+            authorization: { operationId, authorizationId },
+        };
+        await expect(applyExpenseMutation({ uid: UID, environment: "sandbox", input, nowMs: NOW, db }))
+            .resolves.toMatchObject({ success: true });
+        const reservation = await db.collection("monetizationUsageAccounts")
+            .doc(accountDocumentId("sandbox", UID)).collection("reservations").doc(authorizationId).get();
+        expect(reservation.data()).toMatchObject({ status: "finalized", outcome: "cancelled" });
+    });
+
+    it("requires an allowance to switch an existing expense into an advanced method", async () => {
+        const input: ExpenseMutationInput = {
+            action: "update",
+            groupId: "group-1",
+            expense: expense("income", "ordinary-1"),
+            expectation: { expectedRevision: 1 },
+        };
+        await expect(applyExpenseMutation({ uid: UID, environment: "sandbox", input, nowMs: NOW, db }))
+            .rejects.toMatchObject({ code: "failed-precondition" });
+    });
+
     it("converts every durable monetary source and rejects a stale source currency", async () => {
         const conversionNow = NOW + 10_000;
         const itemizedExpense = {

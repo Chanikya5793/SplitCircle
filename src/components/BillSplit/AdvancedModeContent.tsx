@@ -1305,7 +1305,7 @@ const TimeBasedMode = React.memo(
                   accessibilityRole="button"
                   accessibilityLabel="Decrease billing period days"
                 >
-                  <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>-</Text>
+                  <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>−</Text>
                 </TouchableOpacity>
                 <TextInput
                   style={[
@@ -1863,7 +1863,7 @@ const TimeBasedMode = React.memo(
                           accessibilityRole="button"
                           accessibilityLabel={`Decrease days for ${participant.name}`}
                         >
-                          <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>-</Text>
+                          <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>−</Text>
                         </TouchableOpacity>
                         <TextInput
                           style={[
@@ -3512,7 +3512,6 @@ const styles = StyleSheet.create({
   },
   itemPriceInput: {
     width: 72,
-    minHeight: 44,
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 10,
@@ -3522,8 +3521,8 @@ const styles = StyleSheet.create({
   },
   itemActionButton: {
     margin: 0,
-    width: 44,
-    height: 44,
+    width: 34,
+    height: 34,
   },
   assignRow: {
     paddingHorizontal: 12,
@@ -3537,7 +3536,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    minHeight: 44,
     marginRight: 6,
   },
   miniAvatar: {
@@ -3621,7 +3619,6 @@ const styles = StyleSheet.create({
   },
   incomeInput: {
     width: 80,
-    minHeight: 44,
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 8,
@@ -3648,9 +3645,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   shareBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3766,7 +3763,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 7,
-    minHeight: 44,
   },
   timeRangeSelectedRow: {
     flexDirection: 'row',
@@ -3787,10 +3783,10 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   calendarNavButton: {
-    width: 44,
-    height: 44,
+    width: 36,
+    height: 36,
     borderWidth: 1,
-    borderRadius: 22,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3851,9 +3847,9 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   timePeriodStepBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
   },
   timePeriodInput: {
     width: 76,
@@ -4089,7 +4085,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    minHeight: 44,
+    height: 38,
     borderRadius: 19,
     borderWidth: 1,
     paddingHorizontal: 8,
@@ -4101,7 +4097,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 12,
     paddingHorizontal: 12,
-    minHeight: 44,
+    height: 40,
     marginBottom: 8,
   },
   wLiveList: {
@@ -4115,7 +4111,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     alignItems: 'center',
     gap: 10,
-    minHeight: 44,
+    height: 34,
     paddingVertical: 6,
   },
   wLiveFooter: {
@@ -4194,7 +4190,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    minHeight: 44,
   },
   catHeader: {
     flexDirection: 'row',
@@ -4205,7 +4200,6 @@ const styles = StyleSheet.create({
   },
   catAmountInput: {
     width: 72,
-    minHeight: 44,
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 8,
@@ -4225,7 +4219,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    minHeight: 44,
   },
   // Karma
   karmaPresetsRow: {

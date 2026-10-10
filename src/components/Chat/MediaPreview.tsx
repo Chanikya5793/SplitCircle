@@ -252,12 +252,12 @@ const StripThumb = ({ item, quality, fitStatus, active, onPress, onRemove, showR
         <TouchableOpacity
           style={styles.stripRemove}
           onPress={onRemove}
+          // The badge stays small over the thumbnail; the hit area doesn't.
+          hitSlop={13}
           accessibilityRole="button"
           accessibilityLabel="Remove this item"
         >
-          <View style={styles.stripRemoveGlyph}>
-            <Ionicons name="close" size={12} color="#fff" />
-          </View>
+          <Ionicons name="close" size={12} color="#fff" />
         </TouchableOpacity>
       )}
     </View>
@@ -1281,7 +1281,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    minHeight: 56,
     paddingVertical: 4,
   },
   headerGlass: {
@@ -1519,15 +1518,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   stripRemove: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stripRemoveGlyph: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: 'rgba(0,0,0,0.85)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1608,15 +1604,14 @@ const styles = StyleSheet.create({
   videoPosterNoteText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   editButtonBusy: { opacity: 0.45 },
   editButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 8,
   },
   qualityButton: {
-    minHeight: 44,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 16,

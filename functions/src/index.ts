@@ -78,6 +78,7 @@ export * from "./securityMonitoring";
 export * from "./securityUrlAnalysis";
 export { cleanupMonetizationOnUserDeleted } from "./monetizationAccountCleanup";
 export { getMonetizationSnapshot, recordMonetizationUsage } from "./monetization";
+export { getMonetizationUsage } from "./monetizationUsage";
 export {
     authorizeMonetizedOperation,
     finalizeMonetizedOperation,

@@ -22,9 +22,14 @@ describe('monetization usage instrumentation', () => {
   });
 
   it('requires authorization for eligible advanced splits on both create and edit saves', () => {
+    // New advanced results count: creating one, or switching an expense into
+    // (or between) advanced methods.
     expect(requiresAdvancedSplitAuthorizationOnSave('itemized')).toBe(true);
-    expect(requiresAdvancedSplitAuthorizationOnSave('itemized', 'expense-being-edited')).toBe(true);
+    expect(requiresAdvancedSplitAuthorizationOnSave('itemized', 'equal')).toBe(true);
+    expect(requiresAdvancedSplitAuthorizationOnSave('income', 'itemized')).toBe(true);
+    // Correcting an existing advanced split with the same method is free.
+    expect(requiresAdvancedSplitAuthorizationOnSave('itemized', 'itemized')).toBe(false);
     expect(requiresAdvancedSplitAuthorizationOnSave('equal')).toBe(false);
-    expect(requiresAdvancedSplitAuthorizationOnSave('equal', 'expense-being-edited')).toBe(false);
+    expect(requiresAdvancedSplitAuthorizationOnSave('equal', 'income')).toBe(false);
   });
 });

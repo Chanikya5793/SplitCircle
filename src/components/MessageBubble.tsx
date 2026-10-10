@@ -1295,7 +1295,11 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
               </Text>
             );
           }
-          return <Text key={i}>{span.text}</Text>;
+          // A bare string, not a nested Paper <Text>: Paper stamps its own
+          // `onSurface` colour on every Text it renders, so a wrapped run
+          // ignored the bubble's colour — your own messages came out dark
+          // navy on the blue bubble. A plain string inherits from the parent.
+          return <React.Fragment key={i}>{span.text}</React.Fragment>;
         })}
       </Text>
     );
@@ -1864,9 +1868,9 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   audioPlayButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
   },

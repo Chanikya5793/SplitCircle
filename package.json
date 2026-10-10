@@ -21,7 +21,8 @@
     "ship:ios:full": "bash scripts/ship-ios.sh --full",
     "build:ios:local": "bash scripts/ship-ios.sh --build-only",
     "ship:android": "bash scripts/ship-android.sh",
-    "build:android:local": "bash scripts/ship-android.sh --install"
+    "build:android:local": "bash scripts/ship-android.sh --install",
+    "emulators": "bash scripts/emulators.sh"
   },
   "dependencies": {
     "@expo/metro-runtime": "~55.0.6",

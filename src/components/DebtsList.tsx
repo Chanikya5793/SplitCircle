@@ -106,14 +106,17 @@ const SwipeableDebtRow = ({
                   accessibilityLabel={`${fromName} owes ${toName} ${fmtMoney(debt.amount, currency)}`}
                   accessibilityHint="Opens the debt breakdown"
               >
-                <View style={styles.member}>
-                    <Avatar.Text
-                        size={28}
-                        label={resolveInitials(fromName)}
-                        style={{ backgroundColor: theme.colors.errorContainer }}
-                        color={theme.colors.onErrorContainer}
-        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
-      />
+                <Avatar.Text
+                    size={32}
+                    label={resolveInitials(fromName)}
+                    style={[styles.payerAvatar, { backgroundColor: theme.colors.errorContainer }]}
+                    color={theme.colors.onErrorContainer}
+                    maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                />
+
+                <View style={styles.names}>
                     <Text
                         style={[
                             styles.name,
@@ -124,34 +127,21 @@ const SwipeableDebtRow = ({
                     >
                         {fromName}
                     </Text>
-                </View>
-
-                <View style={styles.amountContainer}>
-                    <Text style={[styles.amount, { color: theme.colors.error }]}>
-                        {fmtMoney(debt.amount, currency)}
-                    </Text>
-                    <Icon source="arrow-right" size={16} color={theme.colors.onSurfaceVariant} />
-                </View>
-
-                <View style={styles.member}>
-                    <Avatar.Text
-                        size={28}
-                        label={resolveInitials(toName)}
-                        style={{ backgroundColor: theme.colors.primaryContainer }}
-                        color={theme.colors.onPrimaryContainer}
-        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
-      />
                     <Text
                         style={[
-                            styles.name,
-                            { color: toIsPlaceholder ? theme.colors.onSurfaceVariant : theme.colors.onSurface },
+                            styles.payee,
+                            { color: theme.colors.onSurfaceVariant },
                             toIsPlaceholder && styles.placeholderName,
                         ]}
                         numberOfLines={1}
                     >
-                        {toName}
+                        pays {toName}
                     </Text>
                 </View>
+
+                <Text style={[styles.amount, { color: theme.colors.error }]} numberOfLines={1}>
+                    {fmtMoney(debt.amount, currency)}
+                </Text>
 
               </TouchableOpacity>
                 <TouchableOpacity
@@ -437,8 +427,8 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
     },
     settleButton: {
-        width: 44,
-        height: 44,
+        width: 36,
+        height: 36,
         marginLeft: 8,
         alignItems: 'center',
         justifyContent: 'center',
@@ -455,9 +445,21 @@ const styles = StyleSheet.create({
         gap: 8,
         flex: 1,
     },
+    payerAvatar: {
+        marginRight: 12,
+    },
+    names: {
+        flex: 1,
+        minWidth: 0,
+        marginRight: 8,
+    },
     name: {
-        fontWeight: '500',
+        fontWeight: '600',
         flexShrink: 1,
+    },
+    payee: {
+        fontSize: 13,
+        lineHeight: 18,
     },
     placeholderName: {
         fontStyle: 'italic',
@@ -470,6 +472,7 @@ const styles = StyleSheet.create({
     amount: {
         fontWeight: 'bold',
         marginVertical: 2,
+        fontVariant: ['tabular-nums'],
     },
     modalBackdrop: {
         ...StyleSheet.absoluteFillObject,

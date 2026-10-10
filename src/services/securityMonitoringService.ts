@@ -22,7 +22,7 @@ const enrollCallable = httpsCallable<
 >(functions, 'enrollSecurityIdentity');
 const verifyCallable = httpsCallable<{ identityId: string }, { verified: boolean }>(functions, 'verifySecurityIdentity');
 const scanCallable = httpsCallable<
-  { requestId: string },
+  { requestId: string; useCredits: boolean },
   { status: 'complete' | 'running'; findingCount?: number; newHighRiskCount?: number }
 >(functions, 'startSecurityScan');
 const updateFindingCallable = httpsCallable<
@@ -37,7 +37,7 @@ const updatePreferencesCallable = httpsCallable<
 const removeIdentityCallable = httpsCallable<{ identityId: string }, { success: boolean }>(functions, 'removeSecurityIdentity');
 const deleteAllCallable = httpsCallable<Record<string, never>, { success: boolean }>(functions, 'deleteSecurityMonitoringData');
 const analyzeUrlCallable = httpsCallable<
-  { url: string },
+  { url: string; operationId?: string; useCredits: boolean },
   {
     hostname: string;
     risk: import('@/models/security').SecurityRiskAssessment;
@@ -58,9 +58,15 @@ export const enrollSecurityIdentity = async (type: SecurityIdentityType, value: 
 export const verifySecurityIdentity = async (identityId: string): Promise<boolean> =>
   (await verifyCallable({ identityId })).data.verified;
 
-export const startSecurityScan = async () => {
-  const requestId = `manual_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-  return (await scanCallable({ requestId })).data;
+/** One attempt id per scan the user starts; reused when they approve credits. */
+export const newSecurityScanRequestId = (): string =>
+  `manual_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+
+export const startSecurityScan = async (
+  options: { requestId?: string; useCredits?: boolean } = {},
+) => {
+  const requestId = options.requestId ?? newSecurityScanRequestId();
+  return (await scanCallable({ requestId, useCredits: options.useCredits === true })).data;
 };
 
 export const updateSecurityFinding = async (
@@ -89,5 +95,11 @@ export const deleteAllSecurityMonitoringData = async (): Promise<void> => {
   await deleteAllCallable({});
 };
 
-export const analyzeSecurityUrl = async (url: string) =>
-  (await analyzeUrlCallable({ url })).data;
+export const analyzeSecurityUrl = async (
+  url: string,
+  options: { operationId?: string; useCredits?: boolean } = {},
+) => (await analyzeUrlCallable({
+  url,
+  ...(options.operationId ? { operationId: options.operationId } : {}),
+  useCredits: options.useCredits === true,
+})).data;

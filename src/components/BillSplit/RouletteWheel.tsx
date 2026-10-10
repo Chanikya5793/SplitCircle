@@ -94,6 +94,14 @@ interface RouletteWheelProps {
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
+// A segment fits about eight characters. Lead with the first name ("Taylor",
+// not "Taylor …" from the full "Taylor Tester") and only clip a first name
+// that is itself too long.
+const wheelLabel = (name: string): string => {
+  const first = name.trim().split(/\s+/)[0] || name;
+  return first.length > 8 ? `${first.slice(0, 7)}…` : first;
+};
+
 const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
   ({ participants, onSpinComplete, disabled, totalAmount, currency, winnerId, onHubPress }, ref) => {
     const { theme } = useTheme();
@@ -224,7 +232,7 @@ const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
               alignmentBaseline="central"
               transform={`rotate(${midAngle}, ${labelPos.x}, ${labelPos.y})`}
             >
-              {segmentCount > 8 ? resolveInitials(p.name) : p.name.length > 8 ? p.name.slice(0, 7) + '…' : p.name.split(' ')[0]}
+              {segmentCount > 8 ? resolveInitials(p.name) : wheelLabel(p.name)}
             </SvgText>
           </G>
         );

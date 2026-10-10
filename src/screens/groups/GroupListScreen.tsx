@@ -319,6 +319,32 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           New group
         </Button>
 
+        <TouchableOpacity
+          onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.FRIENDS, { backTitle: 'Expenses' }); }}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Friends"
+          style={[styles.glassAction, bigText && styles.actionStacked]}
+        >
+          {/* radius={50}: GlassView paints the fill, so the pill shape has to be
+              set on IT — the wrapper's overflow:'hidden' clips the corners but
+              leaves a squared-off fill underneath on Android. */}
+          <GlassView role="floating" radius={50} style={styles.glassActionInner}>
+            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Friends</Text>
+          </GlassView>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => { lightHaptic(); setDialog('join'); }}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Join a group via invite code"
+          style={[styles.glassAction, bigText && styles.actionStacked]}
+        >
+          <GlassView role="floating" radius={50} style={styles.glassActionInner}>
+            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Join via code</Text>
+          </GlassView>
+        </TouchableOpacity>
     </View>
   );
 
@@ -361,7 +387,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         )}
         contentContainerStyle={[
           groups.length === 0 && !loading ? styles.emptyContainer : undefined,
-          { paddingTop: insets.top + 32, paddingBottom: listBottomPadding, paddingHorizontal: SCREEN_GUTTER }
+          { paddingTop: insets.top + 24, paddingBottom: listBottomPadding, paddingHorizontal: SCREEN_GUTTER }
         ]}
         ListHeaderComponent={
           <View>
@@ -407,21 +433,8 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
               {/* Overall position across every group — computed on-device from
                   data already in GroupContext (utils/myBalance.ts), not read
                   back from Firebase. */}
-              {!groupsShielded && <BalanceHeadline prominent style={{ marginTop: theme.spacing.lg }} />}
+              {!groupsShielded && <BalanceHeadline style={{ marginTop: 8 }} />}
             </View>
-
-            {!groupsShielded && (
-              <View style={[styles.secondaryActions, bigText && { flexDirection: 'column', alignItems: 'stretch' }]}>
-                <Button mode="text" icon="account-multiple-outline" contentStyle={{ minHeight: 48 }}
-                  onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.FRIENDS, { backTitle: 'Expenses' }); }}>
-                  Friends
-                </Button>
-                <Button mode="text" icon="link-variant" contentStyle={{ minHeight: 48 }}
-                  onPress={() => { lightHaptic(); setDialog('join'); }}>
-                  Join via code
-                </Button>
-              </View>
-            )}
 
             {archivedGroups.length > 0 && (
               <View style={styles.archivedSection}>
@@ -620,16 +633,16 @@ const styles = StyleSheet.create({
   },
   actions: {
     position: 'absolute',
-    right: 20,
     left: 20,
+    right: 20,
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     alignItems: 'center',
     gap: 10,
     zIndex: 10,
   },
   primaryAction: {
-    flex: 0,
+    flex: 1,
     minWidth: 0,
     // Measured 142x37dp on a Pixel 7 — under the 44pt HIG / 48dp Material
     // minimum. Paper's `compact` Button shrinks its own height, so the floor
@@ -649,11 +662,23 @@ const styles = StyleSheet.create({
     flex: 0,
     width: '100%',
   },
-  secondaryActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 16,
+  /** Pill, to match the "New group" Button sitting right beside it — Paper
+   *  rounds a contained Button to a full pill, so a 15pt radius here read as
+   *  two different button shapes in one row. */
+  glassAction: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 50,
+    overflow: 'hidden',
+    borderWidth: 0,
+  },
+  glassActionInner: {
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    // Measured 142x42dp — just under the minimum. See primaryAction.
+    minHeight: 48,
   },
   emptyContainer: {
     flexGrow: 1,

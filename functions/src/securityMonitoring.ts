@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
 import { FieldValue, Timestamp, getFirestore, type Query } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { runMeteredProviderOperation } from "./monetizedProvider";
 import { defineSecret } from "firebase-functions/params";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { sendPushToUsers } from "./notifications";
@@ -519,21 +520,43 @@ export const startSecurityScan = onCall({ secrets: monitoringSecrets, timeoutSec
     if (!/^[A-Za-z0-9_-]{8,80}$/.test(requestId)) {
         throw new HttpsError("invalid-argument", "A valid idempotency request ID is required.");
     }
-    const claim = await claimManualScan(uid, requestId);
-    if (claim !== "claimed") {
-        const job = await monitorRef(uid).collection("scanJobs").doc(requestId).get();
-        return { status: claim, ...(job.data() ?? {}) };
+    // A retry of a scan that already exists reports it and is never charged.
+    const existingJob = await monitorRef(uid).collection("scanJobs").doc(requestId).get();
+    if (existingJob.exists) {
+        const status = existingJob.data()?.status === "complete" ? "complete" : "running";
+        return { status, ...(existingJob.data() ?? {}) };
     }
-    try {
-        return { status: "complete", ...(await runSecurityScan(uid, requestId, "manual")) };
-    } catch (error) {
-        await monitorRef(uid).collection("scanJobs").doc(requestId).set({
-            status: "failed",
-            safeMessage: "The scan did not complete. No sensitive provider response was retained.",
-            updatedAt: FieldValue.serverTimestamp(),
-        }, { merge: true });
-        throw error;
-    }
+
+    const { result, usage } = await runMeteredProviderOperation({
+        request,
+        featureId: "provider.manual_monitor_run",
+        operationKey: `scan:${requestId}`,
+        useCredits: request.data?.useCredits === true,
+        run: async () => {
+            // The cooldown is a safety control for everyone; hitting it
+            // throws and the reservation is released.
+            const claim = await claimManualScan(uid, requestId);
+            if (claim !== "claimed") {
+                const job = await monitorRef(uid).collection("scanJobs").doc(requestId).get();
+                return { ran: false as const, response: { status: claim, ...(job.data() ?? {}) } };
+            }
+            try {
+                return {
+                    ran: true as const,
+                    response: { status: "complete", ...(await runSecurityScan(uid, requestId, "manual")) },
+                };
+            } catch (error) {
+                await monitorRef(uid).collection("scanJobs").doc(requestId).set({
+                    status: "failed",
+                    safeMessage: "The scan did not complete. No sensitive provider response was retained.",
+                    updatedAt: FieldValue.serverTimestamp(),
+                }, { merge: true });
+                throw error;
+            }
+        },
+        succeeded: (outcome) => outcome.ran,
+    });
+    return { ...result.response, usage };
 });
 
 export const updateSecurityFinding = onCall(async (request) => {

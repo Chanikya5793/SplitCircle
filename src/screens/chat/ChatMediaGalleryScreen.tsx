@@ -2258,7 +2258,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    minHeight: 44,
     paddingVertical: 10,
   },
   tabLabel: {
@@ -2349,7 +2348,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 12,
-    minHeight: 44,
     paddingVertical: 8,
     borderRadius: 12,
   },

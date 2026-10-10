@@ -242,10 +242,7 @@ export const LiquidBackground = ({
           zIndex alone breaks on the new architecture: the blobs' Reanimated
           transforms made them composite OVER foreground content, washing out
           anything without a glass/blur surface (dim chat bubbles on device). */}
-      <View
-        style={[StyleSheet.absoluteFill, wallpaper?.kind !== 'blob' && styles.ambientWash]}
-        pointerEvents="none"
-      >
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <Blob
           lightColor={lightBlobColors[0]}
           darkColor={darkBlobColors[0]}
@@ -291,12 +288,13 @@ const styles = StyleSheet.create({
     flex: 1,
     zIndex: 1,
   },
-  // Refined Glass: a quiet default wash behind balances and content. This
-  // layer contains no material views, so opacity cannot disable native glass.
-  ambientWash: { opacity: 0.4 },
   blob: {
     position: 'absolute',
-    // Explicit wallpaper presets retain their chosen intensity.
+    // Bumped from 0.35 for a more vibrant, airy backdrop — the ambient accent
+    // blobs read clearly against the brighter appBackground instead of fading
+    // into it. Still soft enough to keep foreground text legible. The
+    // background system is a locked decision (doc 37): do not dim it here;
+    // calmer backdrops are the user's choice via the solid wallpaper presets.
     opacity: 0.45,
   },
 });

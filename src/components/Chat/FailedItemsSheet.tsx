@@ -290,7 +290,6 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   actionBtn: {
-    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,

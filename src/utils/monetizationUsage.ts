@@ -16,14 +16,18 @@ export const isMeteredAdvancedSplitVariant = (
   ELIGIBLE_ADVANCED_SPLIT_VARIANTS.has(method);
 
 /**
- * Saving is the billable completion boundary. It applies equally to a newly
- * created expense and to an edited expense that is saved with an eligible
- * advanced split, so edit mode must never become an implicit quota bypass.
+ * Saving is the billable completion boundary — for a NEW advanced result
+ * only. Creating an expense with an eligible advanced split, or switching an
+ * existing expense into one (or to a different one), counts. Editing an
+ * existing advanced split with the same method — fixing a title, amount or
+ * roster — does not: any member must be able to correct a split without an
+ * allowance. The server applies the identical rule (expenseMutation.ts,
+ * editRequiresAdvancedAuthorization), so this can never become a bypass.
  */
 export const requiresAdvancedSplitAuthorizationOnSave = (
   method: ExpenseSplitMetadata['method'],
-  _expenseId?: string,
-): boolean => isMeteredAdvancedSplitVariant(method);
+  existingMethod?: ExpenseSplitMetadata['method'] | null,
+): boolean => isMeteredAdvancedSplitVariant(method) && method !== existingMethod;
 
 /**
  * The shadow endpoint requires UUID v4 operation ids. UI mutations already

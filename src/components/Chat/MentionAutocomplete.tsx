@@ -1,3 +1,4 @@
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
@@ -26,6 +27,7 @@ export const MentionAutocomplete = ({
   onSelect,
 }: MentionAutocompleteProps) => {
   const { theme, isDark } = useTheme();
+  const { hidePhoto } = usePrivacyMask();
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -62,7 +64,7 @@ export const MentionAutocomplete = ({
                 },
               ]}
             >
-              {item.photoURL ? (
+              {item.photoURL && !hidePhoto() ? (
                 <Avatar.Image size={28} source={{ uri: item.photoURL }} />
               ) : (
                 <Avatar.Text

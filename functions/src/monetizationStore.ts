@@ -244,6 +244,8 @@ export async function ensureMonetizationAccount(params: {
     uid: string;
     environment: MonetizationEnvironment;
     db?: Firestore;
+    /** Clock for projecting subscription expiry. Defaults to the real time. */
+    nowMs?: number;
 }): Promise<MonetizationAccountState> {
     const db = params.db ?? getFirestore();
     const accountRef = accountStateRef(params.environment, params.uid, db);
@@ -280,7 +282,7 @@ export async function ensureMonetizationAccount(params: {
         }
 
         const subscriptions = sanitizeSubscriptions(existingData?.subscriptions);
-        const projection = projectActivePlan(subscriptions, Date.now());
+        const projection = projectActivePlan(subscriptions, params.nowMs ?? Date.now());
         const account: MonetizationAccountState = {
             schemaVersion: MONETIZATION_SCHEMA_VERSION,
             uid: params.uid,
