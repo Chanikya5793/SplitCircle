@@ -10,7 +10,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isBackupHealthy } from '../../modules/splitcircle-backup';
-import { exportBackup, type BackupProgress } from '@/services/backupService';
+import { BackupWouldShrinkError, exportBackup, type BackupProgress, type BackupSummary } from '@/services/backupService';
 import { getStoredPassphrase } from '@/services/backupPassphraseService';
 import { publishRecoveryVerifier } from '@/services/accountRecoveryService';
 import { checkNetworkAllowance } from '@/services/backupSettingsService';
@@ -33,15 +33,20 @@ export type BackupBlockedReason =
   | 'icloud_unavailable'
   | 'not_main_device'
   | 'already_running'
-  | 'network_not_allowed';
+  | 'network_not_allowed'
+  /** iCloud holds a bigger backup this device didn't write — see assessTakeover. */
+  | 'would_replace_backup';
 
 export class BackupBlockedError extends Error {
   readonly reason: BackupBlockedReason;
+  /** For 'would_replace_backup': the backup that would have been replaced. */
+  readonly remote?: BackupSummary;
 
-  constructor(reason: BackupBlockedReason, message: string) {
+  constructor(reason: BackupBlockedReason, message: string, remote?: BackupSummary) {
     super(message);
     this.name = 'BackupBlockedError';
     this.reason = reason;
+    this.remote = remote;
   }
 }
 
@@ -104,6 +109,7 @@ export const runBackupNow = async (
   userId: string,
   onProgress?: (progress: BackupProgress) => void,
   trigger: 'manual' | 'scheduled' = 'manual',
+  options: { replaceExisting?: boolean } = {},
 ): Promise<LastBackupInfo> => {
   const startedAt = Date.now();
 
@@ -183,7 +189,11 @@ export const runBackupNow = async (
 
   running = true;
   try {
-    const manifest = await exportBackup(passphrase, onProgress);
+    // A scheduled run can never replace a bigger backup: only a person who
+    // has seen what would be lost can choose that.
+    const manifest = await exportBackup(passphrase, onProgress, {
+      replaceExisting: trigger === 'manual' && options.replaceExisting === true,
+    });
 
     // Publish the §3.12 recovery verifier for the backup that just landed.
     // After EVERY run, not only the first: this is what lets a device that
@@ -213,6 +223,19 @@ export const runBackupNow = async (
     });
     return info;
   } catch (error) {
+    if (error instanceof BackupWouldShrinkError) {
+      await log('blocked', {
+        reason: 'would_replace_backup',
+        message: `iCloud has a larger backup (${error.remote.totalMessages} messages) from ${error.remote.deviceName ?? 'another device'}.`,
+      });
+      throw new BackupBlockedError(
+        'would_replace_backup',
+        `iCloud already has a backup with ${error.remote.totalMessages.toLocaleString()} messages${
+          error.remote.deviceName ? ` from ${error.remote.deviceName}` : ''
+        }, and this device has ${error.localMessages.toLocaleString()}. Restore it first, or replace it on purpose.`,
+        error.remote,
+      );
+    }
     // A run that got past every precondition and then broke is a different
     // condition from a refusal, and the screen says so — this is the one the
     // user cannot fix by changing a setting.

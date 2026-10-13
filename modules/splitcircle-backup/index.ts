@@ -1,11 +1,9 @@
 /**
  * splitcircle-backup — iCloud (CloudKit) chat backup/restore (doc 31 §3.2).
  *
- * Phase 0 shell: only `isHealthy()` does anything real. Every mutating
- * function throws until Phase 4's CloudKitBackupProvider lands — deliberately
- * NOT silently swallowed like `redactPII`'s JS fallback, because a backup
- * failure that looks like success is exactly the class of bug doc 31 §3.7's
- * device-retirement gate exists to prevent. Callers must handle rejection.
+ * Mutating functions reject rather than no-op when CloudKit is unreachable:
+ * a backup failure that looks like success is exactly the class of bug doc 31
+ * §3.7's device-retirement gate exists to prevent. Callers must handle it.
  */
 
 import * as Device from 'expo-device';
@@ -142,4 +140,51 @@ export async function verifyBackupIntegrity(
   expectedChecksum: string,
 ): Promise<boolean> {
   return requireModule().verifyIntegrity(recordType, recordId, expectedChecksum);
+}
+
+/**
+ * The native module holds ONE encryption session. Backup, restore, verify and
+ * the pairing history handoff each open it, use it, and close it — so two of
+ * them interleaving would encrypt one's chunks under the other's key, or close
+ * the session out from under it. Every begin…end sequence runs through here,
+ * one at a time.
+ */
+let sessionQueue: Promise<unknown> = Promise.resolve();
+export function runExclusive<T>(work: () => Promise<T>): Promise<T> {
+  const run = sessionQueue.then(work, work);
+  sessionQueue = run.catch(() => undefined);
+  return run;
+}
+
+/** Whether this binary has the native file functions (added with backup v2). */
+export const hasNativeFileTransfer = (): boolean =>
+  CLOUDKIT_REACHABLE && typeof NativeModule?.backupFile === 'function';
+
+export async function backupFile(
+  recordType: string,
+  recordId: string,
+  filePath: string,
+  metadata: Record<string, string>,
+): Promise<number> {
+  const mod = requireModule();
+  if (!mod.backupFile) throw new Error('This build cannot back up files natively');
+  return mod.backupFile(recordType, recordId, filePath, metadata);
+}
+
+export async function restoreFile(
+  recordType: string,
+  recordId: string,
+  destinationPath: string,
+): Promise<{ metadata: Record<string, string>; bytes: number } | null> {
+  const mod = requireModule();
+  if (!mod.restoreFile) throw new Error('This build cannot restore files natively');
+  return mod.restoreFile(recordType, recordId, destinationPath);
+}
+
+/** Best effort: older binaries without the function simply keep the records. */
+export async function deleteRecords(recordIds: string[]): Promise<void> {
+  if (recordIds.length === 0) return;
+  const mod = requireModule();
+  if (!mod.deleteRecords) return;
+  await mod.deleteRecords(recordIds);
 }

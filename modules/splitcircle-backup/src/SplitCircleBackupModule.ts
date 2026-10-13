@@ -20,9 +20,8 @@ export interface SplitCircleBackupNativeModule {
   beginSessionWithKey(keyBase64: string): Promise<void>;
   endSession(): Promise<void>;
   hasSession(): Promise<boolean>;
-  /** Cheap iCloud-account presence check — see doc 31 §3.6/§3.7. Not a full CloudKit health check until Phase 4. */
+  /** CloudKit account status for this app's container. */
   isHealthy(): Promise<BackupHealthRaw>;
-  /** Throws SplitCircleBackup.notImplemented until Phase 4's CloudKitBackupProvider lands. */
   backupChunk(
     recordType: string,
     recordId: string,
@@ -36,6 +35,21 @@ export interface SplitCircleBackupNativeModule {
     recordId: string,
   ): Promise<{ recordId: string; metadata: Record<string, string> } | null>;
   listChunkIds(recordType: string, metadata: Record<string, string>): Promise<string[]>;
+  /** Encrypts + stores a file read natively (no base64 bridge). Returns plaintext bytes. */
+  backupFile?(
+    recordType: string,
+    recordId: string,
+    filePath: string,
+    metadata: Record<string, string>,
+  ): Promise<number>;
+  /** Fetches + decrypts a record straight to a file. Null when absent. */
+  restoreFile?(
+    recordType: string,
+    recordId: string,
+    destinationPath: string,
+  ): Promise<{ metadata: Record<string, string>; bytes: number } | null>;
+  /** Deletes records by id; missing ids are fine. */
+  deleteRecords?(recordIds: string[]): Promise<void>;
   estimateSize(): Promise<number>;
   verifyIntegrity(recordType: string, recordId: string, expectedChecksum: string): Promise<boolean>;
 }

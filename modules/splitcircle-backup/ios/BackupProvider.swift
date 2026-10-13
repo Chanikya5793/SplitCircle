@@ -75,4 +75,10 @@ public protocol BackupProvider {
   /// `expectedChecksum` — a provider that does the latter makes the
   /// retirement gate gameable (doc 31 §3.7 point 3 / §5 Phase 7).
   func verifyIntegrity(recordType: String, recordId: String, expectedChecksum: String) async throws -> Bool
+
+  /// Deletes records by id. Used to prune what the current manifest no longer
+  /// references (a deleted chat, media that left the selection), so the
+  /// user's iCloud quota isn't spent on data no restore will ever read.
+  /// Ids that don't exist are not an error.
+  func deleteRecords(recordIds: [String]) async throws
 }

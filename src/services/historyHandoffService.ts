@@ -26,6 +26,7 @@ import {
   endBackupSession,
   restoreChunk,
   restoreChunkMetadata,
+  runExclusive,
 } from '../../modules/splitcircle-backup';
 import { getChatMessages, getLocalMessageStats, saveMessageLocally } from '@/services/localMessageStorage';
 import { getCurrentDeviceId } from '@/services/pairingService';
@@ -165,24 +166,27 @@ export const sendHistoryHandoff = async (
   const chunkCount = Math.ceil(windowed.length / MESSAGES_PER_CHUNK);
   onProgress?.({ phase: 'preparing', chunksDone: 0, chunksTotal: chunkCount, messagesDone: 0 });
 
-  await beginBackupSessionWithKey(bundleKey);
-  try {
-    for (let index = 0; index < chunkCount; index += 1) {
-      const slice = windowed.slice(index * MESSAGES_PER_CHUNK, (index + 1) * MESSAGES_PER_CHUNK);
-      await backupChunk(RECORD_TYPE, chunkId(targetDeviceId, index), encodeJson(slice), {
-        targetDeviceId,
-        index: String(index),
-      });
-      onProgress?.({
-        phase: 'sending',
-        chunksDone: index + 1,
-        chunksTotal: chunkCount,
-        messagesDone: Math.min((index + 1) * MESSAGES_PER_CHUNK, windowed.length),
-      });
+  // One native session at a time: see runExclusive.
+  await runExclusive(async () => {
+    await beginBackupSessionWithKey(bundleKey);
+    try {
+      for (let index = 0; index < chunkCount; index += 1) {
+        const slice = windowed.slice(index * MESSAGES_PER_CHUNK, (index + 1) * MESSAGES_PER_CHUNK);
+        await backupChunk(RECORD_TYPE, chunkId(targetDeviceId, index), encodeJson(slice), {
+          targetDeviceId,
+          index: String(index),
+        });
+        onProgress?.({
+          phase: 'sending',
+          chunksDone: index + 1,
+          chunksTotal: chunkCount,
+          messagesDone: Math.min((index + 1) * MESSAGES_PER_CHUNK, windowed.length),
+        });
+      }
+    } finally {
+      await endBackupSession();
     }
-  } finally {
-    await endBackupSession();
-  }
+  });
 
   // Manifest last, same reasoning as the backup manifest: it is what the
   // receiver reads first, so it must never promise chunks that aren't there.
@@ -204,24 +208,27 @@ export const sendHistoryHandoff = async (
   // only the target can open, so a raw all-zero key would be misleading —
   // use the bundle key so the record shape stays uniform, and keep the
   // envelope inside readable by writing it into the metadata instead.
-  await beginBackupSessionWithKey(bundleKey);
-  try {
-    await backupChunk(RECORD_TYPE, manifestId(targetDeviceId), encodeJson(manifest), {
-      targetDeviceId,
-      kind: 'manifest',
-      // The envelope must be readable WITHOUT the bundle key — otherwise the
-      // target could never bootstrap. Metadata is not encrypted by this layer.
-      keyEnvelopeType: String(keyEnvelope.type),
-      keyEnvelopeBody: keyEnvelope.body,
-      senderSignalDeviceId: String(senderSignalDeviceId),
-      senderUserId: userId,
-      createdAt: String(manifest.createdAt),
-      chunkCount: String(chunkCount),
-      totalMessages: String(windowed.length),
-    });
-  } finally {
-    await endBackupSession();
-  }
+  // One native session at a time: see runExclusive.
+  await runExclusive(async () => {
+    await beginBackupSessionWithKey(bundleKey);
+    try {
+      await backupChunk(RECORD_TYPE, manifestId(targetDeviceId), encodeJson(manifest), {
+        targetDeviceId,
+        kind: 'manifest',
+        // The envelope must be readable WITHOUT the bundle key — otherwise the
+        // target could never bootstrap. Metadata is not encrypted by this layer.
+        keyEnvelopeType: String(keyEnvelope.type),
+        keyEnvelopeBody: keyEnvelope.body,
+        senderSignalDeviceId: String(senderSignalDeviceId),
+        senderUserId: userId,
+        createdAt: String(manifest.createdAt),
+        chunkCount: String(chunkCount),
+        totalMessages: String(windowed.length),
+      });
+    } finally {
+      await endBackupSession();
+    }
+  });
 
   onProgress?.({
     phase: 'complete',
@@ -320,41 +327,44 @@ export const receiveHistoryHandoff = async (
     const imported = new Set(existing?.importedChunks ?? []);
     let messagesImported = existing?.messagesImported ?? 0;
 
-    await beginBackupSessionWithKey(bundleKey);
-    try {
-      for (let index = 0; index < chunkCount; index += 1) {
-        if (imported.has(index)) continue;
+    // One native session at a time: see runExclusive.
+    await runExclusive(async () => {
+      await beginBackupSessionWithKey(bundleKey);
+      try {
+        for (let index = 0; index < chunkCount; index += 1) {
+          if (imported.has(index)) continue;
 
-        const chunk = await restoreChunk(RECORD_TYPE, chunkId(ownDeviceId, index));
-        if (!chunk) {
-          // Missing chunk: stop and report incomplete rather than skipping
-          // ahead, so the window never silently has a hole in it.
-          break;
+          const chunk = await restoreChunk(RECORD_TYPE, chunkId(ownDeviceId, index));
+          if (!chunk) {
+            // Missing chunk: stop and report incomplete rather than skipping
+            // ahead, so the window never silently has a hole in it.
+            break;
+          }
+          const messages = decodeJson<ChatMessage[]>(chunk.payloadBase64);
+          for (const message of messages) {
+            await saveMessageLocally(message);
+            messagesImported += 1;
+          }
+          imported.add(index);
+          // Checkpoint AFTER the writes land, so a crash mid-chunk re-imports
+          // that chunk rather than skipping it. saveMessageLocally dedupes by
+          // id, so re-importing is harmless.
+          await writeCheckpoint({
+            manifestCreatedAt,
+            importedChunks: [...imported],
+            messagesImported,
+          });
+          onProgress?.({
+            phase: 'sending',
+            chunksDone: imported.size,
+            chunksTotal: chunkCount,
+            messagesDone: messagesImported,
+          });
         }
-        const messages = decodeJson<ChatMessage[]>(chunk.payloadBase64);
-        for (const message of messages) {
-          await saveMessageLocally(message);
-          messagesImported += 1;
-        }
-        imported.add(index);
-        // Checkpoint AFTER the writes land, so a crash mid-chunk re-imports
-        // that chunk rather than skipping it. saveMessageLocally dedupes by
-        // id, so re-importing is harmless.
-        await writeCheckpoint({
-          manifestCreatedAt,
-          importedChunks: [...imported],
-          messagesImported,
-        });
-        onProgress?.({
-          phase: 'sending',
-          chunksDone: imported.size,
-          chunksTotal: chunkCount,
-          messagesDone: messagesImported,
-        });
+      } finally {
+        await endBackupSession();
       }
-    } finally {
-      await endBackupSession();
-    }
+    });
 
     const incomplete = imported.size < chunkCount;
     if (!incomplete) await clearHandoffCheckpoint();

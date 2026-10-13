@@ -17,6 +17,7 @@ import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
 import { auth } from '@/firebase';
 import { runBackupNow } from '@/services/backupRunner';
+import { migrateBackupKeychainAccess } from '@/services/backupPassphraseService';
 import {
   FREQUENCY_INTERVAL_MS,
   getBackupFrequency,
@@ -25,9 +26,37 @@ import {
 
 export const BACKUP_TASK_NAME = 'com.splitcircle.app.backup.scheduled';
 
+/**
+ * The signed-in user, waiting for Firebase to restore it.
+ *
+ * A background task usually starts the app COLD, and Firebase Auth restores
+ * its session from storage asynchronously — so `auth.currentUser` is still
+ * null when the task body runs. Reading it directly made every scheduled run
+ * exit as "signed out" before doing anything.
+ */
+const waitForSignedInUser = (timeoutMs = 15000): Promise<string | null> =>
+  new Promise((resolve) => {
+    if (auth.currentUser) {
+      resolve(auth.currentUser.uid);
+      return;
+    }
+    let done = false;
+    const finish = (uid: string | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      unsubscribe();
+      resolve(uid);
+    };
+    const timer = setTimeout(() => finish(auth.currentUser?.uid ?? null), timeoutMs);
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (user) finish(user.uid);
+    });
+  });
+
 TaskManager.defineTask(BACKUP_TASK_NAME, async () => {
   try {
-    const userId = auth.currentUser?.uid;
+    const userId = await waitForSignedInUser();
     if (!userId) return BackgroundTask.BackgroundTaskResult.Success;
 
     const frequency = await getBackupFrequency(userId);
@@ -88,5 +117,21 @@ export const isBackupScheduled = async (): Promise<boolean> => {
     return await TaskManager.isTaskRegisteredAsync(BACKUP_TASK_NAME);
   } catch {
     return false;
+  }
+};
+
+/**
+ * App-start housekeeping for a signed-in user: moves the backup Keychain items
+ * to after-first-unlock (so the overnight task can read them) and keeps the
+ * OS schedule in step with the synced frequency. Before this ran only when the
+ * backup screen was opened, so a device whose owner never opened it never had
+ * a schedule at all.
+ */
+export const ensureBackupSchedule = async (userId: string): Promise<void> => {
+  try {
+    await migrateBackupKeychainAccess();
+    await syncBackupSchedule(await getBackupFrequency(userId));
+  } catch (error) {
+    console.warn('Could not prepare backup schedule', error);
   }
 };

@@ -11,6 +11,7 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { ScrimBackdrop } from '@/components/ui/ScrimBackdrop';
 import { appAlert } from '@/utils/appAlert';
 import { WALLPAPER_CATALOG, type CatalogWallpaper } from '@/constants/wallpaperCatalog';
+import { LiveWallpaper } from '@/components/LiveWallpaper';
 import {
   clearWallpaper,
   copyWallpaper,
@@ -18,6 +19,7 @@ import {
   pickAndSetWallpaper,
   setWallpaperBlob,
   setWallpaperFromBundled,
+  setWallpaperLive,
   setWallpaperSolid,
   type WallpaperSlot,
 } from '@/services/wallpaperService';
@@ -33,6 +35,7 @@ import {
   ScrollView,
   StyleSheet,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { ActivityIndicator, Text } from 'react-native-paper';
@@ -65,8 +68,9 @@ export const WallpaperPickerSheet = ({
   onClose,
   onChanged,
 }: WallpaperPickerSheetProps) => {
-  const { theme, isDark } = useTheme();
+  const { theme, isDark, themeProgress } = useTheme();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const [busyId, setBusyId] = useState<string | null>(null);
 
   // Entrance: the sheet slides DOWN from above while the Modal's fade brings
@@ -86,13 +90,26 @@ export const WallpaperPickerSheet = ({
   }, [visible, slide]);
 
   if (!slot) return null;
-  const hasCurrent = Boolean(getWallpaperSync(slot));
+  const current = getWallpaperSync(slot);
+  const hasCurrent = Boolean(current);
+  /** Marks the tile that matches what this slot shows now. */
+  const isCurrent = (item: CatalogWallpaper): boolean => {
+    if (!current) return false;
+    if (item.kind === 'live') return current.kind === 'live' && current.scene === item.scene;
+    if (item.kind === 'solid') return current.kind === 'solid' && current.light === item.light && current.dark === item.dark;
+    if (item.kind === 'blob') {
+      if (current.kind !== 'blob') return false;
+      return item.adaptive ? current.adaptive === true : !current.adaptive && current.light.join() === item.light.join();
+    }
+    return false;
+  };
 
   const applyCatalog = async (item: CatalogWallpaper) => {
     lightHaptic();
     setBusyId(item.id);
     try {
-      if (item.kind === 'blob') await setWallpaperBlob(slot, item.light, item.dark, item.adaptive);
+      if (item.kind === 'live') await setWallpaperLive(slot, item.scene);
+      else if (item.kind === 'blob') await setWallpaperBlob(slot, item.light, item.dark, item.adaptive);
       else if (item.kind === 'solid') await setWallpaperSolid(slot, item.light, item.dark);
       else await setWallpaperFromBundled(slot, item.source);
       successHaptic();
@@ -221,73 +238,95 @@ export const WallpaperPickerSheet = ({
           </TouchableOpacity>
         )}
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.rail}
-        >
-          {/* Gallery tile first — parity with the old flow. */}
-          <TouchableOpacity
-            onPress={applyFromPhotos}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel="Choose from your photos"
-            style={[
-              styles.thumb,
-              styles.photosTile,
-              { borderColor: theme.colors.outline, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' },
-            ]}
-          >
-            <Ionicons name="images-outline" size={26} color={theme.colors.primary} />
-            <Text variant="labelSmall" style={{ color: theme.colors.onSurface, marginTop: 6 }}>
-              Photos
-            </Text>
-          </TouchableOpacity>
-
-          {WALLPAPER_CATALOG.map((item) => (
-            <TouchableOpacity
-              key={item.id}
-              onPress={() => void applyCatalog(item)}
-              activeOpacity={0.8}
-              disabled={busyId !== null}
-              accessibilityRole="button"
-              accessibilityLabel={`${item.label} wallpaper`}
-            >
-              <View>
-                {item.kind === 'solid' ? (
-                  // No thumbnail asset for a solid — the swatch IS the colour.
-                  <View
-                    style={[
-                      styles.thumb,
-                      { backgroundColor: isDark ? item.dark : item.light },
-                    ]}
-                  />
-                ) : (
-                  <Image
-                    source={item.kind === 'blob' ? item.thumb : item.source}
-                    style={styles.thumb}
-                    accessibilityIgnoresInvertColors
-                  />
-                )}
-                {item.kind === 'blob' && (
-                  <View style={styles.animBadge} pointerEvents="none">
-                    <Ionicons name="sparkles" size={11} color="#fff" />
-                  </View>
-                )}
-                {busyId === item.id && (
-                  <View style={styles.busyOverlay}>
-                    <ActivityIndicator size="small" color="#fff" />
-                  </View>
-                )}
+        <ScrollView style={[styles.sections, { maxHeight: windowHeight * 0.58 }]} showsVerticalScrollIndicator={false}>
+          {SECTIONS.map((section) => (
+            <View key={section.key} style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                  {section.title}
+                </Text>
+                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                  {section.hint}
+                </Text>
               </View>
-              <Text
-                variant="labelSmall"
-                numberOfLines={1}
-                style={[styles.thumbLabel, { color: theme.colors.onSurfaceVariant }]}
-              >
-                {item.label}
-              </Text>
-            </TouchableOpacity>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
+                {section.key === 'photo' ? (
+                  <TouchableOpacity
+                    onPress={applyFromPhotos}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Choose from your photos"
+                  >
+                    <View
+                      style={[
+                        styles.thumb,
+                        styles.photosTile,
+                        { borderColor: theme.colors.outline, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' },
+                      ]}
+                    >
+                      <Ionicons name="images-outline" size={26} color={theme.colors.primary} />
+                    </View>
+                    <Text variant="labelSmall" numberOfLines={1} style={[styles.thumbLabel, { color: theme.colors.onSurfaceVariant }]}>
+                      Your photos
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+                {WALLPAPER_CATALOG.filter((item) => section.kinds.includes(item.kind)).map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    onPress={() => void applyCatalog(item)}
+                    activeOpacity={0.8}
+                    disabled={busyId !== null}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${item.label} wallpaper`}
+                  >
+                    <View style={styles.thumbFrame}>
+                      {item.kind === 'live' ? (
+                        <View style={[styles.thumb, styles.liveThumb]}>
+                          <LiveWallpaper
+                            scene={item.scene}
+                            animate={visible && !theme.reduceMotion}
+                            mode={themeProgress}
+                            width={THUMB_W}
+                            height={THUMB_H}
+                            speed={2}
+                            startAt={20 + item.label.length * 7}
+                          />
+                        </View>
+                      ) : item.kind === 'solid' ? (
+                        <View style={[styles.thumb, { backgroundColor: isDark ? item.dark : item.light }]} />
+                      ) : (
+                        <Image
+                          source={item.kind === 'blob' ? item.thumb : item.source}
+                          style={styles.thumb}
+                          accessibilityIgnoresInvertColors
+                        />
+                      )}
+                      {item.kind === 'blob' || item.kind === 'live' ? (
+                        <View style={styles.animBadge} pointerEvents="none">
+                          <Ionicons name={item.kind === 'live' ? 'play' : 'sparkles'} size={10} color="#fff" />
+                        </View>
+                      ) : null}
+                      {isCurrent(item) ? (
+                        <View style={[styles.currentRing, { borderColor: theme.colors.primary }]} pointerEvents="none" />
+                      ) : null}
+                      {busyId === item.id && (
+                        <View style={styles.busyOverlay}>
+                          <ActivityIndicator size="small" color="#fff" />
+                        </View>
+                      )}
+                    </View>
+                    <Text
+                      variant="labelSmall"
+                      numberOfLines={1}
+                      style={[styles.thumbLabel, { color: isCurrent(item) ? theme.colors.primary : theme.colors.onSurfaceVariant }]}
+                    >
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
           ))}
         </ScrollView>
 
@@ -308,8 +347,15 @@ export const WallpaperPickerSheet = ({
   );
 };
 
-const THUMB_W = 92;
-const THUMB_H = 164;
+const THUMB_W = 84;
+const THUMB_H = 150;
+
+const SECTIONS: { key: string; title: string; hint: string; kinds: CatalogWallpaper['kind'][] }[] = [
+  { key: 'live', title: 'Live', hint: 'Animated scenes', kinds: ['live'] },
+  { key: 'blob', title: 'Liquid', hint: 'Drifting colour', kinds: ['blob'] },
+  { key: 'photo', title: 'Photos', hint: 'Still images', kinds: ['photo'] },
+  { key: 'solid', title: 'Solid', hint: 'Calm and simple', kinds: ['solid'] },
+];
 
 const styles = StyleSheet.create({
   backdrop: {
@@ -355,9 +401,35 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 1,
   },
+  sections: {
+    // maxHeight is set inline from the window height so the title, the match
+    // row and Remove always fit; the sections scroll inside it.
+    flexGrow: 0,
+  },
+  section: {
+    marginBottom: 14,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    paddingHorizontal: 18,
+    marginBottom: 8,
+  },
   rail: {
     paddingHorizontal: 16,
     gap: 10,
+  },
+  thumbFrame: {
+    borderRadius: 14,
+  },
+  liveThumb: {
+    overflow: 'hidden',
+  },
+  currentRing: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 14,
+    borderWidth: 2.5,
   },
   thumb: {
     width: THUMB_W,

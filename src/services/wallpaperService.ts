@@ -13,6 +13,7 @@
  * Deliberately not synced to the server — backgrounds are a device preference.
  */
 
+import { isLiveSceneId, type LiveSceneId } from '@/constants/liveScenes';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Asset } from 'expo-asset';
 import { Directory, File, Paths } from 'expo-file-system';
@@ -37,7 +38,10 @@ export type WallpaperEntry =
   // content sits directly on the canvas and there is no glass material left to
   // hold it off a moving backdrop — but it is an independent choice, available
   // in glass mode too.
-  | { kind: 'solid'; light: string; dark: string; setAt: number };
+  | { kind: 'solid'; light: string; dark: string; setAt: number }
+  // An animated GPU scene (constants/liveScenes.ts, components/LiveWallpaper).
+  // Pure configuration: the scene id is all there is to store or back up.
+  | { kind: 'live'; scene: LiveSceneId; setAt: number };
 
 /**
  * What we actually persist. For photos we store the FILE NAME only, never an
@@ -49,7 +53,8 @@ export type WallpaperEntry =
 type StoredEntry =
   | { kind: 'photo'; file: string; setAt: number }
   | { kind: 'blob'; light: BlobTrio; dark: BlobTrio; adaptive?: boolean; setAt: number }
-  | { kind: 'solid'; light: string; dark: string; setAt: number };
+  | { kind: 'solid'; light: string; dark: string; setAt: number }
+  | { kind: 'live'; scene: LiveSceneId; setAt: number };
 
 type WallpaperMap = Partial<Record<string, StoredEntry>>;
 
@@ -92,6 +97,9 @@ const toEntry = (stored: StoredEntry): WallpaperEntry => {
   if (stored.kind === 'solid') {
     return { kind: 'solid', light: stored.light, dark: stored.dark, setAt: stored.setAt };
   }
+  if (stored.kind === 'live') {
+    return { kind: 'live', scene: stored.scene, setAt: stored.setAt };
+  }
   return { kind: 'photo', uri: resolveUri(stored.file), setAt: stored.setAt };
 };
 
@@ -102,6 +110,7 @@ type RawStored = {
   light?: BlobTrio | string;
   dark?: BlobTrio | string;
   adaptive?: boolean;
+  scene?: string;
   setAt?: number;
 };
 
@@ -118,7 +127,11 @@ const loadMap = async (): Promise<WallpaperMap> => {
       const setAt = entry.setAt ?? Date.now();
       // Order matters: 'solid' stores light/dark as single strings while 'blob'
       // stores trios, so narrow on the shape, never on truthiness alone.
-      if (entry.kind === 'solid' && typeof entry.light === 'string' && typeof entry.dark === 'string') {
+      if (entry.kind === 'live') {
+        // A scene this build doesn't know (written by a newer version, or a
+        // restored backup) is dropped, so the slot falls back to its default.
+        if (isLiveSceneId(entry.scene)) next[slot] = { kind: 'live', scene: entry.scene, setAt };
+      } else if (entry.kind === 'solid' && typeof entry.light === 'string' && typeof entry.dark === 'string') {
         next[slot] = { kind: 'solid', light: entry.light, dark: entry.dark, setAt };
       } else if (
         entry.kind === 'blob' &&
@@ -280,6 +293,17 @@ export const setWallpaperSolid = async (
   });
 };
 
+/** Set a slot to an animated live scene. Same lock and cleanup as the others. */
+export const setWallpaperLive = async (slot: WallpaperSlot, scene: LiveSceneId): Promise<WallpaperEntry> =>
+  withWriteLock(async () => {
+    const map = { ...(await loadMap()) };
+    const previous = map[slot];
+    map[slot] = { kind: 'live', scene, setAt: Date.now() };
+    await persistMap(map);
+    deletePreviousFile(previous);
+    return toEntry(map[slot]!);
+  });
+
 /**
  * Set a slot from a bundled catalog wallpaper (a require()'d asset module).
  * Copies the asset into the wallpapers dir so entries survive OTA updates
@@ -327,7 +351,9 @@ export const copyWallpaper = async (
     // Branch on the actual kind. This used to assume "not photo ⇒ blob", which
     // would spread a solid's hex STRING into single characters.
     fresh[targetSlot] =
-      source.kind === 'solid'
+      source.kind === 'live'
+        ? { kind: 'live' as const, scene: source.scene, setAt: Date.now() }
+        : source.kind === 'solid'
         ? { kind: 'solid' as const, light: source.light, dark: source.dark, setAt: Date.now() }
         : {
             kind: 'blob' as const,

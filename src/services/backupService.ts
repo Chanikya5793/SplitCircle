@@ -1,28 +1,55 @@
 /**
- * Backup export/import orchestration (doc 31 §3.2, Phase 4).
+ * Backup export/import orchestration (doc 31 §3.2), version 2.
  *
- * This is the layer that decides WHAT gets backed up and in what batches. The
- * native module encrypts each chunk and handles CloudKit retry/backoff; the
- * provider underneath does dumb store I/O. Nothing here ever sees a key.
+ * This layer decides WHAT gets backed up and in what records. The native
+ * module encrypts each record and handles CloudKit retry/backoff; the provider
+ * underneath does dumb store I/O. Nothing here ever sees a key.
  *
- * Shape is one-shot bulk export (main device only) and one-shot bulk import
- * (new/promoted main device, once) — NOT continuous sync. §3.2 chose that
- * deliberately over CKSyncEngine; don't reshape this into incremental sync
- * without re-deriving that reasoning.
+ * What v2 changed, and why each one matters:
+ *  - INCREMENTAL. A local ledger remembers what is already in iCloud (a hash
+ *    per record), and only records whose content changed are uploaded. v1
+ *    re-uploaded the whole history — media included — on every run, under a
+ *    fresh salt, which a background task (a few minutes at most) could never
+ *    finish for a real account. With the ledger an interrupted run resumes
+ *    where it stopped instead of starting over.
+ *  - LINEAGE. Every backup chain has an id, stored in the manifest and in the
+ *    ledger. A device that did not write (or restore) the backup currently in
+ *    iCloud is not allowed to silently replace it — see `assessTakeover`. v1's
+ *    new-phone flow made the phone "main" without importing anything, and its
+ *    first backup then overwrote the real one with an empty history.
+ *  - NATIVE MEDIA. Files are read and written by the native module; v1 moved
+ *    each one through JS as a base64 string, which capped media at 24MB.
+ *  - VERIFIED. After the manifest is written it is read back from iCloud, so a
+ *    run only reports success once the backup is actually there.
+ *  - PRUNED. Records the new manifest no longer references (a deleted chat,
+ *    media taken out of the selection) are deleted, not left on the user's
+ *    iCloud quota forever.
+ *
+ * Shape is still one-shot bulk export (main device only) and one-shot bulk
+ * import — NOT continuous sync. §3.2 chose that deliberately over CKSyncEngine.
  */
 
 import {
   backupChunk,
+  backupFile,
   beginBackupSession,
+  deleteRecords,
   endBackupSession,
+  hasNativeFileTransfer,
   restoreChunk,
   restoreChunkMetadata,
+  restoreFile,
+  runExclusive,
   verifyBackupIntegrity,
 } from '../../modules/splitcircle-backup';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Crypto from 'expo-crypto';
 import {
+  cacheDirectory,
+  deleteAsync,
   documentDirectory,
   getInfoAsync,
+  moveAsync,
   makeDirectoryAsync,
   readAsStringAsync,
   writeAsStringAsync,
@@ -36,17 +63,12 @@ import {
 import { getCallHistory, saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { getLocalMediaPath } from '@/services/mediaService';
 import { hydrateWallpapers } from '@/services/wallpaperService';
-import { getOrCreateRecoverySecret } from '@/services/backupPassphraseService';
+import { getEnrolledAt, getOrCreateRecoverySecret } from '@/services/backupPassphraseService';
 import { getBackupSelection, type BackupCategory } from '@/services/backupContentService';
 import * as Device from 'expo-device';
 import type { ChatMessage } from '@/models';
 
-/**
- * Messages per record. §3.2 bounds a batch by day or 500 messages to stay under
- * CloudKit's ~1MB non-asset ceiling; 500 short text messages sit comfortably
- * inside it, and anything larger spills to a CKAsset in the provider rather
- * than failing.
- */
+/** Messages per record — comfortably inside CloudKit's ~1MB non-asset limit. */
 const MESSAGES_PER_BATCH = 500;
 
 export const RECORD_TYPE = {
@@ -61,15 +83,15 @@ export const RECORD_TYPE = {
   localSettings: 'localSettings',
 } as const;
 
+const MANIFEST_ID = 'manifest-current';
+const CALL_HISTORY_ID = 'callHistory-current';
+const WALLPAPERS_ID = 'wallpapers-current';
+const LOCAL_SETTINGS_ID = 'localSettings-current';
+
 /**
- * Per-chat integrity summary, computed AT WRITE TIME (§3.2).
- *
- * This must never be re-derived later by walking raw records: §3.3's E2E
- * encryption makes after-the-fact plaintext diffing impossible by design — the
- * device holds plaintext only transiently, right before it is encrypted. The
- * device-retirement gate (§3.7) reads this manifest and nothing else, which is
- * exactly why it has to be written synchronously alongside the data it
- * describes.
+ * Per-chat integrity summary, computed AT WRITE TIME (§3.2). The retirement
+ * gate (§3.7) reads this and nothing else, so it must describe exactly what
+ * landed.
  */
 export interface ChatManifestEntry {
   chatId: string;
@@ -81,72 +103,40 @@ export interface ChatManifestEntry {
 }
 
 export interface BackupManifest {
-  version: 1;
+  version: 1 | 2;
   createdAt: number;
   /** Base64 KDF salt. Without this the backup cannot be opened, ever. */
   salt: string;
   chats: ChatManifestEntry[];
   totalMessages: number;
-  /**
-   * Random per-backup secret whose SHA-256 the server holds as the §3.12
-   * recovery verifier. Optional because backups written before recovery
-   * existed have none — `recoverAsNewMainDevice` treats a missing verifier as
-   * the no-backup path rather than failing, so those users are not stranded.
-   */
+  /** Id of the backup chain this manifest belongs to (v2). */
+  lineage?: string;
+  /** SHA-256 preimage of the server's §3.12 recovery verifier. */
   recoverySecret?: string;
-  /**
-   * Which categories this backup actually contains.
-   *
-   * Load-bearing for §3.7's retirement gate, not decoration: the gate asks
-   * "is the backup complete?", and once content is selectable that question
-   * only means anything relative to what was MEANT to be in it. Without this
-   * the gate would either flag every deselected category as missing data, or
-   * (worse) pass a backup that silently omitted messages. Absent on backups
-   * written before selection existed, which are read as messages-only —
-   * exactly what they were.
-   */
+  /** Which categories this backup contains (absent = messages only, v1). */
   contents?: Partial<Record<BackupCategory, boolean>>;
-  /** Media file record ids, when the media category was included. */
   mediaIds?: string[];
-  /**
-   * Files too large to back up through the base64 bridge (exportMedia).
-   * Recorded so the UI can say so — a backup that silently omitted the user's
-   * videos while reporting success is exactly what §3.7's gate guards against.
-   */
+  /** Files skipped for size (v1's bridge limit, v2's native ceiling). */
   mediaSkippedTooLarge?: number;
-  /** Number of call-history entries stored, when that category was included. */
   callHistoryCount?: number;
-  /**
-   * Bytes written per category, measured AS WE UPLOAD.
-   *
-   * Deliberately not derived from CloudKit. There is no per-container usage
-   * API, and enumerating our own records needs a queryable index CloudKit
-   * never creates automatically — a TRUEPREDICATE query fails at runtime
-   * (`Field 'recordName' is not marked queryable`), which is exactly why
-   * `estimateSize()` in the provider has never worked. Counting at write time
-   * is accurate for everything we put there, needs no schema setup, and works
-   * offline.
-   */
+  /** Bytes STORED per category for the whole backup, not just this run. */
   sizes?: Partial<Record<BackupCategory, number>>;
 }
 
 export interface BackupProgress {
-  phase: 'preparing' | 'messages' | 'media' | 'extras' | 'manifest' | 'complete';
+  phase: 'preparing' | 'messages' | 'media' | 'extras' | 'manifest' | 'verifying' | 'complete';
   chatsDone: number;
   chatsTotal: number;
   messagesDone: number;
-  /** Which category is being written, for per-category live progress. */
   category?: BackupCategory;
-  /** Files done/total within the current category (media). */
   filesDone?: number;
   filesTotal?: number;
-  /** Bytes uploaded so far this run, across all categories. */
+  /** Bytes actually uploaded this run (unchanged records cost nothing). */
   bytesDone?: number;
 }
 
-/** Running total of bytes written this export, for live progress. */
-const totalBytesWritten = (): number =>
-  Object.values(sizeAccumulator).reduce((sum: number, n) => sum + (n ?? 0), 0);
+// ---------------------------------------------------------------------------
+// Encoding + hashing
 
 const encodeJson = (value: unknown): string =>
   // eslint-disable-next-line no-undef
@@ -156,9 +146,7 @@ const decodeJson = <T>(base64: string): T =>
   // eslint-disable-next-line no-undef
   JSON.parse(decodeURIComponent(escape(globalThis.atob(base64)))) as T;
 
-/** FNV-1a over a string. Mirrors the provider's checksum discipline — this is
- * a corruption/truncation check, not a security primitive (the AEAD wrapping
- * already provides integrity). */
+/** FNV-1a. Only for the manifest's batch-id checksum (a corruption check). */
 const checksum = (input: string): string => {
   let hash = 0xcbf29ce4;
   for (let i = 0; i < input.length; i += 1) {
@@ -168,20 +156,179 @@ const checksum = (input: string): string => {
   return hash.toString(16).padStart(8, '0');
 };
 
+/**
+ * Content hash for the ledger. SHA-256, not FNV: a collision here would mean
+ * SKIPPING a record that changed, i.e. silently losing new messages from the
+ * backup, so a 32-bit hash is not acceptable for this job.
+ */
+const contentHash = (payload: string): Promise<string> =>
+  Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, payload);
+
+const base64Bytes = (payload: string): number => Math.floor((payload.length * 3) / 4);
+
 const batchId = (chatId: string, index: number): string => `msg-${chatId}-${index}`;
+const mediaRecordId = (messageId: string): string => `media-${messageId}`;
+
+const newLineage = (): string => Crypto.randomUUID();
+
+// ---------------------------------------------------------------------------
+// The ledger: what this device knows is already in iCloud.
+
+interface LedgerRecord {
+  /** Content hash of what was uploaded ('file' for immutable media). */
+  h: string;
+  /** Plaintext bytes, for the per-category size totals. */
+  b: number;
+  c: BackupCategory;
+}
+
+export interface BackupLedger {
+  /** The backup chain these records belong to. */
+  lineage: string;
+  /** Salt the records were sealed under — reused so unchanged ones stay valid. */
+  salt: string | null;
+  /**
+   * When the passphrase they were sealed with was set. A different value means
+   * the passphrase changed, so every record must be re-sealed — skipping an
+   * "unchanged" one would leave it readable only with the OLD passphrase.
+   */
+  passphraseSetAt?: number | null;
+  records: Record<string, LedgerRecord>;
+}
+
+const LEDGER_KEY = 'splitcircle.backup.ledger.v2';
+
+export const getBackupLedger = async (): Promise<BackupLedger | null> => {
+  try {
+    const raw = await AsyncStorage.getItem(LEDGER_KEY);
+    return raw ? (JSON.parse(raw) as BackupLedger) : null;
+  } catch {
+    return null;
+  }
+};
+
+const saveLedger = (ledger: BackupLedger): Promise<void> =>
+  AsyncStorage.setItem(LEDGER_KEY, JSON.stringify(ledger)).catch(() => {});
 
 /**
- * Device-scoped preferences worth carrying to a new phone.
- *
- * An ALLOW-LIST, never "every AsyncStorage key". Two categories are excluded
- * on purpose rather than by oversight:
- *   - `app_lock_v1`, `privacy_guard_v1`, `guard_lockout_v1` — security state.
- *     Restoring a lock configuration onto a different device is a decision the
- *     user should make on that device, and restoring a lockout counter could
- *     hand an attacker a way to reset a lockout by restoring an older backup.
- *   - `auth_profile_v1` and the `ai_*` caches — identity comes from the server,
- *     and the caches regenerate themselves. Backing them up is pure bloat.
+ * Forgets what is in iCloud (keeps the lineage). Called when the passphrase
+ * changes: every record must be re-sealed under the new key, and the next run
+ * does exactly that because nothing matches the ledger any more.
  */
+export const resetBackupLedgerRecords = async (): Promise<void> => {
+  const ledger = await getBackupLedger();
+  if (ledger) await saveLedger({ ...ledger, salt: null, records: {} });
+};
+
+const sizesFrom = (records: Record<string, LedgerRecord>): Partial<Record<BackupCategory, number>> => {
+  const sizes: Partial<Record<BackupCategory, number>> = {};
+  for (const record of Object.values(records)) sizes[record.c] = (sizes[record.c] ?? 0) + record.b;
+  return sizes;
+};
+
+// ---------------------------------------------------------------------------
+// Summary: readable WITHOUT the passphrase.
+
+export interface BackupSummary {
+  createdAt: number;
+  totalMessages: number;
+  chatCount: number;
+  mediaCount: number;
+  bytes: number;
+  deviceName: string | null;
+  /** Absent on v1 backups. */
+  lineage: string | null;
+  sizes: Partial<Record<BackupCategory, number>>;
+  contents: Partial<Record<BackupCategory, boolean>> | null;
+}
+
+/** Set when the last summary read failed for a reason other than "no backup". */
+export let lastSummaryReadError: string | null = null;
+
+/**
+ * Reads the backup summary from the manifest record's metadata — which the
+ * passphrase layer does not wrap, so no session or passphrase is needed. That
+ * is what lets a just-signed-in phone show what a restore would bring back.
+ * It lives in the user's PRIVATE CloudKit database and holds counts, bytes and
+ * a timestamp, never content.
+ *
+ * Returns null when there is no backup. Throws-to-null with
+ * `lastSummaryReadError` set when iCloud could not be read — callers that must
+ * tell "no backup" from "couldn't check" read that.
+ */
+export const readBackupSummary = async (): Promise<BackupSummary | null> => {
+  lastSummaryReadError = null;
+  try {
+    const chunk = await restoreChunkMetadata(RECORD_TYPE.manifest, MANIFEST_ID);
+    const meta = chunk?.metadata;
+    if (!meta?.summaryCreatedAt) return null;
+    const num = (value: string | undefined): number => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    const json = <T,>(value: string | undefined): T | null => {
+      try {
+        return value ? (JSON.parse(value) as T) : null;
+      } catch {
+        return null;
+      }
+    };
+    return {
+      createdAt: num(meta.summaryCreatedAt),
+      totalMessages: num(meta.summaryTotalMessages),
+      chatCount: num(meta.summaryChatCount),
+      mediaCount: num(meta.summaryMediaCount),
+      bytes: num(meta.summaryBytes),
+      deviceName: meta.summaryDeviceName || null,
+      lineage: meta.summaryLineage || null,
+      sizes: json<Partial<Record<BackupCategory, number>>>(meta.summarySizes) ?? {},
+      contents: json<Partial<Record<BackupCategory, boolean>>>(meta.summaryContents),
+    };
+  } catch (error) {
+    lastSummaryReadError = error instanceof Error ? error.message : String(error);
+    return null;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Takeover: may THIS device write over what is in iCloud?
+
+export interface TakeoverAssessment {
+  remote: BackupSummary | null;
+  /** This device wrote or restored the backup that is in iCloud now. */
+  sameChain: boolean;
+  /** Messages this device would back up. */
+  localMessages: number;
+  /**
+   * Writing now would REPLACE a backup holding more messages than this device
+   * has — the new-phone / reinstall case. Never allowed implicitly.
+   */
+  wouldShrink: boolean;
+}
+
+export const assessTakeover = async (): Promise<TakeoverAssessment> => {
+  const [remote, ledger, stats] = await Promise.all([
+    readBackupSummary(),
+    getBackupLedger(),
+    getLocalMessageStats(),
+  ]);
+  if (!remote && lastSummaryReadError) {
+    // "Couldn't check" must never be read as "nothing there" — that is
+    // precisely how an empty phone would overwrite a real backup.
+    throw new Error(`Could not read the backup in iCloud: ${lastSummaryReadError}`);
+  }
+  const localMessages = stats.reduce((sum, stat) => sum + stat.count, 0);
+  const sameChain = Boolean(remote && ledger && remote.lineage && remote.lineage === ledger.lineage);
+  const wouldShrink = Boolean(remote && !sameChain && remote.totalMessages > localMessages);
+  return { remote, sameChain, localMessages, wouldShrink };
+};
+
+// ---------------------------------------------------------------------------
+// Export
+
+/** Device-scoped preferences worth carrying to a new phone — an ALLOW-LIST.
+ *  Security state (app lock, privacy guard, lockout counters) is deliberately
+ *  excluded, as are identity and regenerable caches. */
 const LOCAL_SETTINGS_KEYS = [
   'appearance_v1',
   'display_currency_v1',
@@ -193,640 +340,598 @@ const LOCAL_SETTINGS_KEYS = [
   'ai_pipeline_v1',
 ];
 
-/** Wallpaper images live as files; their slot map lives in AsyncStorage. */
 const WALLPAPER_CONFIG_KEY = 'wallpapers_v1';
 const WALLPAPER_DIRECTORY = `${documentDirectory}wallpapers/`;
 
-const mediaRecordId = (messageId: string): string => `media-${messageId}`;
-
 /**
- * Bytes written per category during the current export.
- *
- * Module-scoped rather than threaded through every helper, which is safe
- * because `backupRunner` enforces one export at a time process-wide (two
- * concurrent runs would race the manifest regardless). Reset at the start of
- * every export so a failed run can't leak totals into the next one.
+ * Media ceilings. Native transfer memory-maps the file and seals it once, so
+ * it handles anything a chat can hold; the base64 fallback (an app binary
+ * older than v2's native functions) keeps v1's 24MB ceiling, since there the
+ * whole file sits in the JS heap.
  */
-let sizeAccumulator: Partial<Record<BackupCategory, number>> = {};
+const MAX_NATIVE_MEDIA_BYTES = 400 * 1024 * 1024;
+const MAX_BRIDGE_MEDIA_BYTES = 24 * 1024 * 1024;
 
-/** base64 expands 3 bytes to 4 chars, so this recovers the real byte count. */
-const base64Bytes = (payload: string): number => Math.floor((payload.length * 3) / 4);
+export interface ExportOptions {
+  /** Explicitly start a NEW backup chain over whatever is in iCloud. */
+  replaceExisting?: boolean;
+}
 
-/** Writes a chunk and records its size against a category. */
-const trackedChunk = async (
-  category: BackupCategory,
-  recordType: string,
-  recordId: string,
-  payload: string,
-  metadata: Record<string, string> = {},
-): Promise<void> => {
-  await backupChunk(recordType, recordId, payload, metadata);
-  sizeAccumulator[category] = (sizeAccumulator[category] ?? 0) + base64Bytes(payload);
-};
-
-/**
- * Largest media file backed up via the base64 bridge path.
- *
- * mediaService allows uploads up to 100MB; this is deliberately far lower,
- * because the constraint here is JS heap during a background task, not the
- * transport. See exportMedia for why exceeding it is a crash rather than a
- * slow backup.
- */
-const MAX_INLINE_MEDIA_BYTES = 24 * 1024 * 1024;
-
-/**
- * Backs up the local call log. Small, so one record.
- */
-const exportCallHistory = async (): Promise<number> => {
-  const entries = await getCallHistory();
-  if (entries.length === 0) return 0;
-  await trackedChunk('callHistory', RECORD_TYPE.callHistory, 'callHistory-current', encodeJson(entries));
-  return entries.length;
-};
-
-/**
- * Backs up wallpapers: the slot map plus every photo file it references.
- *
- * Blob wallpapers are pure configuration (colour triples rendered live), so
- * they need no file at all — only photo slots have bytes. The stored map holds
- * FILE NAMES rather than absolute paths, deliberately (see wallpaperService):
- * the container UUID changes on every install, so a path from the old device
- * would be meaningless here anyway.
- */
-const exportWallpapers = async (): Promise<void> => {
-  const raw = await AsyncStorage.getItem(WALLPAPER_CONFIG_KEY);
-  if (!raw) return;
-
-  const files: Record<string, string> = {};
-  const map = JSON.parse(raw) as Record<string, { kind?: string; file?: string } | undefined>;
-  for (const entry of Object.values(map)) {
-    if (entry?.kind !== 'photo' || !entry.file) continue;
-    try {
-      files[entry.file] = await readAsStringAsync(`${WALLPAPER_DIRECTORY}${entry.file}`, {
-        encoding: 'base64',
-      });
-    } catch {
-      // A slot pointing at a file that no longer exists is a pre-existing
-      // local inconsistency; skip it rather than failing the whole backup.
-    }
+export class BackupWouldShrinkError extends Error {
+  constructor(readonly remote: BackupSummary, readonly localMessages: number) {
+    super(
+      `iCloud has a larger backup (${remote.totalMessages} messages) than this device (${localMessages}).`,
+    );
+    this.name = 'BackupWouldShrinkError';
   }
-
-  await trackedChunk('wallpapers', RECORD_TYPE.wallpapers, 'wallpapers-current', encodeJson({ map, files }));
-};
-
-/** Backs up the allow-listed device-scoped preferences. */
-const exportLocalSettings = async (): Promise<void> => {
-  const pairs = await AsyncStorage.multiGet(LOCAL_SETTINGS_KEYS);
-  const values: Record<string, string> = {};
-  for (const [key, value] of pairs) {
-    if (typeof value === 'string') values[key] = value;
-  }
-  if (Object.keys(values).length === 0) return;
-  await trackedChunk('localSettings', RECORD_TYPE.localSettings, 'localSettings-current', encodeJson(values));
-};
-
-/**
- * Backs up downloaded chat media, one record per file.
- *
- * One record each rather than batched, because a single video can exceed
- * CloudKit's per-record non-asset ceiling on its own — the provider promotes
- * anything over its inline threshold to a CKAsset, which only works if each
- * file is its own record. Files that are no longer on disk are skipped, not
- * treated as failures: the media cache is prunable by design.
- */
-const exportMedia = async (
-  chatIds: string[],
-  onFile?: (done: number, total: number) => void,
-): Promise<{ ids: string[]; skippedTooLarge: number }> => {
-  const ids: string[] = [];
-  let done = 0;
-  let skippedTooLarge = 0;
-
-  // Counted up front so progress can read "34 of 210" rather than a number
-  // climbing toward an unknown ceiling — the difference between a backup that
-  // feels accountable and one that feels stuck.
-  let total = 0;
-  for (const chatId of chatIds) {
-    for (const message of await getChatMessages(chatId)) {
-      if (message.localMediaPath && message.mediaDownloaded) total += 1;
-    }
-  }
-
-  for (const chatId of chatIds) {
-    for (const message of await getChatMessages(chatId)) {
-      if (!message.localMediaPath || !message.mediaDownloaded) continue;
-      try {
-        const info = await getInfoAsync(message.localMediaPath);
-        if (!info.exists) continue;
-
-        // SIZE GUARD. `readAsStringAsync` materialises the ENTIRE file as a
-        // base64 JS string (~1.33x the bytes) and then copies it across the
-        // bridge — so a 100MB video, which mediaService explicitly allows,
-        // becomes ~133MB resident in Hermes plus a native copy. A scheduled
-        // backup runs inside a BGProcessingTask, where the memory ceiling is
-        // far tighter than in the foreground, so this is a crash rather than
-        // a slowdown, and it would take the whole backup with it.
-        //
-        // Skipping is COUNTED and reported, never silent: a backup that
-        // quietly omitted the user's videos while reporting success is the
-        // failure mode §3.7's retirement gate exists to prevent.
-        //
-        // The real fix is to hand the native side a file PATH and let it
-        // build the CKAsset directly, never crossing the bridge — that needs
-        // a new native function, so it is deliberately not bundled into a
-        // build we want to test today.
-        if (typeof info.size === 'number' && info.size > MAX_INLINE_MEDIA_BYTES) {
-          skippedTooLarge += 1;
-          continue;
-        }
-
-        const payload = await readAsStringAsync(message.localMediaPath, { encoding: 'base64' });
-        const id = mediaRecordId(message.messageId);
-        await trackedChunk('media', RECORD_TYPE.media, id, payload, {
-          chatId,
-          messageId: message.messageId,
-          fileName: message.mediaMetadata?.fileName ?? '',
-        });
-        ids.push(id);
-        done += 1;
-        onFile?.(done, total);
-      } catch {
-        // One unreadable file must not abort an otherwise good backup.
-      }
-    }
-  }
-
-  return { ids, skippedTooLarge };
-};
-
-/**
- * Full export to the backup store.
- *
- * `passphrase` derives the key ONCE for the whole run (§3.5) — the session is
- * opened here and closed in `finally` so a failure part-way through never
- * leaves an unlocked backup key resident.
- *
- * Returns the manifest, whose `salt` the caller must keep: it is written into
- * the backup itself, but a caller that wants to verify or resume needs it too.
- */
-export const exportBackup = async (
-  passphrase: string,
-  onProgress?: (progress: BackupProgress) => void,
-): Promise<BackupManifest> => {
-  const deviceLabel = Device.deviceName;
-  const { salt } = await beginBackupSession(passphrase);
-  const selection = await getBackupSelection();
-
-  try {
-    // getLocalMessageStats enumerates every locally-stored chat; it is the
-    // exported surface for that, and its counts double as a sanity check.
-    const chatIds = (await getLocalMessageStats()).map((stat) => stat.chatId);
-    onProgress?.({ phase: 'preparing', chatsDone: 0, chatsTotal: chatIds.length, messagesDone: 0 });
-
-    const chats: ChatManifestEntry[] = [];
-    let messagesDone = 0;
-
-    for (const [chatIndex, chatId] of selection.messages ? chatIds.entries() : []) {
-      const messages = await getChatMessages(chatId);
-      // Oldest-first so batch N always holds the same messages across runs,
-      // which keeps re-exports overwriting rather than duplicating.
-      const ordered = [...messages].sort((a, b) => a.createdAt - b.createdAt);
-
-      const batchIds: string[] = [];
-      for (let offset = 0; offset < ordered.length; offset += MESSAGES_PER_BATCH) {
-        const slice = ordered.slice(offset, offset + MESSAGES_PER_BATCH);
-        const id = batchId(chatId, batchIds.length);
-        await trackedChunk('messages', RECORD_TYPE.message, id, encodeJson(slice), {
-          chatId,
-          index: String(batchIds.length),
-        });
-        batchIds.push(id);
-        messagesDone += slice.length;
-        onProgress?.({
-          phase: 'messages',
-          chatsDone: chatIndex,
-          chatsTotal: chatIds.length,
-          messagesDone,
-          category: 'messages',
-          bytesDone: totalBytesWritten(),
-        });
-      }
-
-      const latestTimestamp = ordered.length > 0 ? ordered[ordered.length - 1].createdAt : null;
-      chats.push({
-        chatId,
-        count: ordered.length,
-        latestTimestamp,
-        batchChecksum: checksum(batchIds.join('|')),
-        batchIds,
-      });
-    }
-
-    // Non-message categories, each honouring the user's selection. Ordered
-    // before the manifest for the same reason the message batches are: the
-    // manifest must only ever describe records that already landed.
-    const reportExtra = (category: BackupCategory) =>
-      onProgress?.({
-        phase: 'extras',
-        chatsDone: chatIds.length,
-        chatsTotal: chatIds.length,
-        messagesDone,
-        category,
-        bytesDone: totalBytesWritten(),
-      });
-
-    let callHistoryCount = 0;
-    if (selection.callHistory) {
-      reportExtra('callHistory');
-      callHistoryCount = await exportCallHistory();
-    }
-    if (selection.wallpapers) {
-      reportExtra('wallpapers');
-      await exportWallpapers();
-    }
-    if (selection.localSettings) {
-      reportExtra('localSettings');
-      await exportLocalSettings();
-    }
-    const media = selection.media
-      ? await exportMedia(chatIds, (filesDone, filesTotal) =>
-          onProgress?.({
-            phase: 'media',
-            chatsDone: chatIds.length,
-            chatsTotal: chatIds.length,
-            messagesDone,
-            category: 'media',
-            filesDone,
-            filesTotal,
-            bytesDone: totalBytesWritten(),
-          }),
-        )
-      : { ids: [], skippedTooLarge: 0 };
-
-    // Manifest LAST, deliberately: it is the index a restore reads first, so
-    // writing it only after every batch landed means a crash mid-export leaves
-    // no manifest rather than one promising records that don't exist.
-    const manifest: BackupManifest = {
-      version: 1,
-      createdAt: Date.now(),
-      salt,
-      chats,
-      totalMessages: messagesDone,
-      recoverySecret: await getOrCreateRecoverySecret(),
-      contents: selection,
-      mediaIds: media.ids,
-      mediaSkippedTooLarge: media.skippedTooLarge,
-      callHistoryCount,
-      sizes: { ...sizeAccumulator },
-    };
-    onProgress?.({
-      phase: 'manifest',
-      chatsDone: chatIds.length,
-      chatsTotal: chatIds.length,
-      messagesDone,
-    });
-    /**
-     * The manifest's METADATA carries a plaintext summary.
-     *
-     * CloudKit record metadata is not wrapped by our passphrase layer, so
-     * `restoreChunkMetadata` can read it WITHOUT the passphrase — which is the
-     * whole point. A new phone needs to show "last backup 2 hours ago, 4,182
-     * messages" before the user has typed anything, and the manifest payload
-     * itself is unreadable until they do.
-     *
-     * It is not unprotected: this lives in the user's PRIVATE CloudKit
-     * database, reachable only from their own Apple ID, which is the same
-     * protection as the rest of their iCloud data. And it is counts, bytes and
-     * a timestamp — never content.
-     *
-     * Deliberately here rather than in Firestore: this is the user's own data
-     * in the user's own storage, so our server never has to learn how many
-     * messages they have. The recovery VERIFIER stays server-side, because
-     * that one must be tamper-proof and unreadable by the client — see
-     * functions/src/accountRecovery.ts.
-     */
-    await backupChunk(RECORD_TYPE.manifest, 'manifest-current', encodeJson(manifest), {
-      summaryCreatedAt: String(manifest.createdAt),
-      summaryTotalMessages: String(manifest.totalMessages),
-      summaryChatCount: String(chats.length),
-      summaryMediaCount: String(media.ids.length),
-      summaryBytes: String(
-        Object.values(sizeAccumulator).reduce((sum: number, n) => sum + (n ?? 0), 0),
-      ),
-      summaryDeviceName: deviceLabel ?? '',
-    });
-
-    onProgress?.({
-      phase: 'complete',
-      chatsDone: chatIds.length,
-      chatsTotal: chatIds.length,
-      messagesDone,
-    });
-    return manifest;
-  } finally {
-    // Always drop the key, including on failure — an unlocked backup key
-    // resident for the app's lifetime is a needlessly long exposure window.
-    await endBackupSession();
-  }
-};
-
-/**
- * Reads the manifest without importing anything, so the UI can show what a
- * backup contains (and whether the passphrase is right) before committing to a
- * restore.
- *
- * The salt lives INSIDE the encrypted manifest, which is not circular: the
- * blob is self-describing, so the native layer extracts the salt from the
- * envelope to derive the key, and the copy inside is what a caller then uses
- * for subsequent chunks.
- */
-export interface BackupSummary {
-  createdAt: number;
-  totalMessages: number;
-  chatCount: number;
-  mediaCount: number;
-  bytes: number;
-  deviceName: string | null;
 }
 
 /**
- * Reads the backup summary WITHOUT the passphrase.
+ * Full (incremental) export.
  *
- * Metadata-only fetch: the manifest payload stays encrypted and untouched.
- * This is what lets a device that has just signed in show what a restore would
- * bring back before asking for anything — the choice on the setup screen would
- * otherwise be blind.
- *
- * Returns null when there is no backup, or when iCloud isn't reachable. Both
- * are legitimately "we don't know", never "there is nothing".
+ * Record order is messages → extras → media → manifest, and the manifest is
+ * written LAST: it is the index a restore reads first, so it must only ever
+ * describe records that already landed. The ledger is saved after every chat
+ * and every media file, so an interrupted run (iOS ending a background task)
+ * resumes from there.
  */
-export let lastSummaryReadError: string | null = null;
+export const exportBackup = (
+  passphrase: string,
+  onProgress?: (progress: BackupProgress) => void,
+  options: ExportOptions = {},
+): Promise<BackupManifest> =>
+  runExclusive(async () => {
+    const takeover = await assessTakeover();
+    if (takeover.wouldShrink && !options.replaceExisting && takeover.remote) {
+      throw new BackupWouldShrinkError(takeover.remote, takeover.localMessages);
+    }
 
-export const readBackupSummary = async (): Promise<BackupSummary | null> => {
-  try {
-    const chunk = await restoreChunkMetadata(RECORD_TYPE.manifest, 'manifest-current');
-    const meta = chunk?.metadata;
-    if (!meta?.summaryCreatedAt) return null;
-    const num = (value: string | undefined): number => {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : 0;
-    };
-    return {
-      createdAt: num(meta.summaryCreatedAt),
-      totalMessages: num(meta.summaryTotalMessages),
-      chatCount: num(meta.summaryChatCount),
-      mediaCount: num(meta.summaryMediaCount),
-      bytes: num(meta.summaryBytes),
-      deviceName: meta.summaryDeviceName || null,
-    };
-  } catch (error) {
-    // Recorded rather than swallowed. "No backup found" was being shown for
-    // THREE different situations — record genuinely absent, iCloud
-    // unreachable, and a provider error — which made a backup that reported
-    // success but read back as missing impossible to diagnose from the phone.
-    lastSummaryReadError = error instanceof Error ? error.message : String(error);
-    return null;
-  }
-};
+    // Continue the chain this device knows, or start a new one. A missing
+    // remote manifest means the ledger describes nothing that still exists
+    // (iCloud data deleted, or never written), so it is discarded too.
+    const prior = await getBackupLedger();
+    const continuing = takeover.sameChain && !options.replaceExisting && prior;
+    const ledger: BackupLedger = continuing
+      ? { ...prior, records: { ...prior.records } }
+      : {
+          // Adopting a v1 backup this device wrote keeps it as one chain with
+          // no gap; anything else is a fresh chain.
+          lineage: newLineage(),
+          salt: null,
+          records: {},
+        };
 
-export const readBackupManifest = async (passphrase: string): Promise<BackupManifest | null> => {
-  // Fetched by its KNOWN id rather than discovered by query. CloudKit does not
-  // auto-create queryable indexes, so a TRUEPREDICATE query fails with
-  // "Field 'recordName' is not marked queryable" until someone adds an index
-  // in the CloudKit Dashboard by hand — which a fresh install of this app can
-  // never rely on. Fetch-by-id needs no schema configuration at all, and the
-  // manifest is the index by design (§3.2), so nothing here needs a query.
-  await beginBackupSession(passphrase);
-  try {
-    const chunk = await restoreChunk(RECORD_TYPE.manifest, 'manifest-current');
-    if (!chunk) return null;
-    return decodeJson<BackupManifest>(chunk.payloadBase64);
-  } finally {
-    await endBackupSession();
-  }
-};
+    // Starting a new chain over an existing backup (an explicit replace, or
+    // adopting a v1 backup): its records are not in this device's ledger, so
+    // nothing would ever prune them. Read the old manifest — in its own
+    // session, before ours opens — to learn their ids. If it doesn't open
+    // with this passphrase they're left as they are, which wastes quota but
+    // never risks data.
+    const previousIds = new Set<string>();
+    if (!continuing && takeover.remote) {
+      try {
+        await beginBackupSession(passphrase);
+        const old = await restoreChunk(RECORD_TYPE.manifest, MANIFEST_ID);
+        if (old) {
+          const previous = decodeJson<BackupManifest>(old.payloadBase64);
+          for (const chat of previous.chats) for (const id of chat.batchIds) previousIds.add(id);
+          for (const id of previous.mediaIds ?? []) previousIds.add(id);
+          [CALL_HISTORY_ID, WALLPAPERS_ID, LOCAL_SETTINGS_ID].forEach((id) => previousIds.add(id));
+        }
+      } catch {
+        // Different passphrase or unreadable: nothing to prune.
+      } finally {
+        await endBackupSession();
+      }
+    }
+
+    const passphraseSetAt = await getEnrolledAt();
+    if ((ledger.passphraseSetAt ?? null) !== passphraseSetAt) {
+      ledger.salt = null;
+      ledger.passphraseSetAt = passphraseSetAt;
+    }
+    const { salt } = await beginBackupSession(passphrase, ledger.salt ?? undefined);
+    if (ledger.salt !== salt) {
+      // A new key means nothing already uploaded can be read with it.
+      ledger.salt = salt;
+      ledger.records = {};
+    }
+    await saveLedger(ledger);
+
+    const selection = await getBackupSelection();
+    let bytesDone = 0;
+
+    /** Uploads a JSON record only if its content changed since last time. */
+    const putJson = async (
+      category: BackupCategory,
+      recordType: string,
+      recordId: string,
+      payload: string,
+      metadata: Record<string, string> = {},
+    ): Promise<void> => {
+      const hash = await contentHash(payload);
+      if (ledger.records[recordId]?.h === hash) return;
+      await backupChunk(recordType, recordId, payload, metadata);
+      const bytes = base64Bytes(payload);
+      ledger.records[recordId] = { h: hash, b: bytes, c: category };
+      bytesDone += bytes;
+    };
+
+    try {
+      const chatIds = (await getLocalMessageStats()).map((stat) => stat.chatId);
+      onProgress?.({ phase: 'preparing', chatsDone: 0, chatsTotal: chatIds.length, messagesDone: 0 });
+
+      const chats: ChatManifestEntry[] = [];
+      let messagesDone = 0;
+
+      if (selection.messages) {
+        for (const [chatIndex, chatId] of chatIds.entries()) {
+          const messages = await getChatMessages(chatId);
+          // Oldest-first so batch N always holds the same messages across
+          // runs: only the newest batch of an active chat changes, which is
+          // what makes the incremental skip effective.
+          const ordered = [...messages].sort((a, b) => a.createdAt - b.createdAt);
+          const batchIds: string[] = [];
+          for (let offset = 0; offset < ordered.length; offset += MESSAGES_PER_BATCH) {
+            const slice = ordered.slice(offset, offset + MESSAGES_PER_BATCH);
+            const id = batchId(chatId, batchIds.length);
+            await putJson('messages', RECORD_TYPE.message, id, encodeJson(slice), {
+              chatId,
+              index: String(batchIds.length),
+            });
+            batchIds.push(id);
+            messagesDone += slice.length;
+          }
+          chats.push({
+            chatId,
+            count: ordered.length,
+            latestTimestamp: ordered.length > 0 ? ordered[ordered.length - 1].createdAt : null,
+            batchChecksum: checksum(batchIds.join('|')),
+            batchIds,
+          });
+          await saveLedger(ledger);
+          onProgress?.({
+            phase: 'messages',
+            chatsDone: chatIndex + 1,
+            chatsTotal: chatIds.length,
+            messagesDone,
+            category: 'messages',
+            bytesDone,
+          });
+        }
+      }
+
+      const extra = (category: BackupCategory) =>
+        onProgress?.({
+          phase: 'extras',
+          chatsDone: chatIds.length,
+          chatsTotal: chatIds.length,
+          messagesDone,
+          category,
+          bytesDone,
+        });
+
+      let callHistoryCount = 0;
+      if (selection.callHistory) {
+        extra('callHistory');
+        const entries = await getCallHistory();
+        callHistoryCount = entries.length;
+        if (entries.length > 0) {
+          await putJson('callHistory', RECORD_TYPE.callHistory, CALL_HISTORY_ID, encodeJson(entries));
+        }
+      }
+
+      if (selection.wallpapers) {
+        extra('wallpapers');
+        const raw = await AsyncStorage.getItem(WALLPAPER_CONFIG_KEY);
+        if (raw) {
+          const map = JSON.parse(raw) as Record<string, { kind?: string; file?: string } | undefined>;
+          const files: Record<string, string> = {};
+          for (const entry of Object.values(map)) {
+            if (entry?.kind !== 'photo' || !entry.file) continue;
+            try {
+              files[entry.file] = await readAsStringAsync(`${WALLPAPER_DIRECTORY}${entry.file}`, {
+                encoding: 'base64',
+              });
+            } catch {
+              // A slot pointing at a missing file is a local inconsistency.
+            }
+          }
+          await putJson('wallpapers', RECORD_TYPE.wallpapers, WALLPAPERS_ID, encodeJson({ map, files }));
+        }
+      }
+
+      if (selection.localSettings) {
+        extra('localSettings');
+        const pairs = await AsyncStorage.multiGet(LOCAL_SETTINGS_KEYS);
+        const values: Record<string, string> = {};
+        for (const [key, value] of pairs) {
+          if (typeof value === 'string') values[key] = value;
+        }
+        if (Object.keys(values).length > 0) {
+          await putJson('localSettings', RECORD_TYPE.localSettings, LOCAL_SETTINGS_ID, encodeJson(values));
+        }
+      }
+
+      // Media: one record per file, immutable by message id, so a file that
+      // is already in iCloud is never sent again.
+      const mediaIds: string[] = [];
+      let mediaSkippedTooLarge = 0;
+      if (selection.media) {
+        const native = hasNativeFileTransfer();
+        const ceiling = native ? MAX_NATIVE_MEDIA_BYTES : MAX_BRIDGE_MEDIA_BYTES;
+        const candidates: { chatId: string; message: ChatMessage }[] = [];
+        for (const chatId of chatIds) {
+          for (const message of await getChatMessages(chatId)) {
+            if (message.localMediaPath && message.mediaDownloaded) candidates.push({ chatId, message });
+          }
+        }
+        let filesDone = 0;
+        for (const { chatId, message } of candidates) {
+          const id = mediaRecordId(message.messageId);
+          try {
+            if (!ledger.records[id]) {
+              const info = await getInfoAsync(message.localMediaPath!);
+              if (!info.exists) continue;
+              const size = typeof info.size === 'number' ? info.size : 0;
+              if (size > ceiling) {
+                mediaSkippedTooLarge += 1;
+                continue;
+              }
+              const metadata = {
+                chatId,
+                messageId: message.messageId,
+                fileName: message.mediaMetadata?.fileName ?? '',
+              };
+              let bytes: number;
+              if (native) {
+                bytes = await backupFile(RECORD_TYPE.media, id, message.localMediaPath!, metadata);
+              } else {
+                const payload = await readAsStringAsync(message.localMediaPath!, { encoding: 'base64' });
+                await backupChunk(RECORD_TYPE.media, id, payload, metadata);
+                bytes = base64Bytes(payload);
+              }
+              ledger.records[id] = { h: 'file', b: bytes, c: 'media' };
+              bytesDone += bytes;
+              await saveLedger(ledger);
+            }
+            mediaIds.push(id);
+          } catch {
+            // One unreadable file must not abort an otherwise good backup.
+          } finally {
+            filesDone += 1;
+            onProgress?.({
+              phase: 'media',
+              chatsDone: chatIds.length,
+              chatsTotal: chatIds.length,
+              messagesDone,
+              category: 'media',
+              filesDone,
+              filesTotal: candidates.length,
+              bytesDone,
+            });
+          }
+        }
+      }
+
+      // Everything the new manifest references. Ledger entries outside it are
+      // pruned below, after the manifest has landed.
+      const referenced = new Set<string>([
+        ...chats.flatMap((chat) => chat.batchIds),
+        ...mediaIds,
+        ...(selection.callHistory && callHistoryCount > 0 ? [CALL_HISTORY_ID] : []),
+        ...(selection.wallpapers && ledger.records[WALLPAPERS_ID] ? [WALLPAPERS_ID] : []),
+        ...(selection.localSettings && ledger.records[LOCAL_SETTINGS_ID] ? [LOCAL_SETTINGS_ID] : []),
+      ]);
+      const live: Record<string, LedgerRecord> = {};
+      for (const id of referenced) if (ledger.records[id]) live[id] = ledger.records[id];
+      const sizes = sizesFrom(live);
+      const totalBytes = Object.values(sizes).reduce((sum: number, n) => sum + (n ?? 0), 0);
+
+      const manifest: BackupManifest = {
+        version: 2,
+        createdAt: Date.now(),
+        salt,
+        lineage: ledger.lineage,
+        chats,
+        totalMessages: messagesDone,
+        recoverySecret: await getOrCreateRecoverySecret(),
+        contents: selection,
+        mediaIds,
+        mediaSkippedTooLarge,
+        callHistoryCount,
+        sizes,
+      };
+      onProgress?.({ phase: 'manifest', chatsDone: chatIds.length, chatsTotal: chatIds.length, messagesDone, bytesDone });
+
+      await backupChunk(RECORD_TYPE.manifest, MANIFEST_ID, encodeJson(manifest), {
+        summaryVersion: '2',
+        summaryCreatedAt: String(manifest.createdAt),
+        summaryTotalMessages: String(manifest.totalMessages),
+        summaryChatCount: String(chats.length),
+        summaryMediaCount: String(mediaIds.length),
+        summaryBytes: String(totalBytes),
+        summarySizes: JSON.stringify(sizes),
+        summaryContents: JSON.stringify(selection),
+        summaryLineage: ledger.lineage,
+        summaryDeviceName: Device.deviceName ?? '',
+      });
+
+      // Read it back. v1 once reported "194 messages, 612 KB" for a backup
+      // that never reached iCloud; success is now claimed only after iCloud
+      // returns the record we just wrote.
+      onProgress?.({ phase: 'verifying', chatsDone: chatIds.length, chatsTotal: chatIds.length, messagesDone, bytesDone });
+      const landed = await restoreChunkMetadata(RECORD_TYPE.manifest, MANIFEST_ID);
+      if (landed?.metadata?.summaryCreatedAt !== String(manifest.createdAt)) {
+        throw new Error('The backup was written but iCloud did not return it. Try again.');
+      }
+
+      // Prune what the manifest no longer references. Best effort: a failed
+      // delete only leaves unreferenced bytes behind, never breaks a restore.
+      const stale = [...new Set([...Object.keys(ledger.records), ...previousIds])].filter((id) => !referenced.has(id));
+      try {
+        await deleteRecords(stale);
+        for (const id of stale) delete ledger.records[id];
+      } catch {
+        // Retried naturally on the next run.
+      }
+      await saveLedger(ledger);
+
+      onProgress?.({ phase: 'complete', chatsDone: chatIds.length, chatsTotal: chatIds.length, messagesDone, bytesDone });
+      return manifest;
+    } finally {
+      // Always drop the key, including on failure.
+      await endBackupSession();
+    }
+  });
+
+// ---------------------------------------------------------------------------
+// Manifest read / verify
+
+/**
+ * Reads and decrypts the manifest — what proves the passphrase is right.
+ * Fetched by KNOWN id: CloudKit has no queryable index for a fresh install.
+ */
+export const readBackupManifest = (passphrase: string): Promise<BackupManifest | null> =>
+  runExclusive(async () => {
+    await beginBackupSession(passphrase);
+    try {
+      const chunk = await restoreChunk(RECORD_TYPE.manifest, MANIFEST_ID);
+      if (!chunk) return null;
+      return decodeJson<BackupManifest>(chunk.payloadBase64);
+    } finally {
+      await endBackupSession();
+    }
+  });
+
+/**
+ * Verifies a backup against its own manifest for §3.7's retirement gate:
+ * every batch must be present AND decrypt.
+ */
+export const verifyBackup = (
+  passphrase: string,
+  manifest: BackupManifest,
+): Promise<{ ok: boolean; missing: string[] }> =>
+  runExclusive(async () => {
+    const missing: string[] = [];
+    await beginBackupSession(passphrase, manifest.salt);
+    try {
+      for (const chat of manifest.chats) {
+        if (checksum(chat.batchIds.join('|')) !== chat.batchChecksum) {
+          missing.push(...chat.batchIds);
+          continue;
+        }
+        for (const id of chat.batchIds) {
+          const chunk = await restoreChunk(RECORD_TYPE.message, id);
+          if (!chunk) missing.push(id);
+        }
+      }
+    } finally {
+      await endBackupSession();
+    }
+    return { ok: missing.length === 0, missing };
+  });
+
+// ---------------------------------------------------------------------------
+// Import
 
 export interface RestoreProgress {
-  phase: 'manifest' | 'messages' | 'complete';
+  phase: 'manifest' | 'messages' | 'extras' | 'media' | 'complete';
   chatsDone: number;
   chatsTotal: number;
   messagesRestored: number;
+  filesDone?: number;
+  filesTotal?: number;
 }
 
 export interface RestoreResult {
   messagesRestored: number;
-  /** Batches named by the manifest that could not be read — see below. */
+  /** Batches named by the manifest that could not be read. */
   missingBatches: string[];
+  mediaRestored: number;
+  mediaFailed: number;
+  /** Local settings were restored and apply after a relaunch. */
+  needsRestart: boolean;
 }
 
-/**
- * Full import from the backup store onto a new/promoted main device.
- *
- * Missing batches are collected and REPORTED rather than aborting the restore:
- * partial history is materially better than none, and §3.7's retirement gate
- * is what's responsible for ensuring a backup was complete before the old
- * device is given away. Silently succeeding on a partial restore would be the
- * dangerous outcome, so the caller gets the list.
- */
-/**
- * Whether a manifest claims to contain a category.
- *
- * A manifest with no `contents` predates selectable content and is
- * messages-only — which is exactly what those backups are, so reading the
- * absence that way is accurate rather than a guess.
- */
 const manifestHas = (manifest: BackupManifest, category: BackupCategory): boolean =>
   manifest.contents ? manifest.contents[category] === true : category === 'messages';
 
-const importCallHistory = async (manifest: BackupManifest): Promise<void> => {
-  if (!manifestHas(manifest, 'callHistory')) return;
-  const chunk = await restoreChunk(RECORD_TYPE.callHistory, 'callHistory-current');
-  if (!chunk) return;
-  for (const entry of decodeJson<CallHistoryEntry[]>(chunk.payloadBase64)) {
-    // saveCallToHistory dedupes, so a re-run merges instead of duplicating.
-    await saveCallToHistory(entry);
-  }
-};
-
-const importWallpapers = async (manifest: BackupManifest): Promise<void> => {
-  if (!manifestHas(manifest, 'wallpapers')) return;
-  const chunk = await restoreChunk(RECORD_TYPE.wallpapers, 'wallpapers-current');
-  if (!chunk) return;
-
-  const { map, files } = decodeJson<{
-    map: Record<string, unknown>;
-    files: Record<string, string>;
-  }>(chunk.payloadBase64);
-
-  // Files first: writing the slot map before the images exist would leave the
-  // UI briefly pointing at photos that aren't there yet.
-  await makeDirectoryAsync(WALLPAPER_DIRECTORY, { intermediates: true }).catch(() => {});
-  for (const [fileName, base64] of Object.entries(files ?? {})) {
-    await writeAsStringAsync(`${WALLPAPER_DIRECTORY}${fileName}`, base64, {
-      encoding: 'base64',
-    }).catch(() => {});
-  }
-  await AsyncStorage.setItem(WALLPAPER_CONFIG_KEY, JSON.stringify(map));
-
-  // wallpaperService keeps the slot map in a module-level cache and only reads
-  // AsyncStorage once, so writing the key behind its back changes nothing on
-  // screen — the restored wallpapers would sit on disk, correct and invisible,
-  // until the next app launch. Re-hydrating publishes them to its listeners
-  // now, which is what makes the restore look like it worked.
-  await hydrateWallpapers().catch(() => {
-    // A stale cache is cosmetic and self-heals on relaunch; never fail an
-    // otherwise-good restore over it.
-  });
-};
-
-const importLocalSettings = async (manifest: BackupManifest): Promise<void> => {
-  if (!manifestHas(manifest, 'localSettings')) return;
-  const chunk = await restoreChunk(RECORD_TYPE.localSettings, 'localSettings-current');
-  if (!chunk) return;
-
-  const values = decodeJson<Record<string, string>>(chunk.payloadBase64);
-  // Re-filtered against the allow-list on the way IN as well as out. A backup
-  // is attacker-influenced input in the threat model where someone restores a
-  // crafted one, and this keeps a future key from being written just because
-  // an older/other build put it in the payload.
-  const entries = Object.entries(values).filter(([key]) => LOCAL_SETTINGS_KEYS.includes(key));
-  if (entries.length > 0) {
-    await AsyncStorage.multiSet(entries);
-  }
-};
-
-const importMedia = async (manifest: BackupManifest): Promise<void> => {
-  if (!manifestHas(manifest, 'media')) return;
-
-  for (const id of manifest.mediaIds ?? []) {
-    try {
-      const chunk = await restoreChunk(RECORD_TYPE.media, id);
-      if (!chunk) continue;
-      const { chatId, messageId, fileName } = chunk.metadata;
-      if (!chatId || !messageId) continue;
-
-      const localPath = getLocalMediaPath(chatId, messageId, fileName || messageId);
-      await makeDirectoryAsync(localPath.slice(0, localPath.lastIndexOf('/')), {
-        intermediates: true,
-      }).catch(() => {});
-      await writeAsStringAsync(localPath, chunk.payloadBase64, { encoding: 'base64' });
-      // Point the restored message at the restored file, or the media would
-      // sit on disk unreferenced and the bubble would still show as
-      // not-downloaded.
-      await updateMessageLocalPath(chatId, messageId, localPath);
-    } catch {
-      // Media is a best-effort category: a file that fails to restore must not
-      // take the message history down with it.
-    }
-  }
-};
-
-export const importBackup = async (
+/**
+ * Full import onto a new/promoted main device. Merges: everything already on
+ * the device is kept (saveMessageLocally dedupes by id).
+ *
+ * On success the device JOINS the backup's chain: the ledger takes the
+ * manifest's lineage and salt and records the hashes of exactly what was read,
+ * so this device's next backup continues that backup instead of being refused
+ * as a takeover — and only uploads what changed since.
+ */
+export const importBackup = (
   passphrase: string,
   onProgress?: (progress: RestoreProgress) => void,
-): Promise<RestoreResult> => {
-  await beginBackupSession(passphrase);
+): Promise<RestoreResult> =>
+  runExclusive(async () => {
+    await beginBackupSession(passphrase);
+    try {
+      const manifestChunk = await restoreChunk(RECORD_TYPE.manifest, MANIFEST_ID);
+      if (!manifestChunk) throw new Error('No backup was found in iCloud.');
+      const manifest = decodeJson<BackupManifest>(manifestChunk.payloadBase64);
+      const records: Record<string, LedgerRecord> = {};
+      const total = manifest.chats.length;
+      onProgress?.({ phase: 'manifest', chatsDone: 0, chatsTotal: total, messagesRestored: 0 });
 
-  try {
-    const manifestChunk = await restoreChunk(RECORD_TYPE.manifest, 'manifest-current');
-    if (!manifestChunk) {
-      throw new Error('No backup manifest found in iCloud.');
-    }
-    const manifest = decodeJson<BackupManifest>(manifestChunk.payloadBase64);
-    onProgress?.({
-      phase: 'manifest',
-      chatsDone: 0,
-      chatsTotal: manifest.chats.length,
-      messagesRestored: 0,
-    });
-
-    let messagesRestored = 0;
-    const missingBatches: string[] = [];
-
-    for (const [chatIndex, chat] of manifest.chats.entries()) {
-      for (const id of chat.batchIds) {
-        const chunk = await restoreChunk(RECORD_TYPE.message, id);
-        if (!chunk) {
-          missingBatches.push(id);
-          continue;
+      let messagesRestored = 0;
+      const missingBatches: string[] = [];
+      for (const [chatIndex, chat] of manifest.chats.entries()) {
+        for (const id of chat.batchIds) {
+          const chunk = await restoreChunk(RECORD_TYPE.message, id);
+          if (!chunk) {
+            missingBatches.push(id);
+            continue;
+          }
+          for (const message of decodeJson<ChatMessage[]>(chunk.payloadBase64)) {
+            await saveMessageLocally(message);
+            messagesRestored += 1;
+          }
+          records[id] = { h: await contentHash(chunk.payloadBase64), b: base64Bytes(chunk.payloadBase64), c: 'messages' };
         }
-        const messages = decodeJson<ChatMessage[]>(chunk.payloadBase64);
-        for (const message of messages) {
-          // saveMessageLocally dedupes by id, so re-running a restore is safe
-          // and merges with anything already on the device.
-          await saveMessageLocally(message);
-          messagesRestored += 1;
+        onProgress?.({ phase: 'messages', chatsDone: chatIndex + 1, chatsTotal: total, messagesRestored });
+      }
+
+      onProgress?.({ phase: 'extras', chatsDone: total, chatsTotal: total, messagesRestored });
+
+      if (manifestHas(manifest, 'callHistory')) {
+        const chunk = await restoreChunk(RECORD_TYPE.callHistory, CALL_HISTORY_ID);
+        if (chunk) {
+          for (const entry of decodeJson<CallHistoryEntry[]>(chunk.payloadBase64)) {
+            await saveCallToHistory(entry);
+          }
+          records[CALL_HISTORY_ID] = { h: await contentHash(chunk.payloadBase64), b: base64Bytes(chunk.payloadBase64), c: 'callHistory' };
         }
       }
-      onProgress?.({
-        phase: 'messages',
-        chatsDone: chatIndex + 1,
-        chatsTotal: manifest.chats.length,
-        messagesRestored,
+
+      if (manifestHas(manifest, 'wallpapers')) {
+        const chunk = await restoreChunk(RECORD_TYPE.wallpapers, WALLPAPERS_ID);
+        if (chunk) {
+          const { map, files } = decodeJson<{ map: Record<string, unknown>; files: Record<string, string> }>(
+            chunk.payloadBase64,
+          );
+          // Files first, so the slot map never points at images not yet there.
+          await makeDirectoryAsync(WALLPAPER_DIRECTORY, { intermediates: true }).catch(() => {});
+          for (const [fileName, base64] of Object.entries(files ?? {})) {
+            await writeAsStringAsync(`${WALLPAPER_DIRECTORY}${fileName}`, base64, { encoding: 'base64' }).catch(
+              () => {},
+            );
+          }
+          await AsyncStorage.setItem(WALLPAPER_CONFIG_KEY, JSON.stringify(map));
+          // wallpaperService caches the map; re-hydrate so it shows now.
+          await hydrateWallpapers().catch(() => {});
+          records[WALLPAPERS_ID] = { h: await contentHash(chunk.payloadBase64), b: base64Bytes(chunk.payloadBase64), c: 'wallpapers' };
+        }
+      }
+
+      let needsRestart = false;
+      if (manifestHas(manifest, 'localSettings')) {
+        const chunk = await restoreChunk(RECORD_TYPE.localSettings, LOCAL_SETTINGS_ID);
+        if (chunk) {
+          const values = decodeJson<Record<string, string>>(chunk.payloadBase64);
+          // Re-filtered on the way in: a backup is attacker-influenced input.
+          const entries = Object.entries(values).filter(([key]) => LOCAL_SETTINGS_KEYS.includes(key));
+          if (entries.length > 0) {
+            await AsyncStorage.multiSet(entries);
+            needsRestart = true;
+          }
+          records[LOCAL_SETTINGS_ID] = { h: await contentHash(chunk.payloadBase64), b: base64Bytes(chunk.payloadBase64), c: 'localSettings' };
+        }
+      }
+
+      let mediaRestored = 0;
+      let mediaFailed = 0;
+      if (manifestHas(manifest, 'media')) {
+        const ids = manifest.mediaIds ?? [];
+        const native = hasNativeFileTransfer();
+        for (const [index, id] of ids.entries()) {
+          try {
+            // One download per file. Where it belongs (chat + file name) is in
+            // the record's metadata, which arrives WITH it — so the native path
+            // writes to a temporary file first and it is moved into place.
+            let bytes = 0;
+            let meta: Record<string, string> | undefined;
+            let staged: string | null = null;
+            if (native) {
+              staged = `${cacheDirectory}restore-${id}`;
+              const result = await restoreFile(RECORD_TYPE.media, id, staged);
+              if (!result) {
+                mediaFailed += 1;
+                continue;
+              }
+              bytes = result.bytes;
+              meta = result.metadata;
+            } else {
+              const chunk = await restoreChunk(RECORD_TYPE.media, id);
+              if (!chunk) {
+                mediaFailed += 1;
+                continue;
+              }
+              bytes = base64Bytes(chunk.payloadBase64);
+              meta = chunk.metadata;
+              staged = null;
+              const { chatId: c, messageId: m, fileName: f } = meta ?? {};
+              if (c && m) {
+                const target = getLocalMediaPath(c, m, f || m);
+                await makeDirectoryAsync(target.slice(0, target.lastIndexOf('/')), { intermediates: true }).catch(() => {});
+                await writeAsStringAsync(target, chunk.payloadBase64, { encoding: 'base64' });
+              }
+            }
+            const { chatId, messageId, fileName } = meta ?? {};
+            if (!chatId || !messageId) {
+              if (staged) await deleteAsync(staged, { idempotent: true }).catch(() => {});
+              mediaFailed += 1;
+              continue;
+            }
+            const localPath = getLocalMediaPath(chatId, messageId, fileName || messageId);
+            if (staged) {
+              await makeDirectoryAsync(localPath.slice(0, localPath.lastIndexOf('/')), { intermediates: true }).catch(() => {});
+              await deleteAsync(localPath, { idempotent: true }).catch(() => {});
+              await moveAsync({ from: staged, to: localPath });
+            }
+            // Point the restored message at the restored file, or the bubble
+            // would still show as not-downloaded.
+            await updateMessageLocalPath(chatId, messageId, localPath);
+            records[id] = { h: 'file', b: bytes, c: 'media' };
+            mediaRestored += 1;
+          } catch {
+            mediaFailed += 1;
+          } finally {
+            onProgress?.({
+              phase: 'media',
+              chatsDone: total,
+              chatsTotal: total,
+              messagesRestored,
+              filesDone: index + 1,
+              filesTotal: ids.length,
+            });
+          }
+        }
+      }
+
+      // Join the chain (see above). A v1 backup has no lineage; the restore
+      // adopts it under a new one, recorded in the next manifest.
+      // The restoring passphrase becomes this device's (see the caller), so
+      // the records are valid under whatever enrollment time it gets: the
+      // caller enrolls first, and passphraseSetAt is read after that.
+      await saveLedger({
+        lineage: manifest.lineage ?? newLineage(),
+        salt: manifest.salt,
+        passphraseSetAt: await getEnrolledAt(),
+        records,
       });
+
+      onProgress?.({ phase: 'complete', chatsDone: total, chatsTotal: total, messagesRestored });
+      return { messagesRestored, missingBatches, mediaRestored, mediaFailed, needsRestart };
+    } finally {
+      await endBackupSession();
     }
-
-    // Non-message categories. Each is driven by what the manifest says is
-    // PRESENT, never by this device's own selection — the selection governs
-    // what gets written, and a restore must read back whatever the backup
-    // actually contains.
-    await importCallHistory(manifest);
-    await importWallpapers(manifest);
-    await importLocalSettings(manifest);
-    await importMedia(manifest);
-
-    onProgress?.({
-      phase: 'complete',
-      chatsDone: manifest.chats.length,
-      chatsTotal: manifest.chats.length,
-      messagesRestored,
-    });
-    return { messagesRestored, missingBatches };
-  } finally {
-    await endBackupSession();
-  }
-};
-
-/**
- * Verifies a backup against its own manifest, for §3.7's device-retirement
- * gate — the check that must pass before a user is told it's safe to give away
- * their old device.
- *
- * Verification is delegated to the provider, which re-derives each record's
- * checksum from the STORE's bytes. It deliberately does NOT trust anything this
- * layer computed: a gate that verifies a backup using the same numbers the
- * backup claims is not a gate.
- */
-export const verifyBackup = async (
-  passphrase: string,
-  manifest: BackupManifest,
-): Promise<{ ok: boolean; missing: string[] }> => {
-  const missing: string[] = [];
-
-  await beginBackupSession(passphrase);
-  try {
-    for (const chat of manifest.chats) {
-      const recomputed = checksum(chat.batchIds.join('|'));
-      if (recomputed !== chat.batchChecksum) {
-        // The manifest disagrees with itself — treat every batch in this chat
-        // as suspect rather than guessing which entry is wrong.
-        missing.push(...chat.batchIds);
-        continue;
-      }
-      for (const id of chat.batchIds) {
-        // Fetch-by-id, not a query: same CloudKit indexing constraint as
-        // readBackupManifest. This also verifies each batch actually DECRYPTS,
-        // which a presence check alone would not — §3.7's gate needs to know a
-        // backup is restorable, not merely that records exist.
-        const chunk = await restoreChunk(RECORD_TYPE.message, id);
-        if (!chunk) missing.push(id);
-      }
-    }
-  } finally {
-    await endBackupSession();
-  }
-
-  return { ok: missing.length === 0, missing };
-};
+  });
 
 export { verifyBackupIntegrity };

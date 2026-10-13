@@ -73,6 +73,7 @@ vi.mock('@/context/ThemeContext', () => ({
   useTheme: () => ({ theme: { accentId: 'ocean', reduceMotion: state.reduceMotion }, themeProgress: { value: 0 }, isDark: false }),
 }));
 vi.mock('@/context/PrivacyGuardContext', () => ({ usePrivacyGuard: () => ({ active: false, settings: {} }) }));
+vi.mock('@/components/LiveWallpaper', () => ({ LiveWallpaper: () => null, getLiveEffect: () => null }));
 vi.mock('@/hooks/useWallpaper', () => ({ useWallpaper: () => state.wallpaper, useWallpaperChain: () => null }));
 
 import { NavigationContext } from '@react-navigation/native';

@@ -3,6 +3,7 @@
 // the version footer. Every row is a ListRow so spacing, icon chips, and
 // chevrons stay consistent; wallpaper rows preview the current photo.
 
+import { LIVE_SCENE_BY_ID } from '@/constants/liveScenes';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
 import { MugguMark } from '@/components/brand';
@@ -437,7 +438,33 @@ export const SettingsScreen = () => {
         />
       );
     }
+    if (entry.kind === 'live') {
+      // Live scene — its own palette as a still chip (a running shader in a
+      // 34px row would cost GPU time for no benefit).
+      const palette = isDark ? LIVE_SCENE_BY_ID[entry.scene].dark : LIVE_SCENE_BY_ID[entry.scene].light;
+      return (
+        <View style={[styles.wallpaperThumb, { backgroundColor: palette[0], overflow: 'hidden' }]}>
+          <View style={{ position: 'absolute', left: -6, top: 4, width: 26, height: 14, borderRadius: 7, backgroundColor: palette[2], opacity: 0.85 }} />
+          <View style={{ position: 'absolute', right: -6, bottom: 2, width: 24, height: 16, borderRadius: 8, backgroundColor: palette[3], opacity: 0.85 }} />
+        </View>
+      );
+    }
     return <Image source={{ uri: entry.uri }} style={styles.wallpaperThumb} accessibilityIgnoresInvertColors />;
+  };
+
+  /** What a slot actually shows — not "Custom photo" for every kind. */
+  const describeWallpaper = (entry: ReturnType<typeof useWallpaperSlot>): string => {
+    if (!entry) return 'Liquid colors';
+    switch (entry.kind) {
+      case 'live':
+        return `${LIVE_SCENE_BY_ID[entry.scene].label} · Live`;
+      case 'solid':
+        return 'Solid color';
+      case 'blob':
+        return entry.adaptive ? 'Liquid colors' : 'Liquid colors · Custom';
+      default:
+        return 'Your photo';
+    }
   };
 
   const divider = (
@@ -672,9 +699,7 @@ export const SettingsScreen = () => {
             subtitle={
               guardActive && guardSettings.hideWallpaper
                 ? 'Hidden'
-                : appWallpaper
-                  ? 'Custom photo'
-                  : 'Liquid colors'
+                : describeWallpaper(appWallpaper)
             }
             icon="image-outline"
             trailing={wallpaperPreview(appWallpaper)}
@@ -689,7 +714,7 @@ export const SettingsScreen = () => {
               guardActive && guardSettings.hideWallpaper
                 ? 'Hidden'
                 : chatDefaultWallpaper
-                  ? 'Custom photo for all chats'
+                  ? `${describeWallpaper(chatDefaultWallpaper)} · all chats`
                   : 'Default for chats & groups'
             }
             icon="forum-outline"

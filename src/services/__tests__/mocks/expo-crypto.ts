@@ -9,3 +9,11 @@ export enum CryptoDigestAlgorithm {
 
 export const digestStringAsync = async (algorithm: unknown, data: string): Promise<string> =>
   createHash(algorithm === CryptoDigestAlgorithm.SHA1 ? 'sha1' : 'sha256').update(data, 'utf8').digest('hex');
+
+export const randomUUID = (): string => (globalThis.crypto as Crypto).randomUUID();
+
+export const getRandomBytes = (size: number): Uint8Array => {
+  const bytes = new Uint8Array(size);
+  (globalThis.crypto as Crypto).getRandomValues(bytes);
+  return bytes;
+};

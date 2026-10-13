@@ -61,6 +61,12 @@ public class SplitCircleBackupModule: Module {
     }
   }
 
+  /// expo-file-system hands out `file://` URIs; accept those and bare paths.
+  private static func fileURL(_ path: String) -> URL {
+    if path.hasPrefix("file://"), let url = URL(string: path) { return url }
+    return URL(fileURLWithPath: path)
+  }
+
   public func definition() -> ModuleDefinition {
     Name("SplitCircleBackup")
 
@@ -146,6 +152,39 @@ public class SplitCircleBackupModule: Module {
       try await self.withRetry {
         try await self.provider.listChunkIds(recordType: recordType, metadata: metadata)
       }
+    }
+
+    /// Encrypts and stores a FILE, read natively. Media used to travel as a
+    /// base64 string through JS, which put a whole video in the Hermes heap
+    /// (and was capped at 24MB for that reason). Here the file is memory-mapped
+    /// and never crosses the bridge. Returns the plaintext byte count.
+    AsyncFunction("backupFile") { (recordType: String, recordId: String, filePath: String, metadata: [String: String]) async throws -> Int in
+      let url = Self.fileURL(filePath)
+      let data = try Data(contentsOf: url, options: .mappedIfSafe)
+      let wrapped = try self.crypto.wrap(data)
+      let chunk = BackupChunk(recordType: recordType, recordId: recordId, payload: wrapped, metadata: metadata)
+      try await self.withRetry { try await self.provider.backupChunk(chunk) }
+      return data.count
+    }
+
+    /// Fetches, decrypts and writes a record straight to a file — the restore
+    /// half of `backupFile`. Returns nil when the record is absent.
+    AsyncFunction("restoreFile") { (recordType: String, recordId: String, destinationPath: String) async throws -> [String: Any]? in
+      guard let chunk = try await self.withRetry({
+        try await self.provider.restoreChunk(recordType: recordType, recordId: recordId)
+      }) else { return nil }
+      let plain = try self.crypto.unwrap(chunk.payload)
+      let url = Self.fileURL(destinationPath)
+      try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      try plain.write(to: url, options: .atomic)
+      return ["metadata": chunk.metadata, "bytes": plain.count]
+    }
+
+    AsyncFunction("deleteRecords") { (recordIds: [String]) async throws -> Void in
+      try await self.withRetry { try await self.provider.deleteRecords(recordIds: recordIds) }
     }
 
     AsyncFunction("estimateSize") { () async throws -> Int in

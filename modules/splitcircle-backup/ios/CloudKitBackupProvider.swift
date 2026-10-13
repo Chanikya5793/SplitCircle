@@ -266,6 +266,35 @@ public final class CloudKitBackupProvider: BackupProvider {
     return Self.checksum(of: chunk.payload) == expectedChecksum
   }
 
+  // MARK: - Delete
+
+  public func deleteRecords(recordIds: [String]) async throws {
+    // CloudKit caps a modify operation at 400 items.
+    for start in stride(from: 0, to: recordIds.count, by: 350) {
+      let ids = recordIds[start..<min(start + 350, recordIds.count)].map { CKRecord.ID(recordName: $0) }
+      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        let operation = CKModifyRecordsOperation(recordsToSave: nil, recordIDsToDelete: ids)
+        operation.qualityOfService = .utility
+        operation.modifyRecordsResultBlock = { result in
+          switch result {
+          case .success:
+            continuation.resume()
+          case .failure(let error):
+            // A partial failure that is only "already gone" is success here.
+            if let ckError = error as? CKError, ckError.code == .partialFailure,
+               let partial = ckError.partialErrorsByItemID?.values,
+               partial.allSatisfy({ ($0 as? CKError)?.code == .unknownItem }) {
+              continuation.resume()
+            } else {
+              continuation.resume(throwing: error)
+            }
+          }
+        }
+        database.add(operation)
+      }
+    }
+  }
+
   // MARK: - Helpers
 
   private static func payload(from record: CKRecord) throws -> Data? {

@@ -31,7 +31,10 @@ import { errorHaptic, successHaptic } from '@/utils/haptics';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, Text, TextInput } from 'react-native-paper';
+import { Button, ProgressBar, Text, TextInput } from 'react-native-paper';
+import { appAlert } from '@/utils/appAlert';
+import { importBackup } from '@/services/backupService';
+import { adoptRestoredPassphrase } from '@/services/backupPassphraseService';
 
 /** Typed verbatim to continue without a backup — deliberately effortful. */
 const NO_BACKUP_PHRASE = 'DELETE MY CHAT HISTORY';
@@ -71,6 +74,8 @@ export const DeviceSetupChoice = ({ confirmationCode, waitingForApproval, onCanc
   const [keepOld, setKeepOld] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Live restore progress: the import can take a while on a big history. */
+  const [restoreStatus, setRestoreStatus] = useState<{ label: string; progress: number } | null>(null);
 
   useEffect(() => {
     void hasRecoverableBackup().then(setBackup);
@@ -94,6 +99,57 @@ export const DeviceSetupChoice = ({ confirmationCode, waitingForApproval, onCanc
       );
     } finally {
       setBusy(false);
+    }
+  };
+
+  /**
+   * Recover as the main device AND bring the history back.
+   *
+   * Recovery alone only proved the passphrase and made this phone "main" — it
+   * never imported anything, and as main this phone's next backup then
+   * replaced the real one with an empty history. Now the backup is imported
+   * right here, and the passphrase is kept so this phone continues the same
+   * backup. If the import fails part-way the phone is still main, but the
+   * backup is safe: a device that didn't restore can't overwrite a larger
+   * backup without the user choosing to (backupService.assessTakeover), and
+   * Settings → iCloud backup offers the restore again.
+   */
+  const recoverAndRestore = async (pass: string, keepOtherDevices: boolean) => {
+    setRestoreStatus({ label: 'Checking your passphrase…', progress: 0 });
+    try {
+      await recoverWithPassphrase(pass, keepOtherDevices);
+      await adoptRestoredPassphrase(pass);
+      setRestoreStatus({ label: 'Restoring your chats…', progress: 0.02 });
+      try {
+        const result = await importBackup(pass, (p) => {
+          if (p.phase === 'messages' && p.chatsTotal > 0) {
+            setRestoreStatus({
+              label: `Restoring chats · ${p.messagesRestored.toLocaleString()} messages`,
+              progress: 0.05 + (p.chatsDone / p.chatsTotal) * 0.7,
+            });
+          } else if (p.phase === 'media' && p.filesTotal) {
+            setRestoreStatus({
+              label: `Restoring photos & videos · ${p.filesDone ?? 0} of ${p.filesTotal}`,
+              progress: 0.75 + ((p.filesDone ?? 0) / p.filesTotal) * 0.24,
+            });
+          } else if (p.phase === 'extras') {
+            setRestoreStatus({ label: 'Restoring call history and settings…', progress: 0.75 });
+          }
+        });
+        if (result.missingBatches.length > 0 || result.mediaFailed > 0) {
+          appAlert(
+            'Restored with gaps',
+            `${result.messagesRestored.toLocaleString()} messages came back, but some parts of the backup couldn't be read. You can try again from Settings → iCloud backup.`,
+          );
+        }
+      } catch {
+        appAlert(
+          'Chats not restored yet',
+          "This phone is set up, but your chat history couldn't be restored just now. Your backup is untouched. Open Settings → iCloud backup to restore it.",
+        );
+      }
+    } finally {
+      setRestoreStatus(null);
     }
   };
 
@@ -254,11 +310,23 @@ export const DeviceSetupChoice = ({ confirmationCode, waitingForApproval, onCanc
 
           {oldDeviceQuestion}
 
+          {restoreStatus ? (
+            <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+              <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+                {restoreStatus.label}
+              </Text>
+              <ProgressBar progress={restoreStatus.progress} color={theme.colors.primary} />
+              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                Keep the app open until this finishes.
+              </Text>
+            </GlassCard>
+          ) : null}
+
           <Button
             mode="contained"
             loading={busy}
             disabled={busy || passphrase.trim().length === 0 || keepOld === null}
-            onPress={() => void run(() => recoverWithPassphrase(passphrase, keepOld === true))}
+            onPress={() => void run(() => recoverAndRestore(passphrase.trim(), keepOld === true))}
           >
             Restore and continue
           </Button>

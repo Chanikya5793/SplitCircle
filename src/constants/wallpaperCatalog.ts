@@ -8,6 +8,7 @@
 //               access.
 
 import { SOLID_BACKGROUNDS, type SolidBackground } from './solidBackgrounds';
+import { LIVE_SCENES, type LiveSceneId } from './liveScenes';
 
 export { SOLID_BACKGROUNDS };
 export type { SolidBackground };
@@ -33,14 +34,29 @@ export type CatalogWallpaper =
       kind: 'photo';
       source: number; // require() module id
     }
-  | SolidBackground;
+  | SolidBackground
+  | {
+      id: string;
+      label: string;
+      kind: 'live';
+      scene: LiveSceneId;
+    };
 
 const mono = (light: string, dark: string): { light: BlobTrio; dark: BlobTrio } => ({
   light: [light, light, light],
   dark: [dark, dark, dark],
 });
 
+/** Animated GPU scenes — shown first in the picker. */
+export const LIVE_WALLPAPERS: CatalogWallpaper[] = LIVE_SCENES.map((scene) => ({
+  id: `live-${scene.id}`,
+  label: scene.label,
+  kind: 'live' as const,
+  scene: scene.id,
+}));
+
 export const WALLPAPER_CATALOG: CatalogWallpaper[] = [
+  ...LIVE_WALLPAPERS,
   ...SOLID_BACKGROUNDS,
   // Adaptive — animated blobs that follow the app's current accent theme (recolour
   // live when you change the accent). light/dark are placeholders; adaptive wins.

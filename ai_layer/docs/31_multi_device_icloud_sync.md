@@ -2517,3 +2517,30 @@ dead, and the doc has described a subscription that does not exist since Phase
 1. Not fixed here (deleting it touches the pairing path, which §5e still lists
 as unverified on hardware) — recorded so the next person does not go looking
 for the listener.
+
+## 9. Backup v2 (2026-10-13) — rebuilt after "everything about it is super broken"
+
+An audit of the shipped backup found seven defects. The rebuild fixes each one;
+the numbers below are referenced from code comments.
+
+| # | Defect in v1 | v2 fix |
+|---|---|---|
+| 1 | New-phone recovery (`DeviceSetupChoice` → `recoverWithPassphrase`) proved the passphrase and made the phone **main**, but never imported anything. Its first backup then **overwrote the real one with an empty history**. "Continue without history" did the same. | Recovery now runs `importBackup` with progress and keeps the passphrase (`adoptRestoredPassphrase`). Independently, **lineage**: every backup chain has an id (manifest + summary metadata + local ledger). A device that did not write or restore the backup in iCloud cannot replace a larger one (`assessTakeover` → `BackupWouldShrinkError`). Scheduled runs can never replace; a manual run asks twice. "Couldn't read iCloud" is never treated as "no backup". |
+| 2 | Scheduled backups could not run: the passphrase and recovery secret were `WHEN_UNLOCKED` Keychain items (unreadable while locked — when iOS runs BG tasks); the task read `auth.currentUser` before Firebase restored it (always null on a cold start); and the OS schedule was only registered when the backup screen was opened. | Items moved to `AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY` (crash-safe migration with a `.migrating` copy); the task waits up to 15s for auth; `ensureBackupSchedule` runs on every signed-in launch. |
+| 3 | Every run re-uploaded the whole history (media included) under a fresh salt — far beyond a BG task's few minutes. | **Incremental**: local ledger of SHA-256 per record; unchanged records are skipped; the salt is reused within a chain so they stay readable; the ledger is saved per chat / per file so an interrupted run resumes. Passphrase change (`enrolledAt` differs) re-seals everything. |
+| 4 | Media crossed the bridge as base64 (24MB cap, whole file in the Hermes heap). | Native `backupFile` / `restoreFile` (memory-mapped, never crosses the bridge; 400MB ceiling). Old binaries fall back to the base64 path. |
+| 5 | Opening the screen ran the 600k-iteration KDF and downloaded the manifest just to draw two cards. | The screen reads only the manifest's unencrypted summary metadata (now also lineage, per-category sizes, contents). |
+| 6 | Success was claimed without checking; deleted chats and deselected media stayed on the user's iCloud quota forever. | After writing, the manifest is read back from iCloud before success is reported. Records the new manifest doesn't reference are deleted (`deleteRecords`, best effort). |
+| 7 | Backup, restore, verify and the Phase 6 handoff all share ONE native crypto session with no coordination. | `runExclusive` serialises every begin…end sequence, including the handoff's three. |
+
+The screen was rebuilt around one status card (what iCloud actually holds, the
+single "Back up now", live progress, what's blocking), a restore card that
+appears only for a backup this phone didn't write, then schedule / contents /
+security. `engine` behaviour is covered by `src/services/__tests__/backupEngine.test.ts`
+against an in-memory CloudKit (incremental skip, takeover guard, unreadable-iCloud,
+restore-joins-chain, passphrase re-seal, read-back, pruning, media).
+
+**Not verified on hardware yet:** the three new native functions (`backupFile`,
+`restoreFile`, `deleteRecords`) need a device build; CloudKit is unreachable on
+the simulator. Until a build ships them, the JS uses the base64 media path and
+skips pruning — both safe.

@@ -12,6 +12,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useWallpaper, useWallpaperChain } from '@/hooks/useWallpaper';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { useAmbientMotion } from '@/hooks/useAmbientMotion';
+import { getLiveEffect, LiveWallpaper } from '@/components/LiveWallpaper';
 import { ACCENTS, NEUTRALS } from '@/theme/palette';
 import React, { useEffect, useMemo } from 'react';
 import { Image, StyleSheet, useWindowDimensions, View, ViewStyle } from 'react-native';
@@ -190,6 +191,23 @@ export const LiquidBackground = ({
     );
     return { backgroundColor };
   });
+
+  if (wallpaper?.kind === 'live' && getLiveEffect(wallpaper.scene)) {
+    // Animated GPU scene. Same motion rule as the blobs (paused off-screen,
+    // in the background and with Reduce Motion), same theme crossfade.
+    return (
+      <Animated.View style={[styles.container, containerStyle, style]}>
+        <LiveWallpaper
+          scene={wallpaper.scene}
+          animate={animate}
+          mode={themeProgress}
+          width={width}
+          height={height}
+        />
+        <View style={styles.content}>{children}</View>
+      </Animated.View>
+    );
+  }
 
   if (wallpaper?.kind === 'solid') {
     // Flat fill: no blobs, no image, no animation. Still crossfades light↔dark

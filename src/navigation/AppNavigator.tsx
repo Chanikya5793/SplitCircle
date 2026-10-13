@@ -84,6 +84,7 @@ import { AppStack, AuthStack, NativeTab } from './stacks';
 import { navigationRef } from './navigationRef';
 import { useDeepLinks } from '@/services/deepLinkService';
 import { usePendingExpenseFlush } from '@/services/pendingExpenseService';
+import { ensureBackupSchedule } from '@/services/backupScheduler';
 import { useMonetizationUsageFlush } from '@/services/monetizationUsageQueue';
 import { useMonetizedOperationFinalizationFlush } from '@/services/monetizedOperationFinalizationQueue';
 
@@ -1817,6 +1818,12 @@ const styles = StyleSheet.create({
 /** Drives Siri/App-Intent/widget deep links once the signed-in nav tree is mounted. */
 const PendingExpenseHandler = () => {
   usePendingExpenseFlush();
+  // Backup housekeeping rides on the same signed-in mount: Keychain migration
+  // plus re-registering the automatic-backup schedule on every launch.
+  const { user } = useAuth();
+  useEffect(() => {
+    if (user?.userId) void ensureBackupSchedule(user.userId);
+  }, [user?.userId]);
   useMonetizationUsageFlush();
   useMonetizedOperationFinalizationFlush();
   return null;

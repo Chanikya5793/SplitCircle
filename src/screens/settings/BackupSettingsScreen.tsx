@@ -1,35 +1,50 @@
-import { DetailScreenScaffold } from '@/components/ui/DetailScreenScaffold';
-// iCloud backup — the single screen for the whole feature (doc 31 §3.6).
+// iCloud backup — the one screen for the whole feature (doc 31 §3.6), v2.
 //
-// Replaces the bare passphrase form that shipped first. Everything a person
-// needs to trust this feature lives here: what is backed up, when it last
-// happened, what is stopping it, how often it runs, whether it may use
-// cellular, and how to get it back.
+// Layout, top to bottom, and why:
+//  1. Status — the answer to "is my stuff safe?" first: what iCloud holds
+//     (read from iCloud itself, not a local note), the single "Back up now"
+//     action, live progress, and whatever is stopping a backup.
+//  2. Restore — only when iCloud holds a backup THIS device didn't write or
+//     restore (the new-phone case). It sits above everything else then,
+//     because restoring is the thing to do before anything else.
+//  3. Automatic backups, 4. What's included, 5. Security, 6. Recent runs.
 //
-// The copy is deliberately HONEST ABOUT UNCERTAINTY (§3.6): it shows the last
-// SUCCESSFUL backup and never a predicted next-run time, because iOS decides
-// when background work actually happens and inventing a schedule we cannot
-// keep is worse than admitting we don't know.
+// Opening the screen costs one CloudKit metadata read and NO key derivation:
+// v1 ran the 600k-iteration passphrase KDF and downloaded the manifest every
+// time the screen opened, just to show two cards.
+//
+// Still honest about uncertainty (§3.6): it shows the last backup that is
+// actually in iCloud and never predicts when iOS will run the next one.
 
-import { Divider, GlassCard, SCREEN_GUTTER } from '@/components/ui';
+import { DetailScreenScaffold } from '@/components/ui/DetailScreenScaffold';
+import { Divider, GlassCard, ListRow, SCREEN_GUTTER, SectionLabel, SegmentedControl } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { ROUTES } from '@/constants/routes';
 import { isBackupHealthy } from '../../../modules/splitcircle-backup';
-import { getEnrolledAt, getStoredPassphrase, isPassphraseEnrolled } from '@/services/backupPassphraseService';
 import {
-  BACKUP_FREQUENCY_LABELS,
-  checkNetworkAllowance,
+  adoptRestoredPassphrase,
+  getEnrolledAt,
+  getStoredPassphrase,
+  isPassphraseEnrolled,
+} from '@/services/backupPassphraseService';
+import {
   getBackupAllowCellular,
   getBackupFrequency,
-  isBackupStale,
   setBackupAllowCellular,
   setBackupFrequency,
   type BackupFrequency,
 } from '@/services/backupSettingsService';
-import { BackupBlockedError, getLastBackupInfo, runBackupNow, type LastBackupInfo } from '@/services/backupRunner';
-import { importBackup, lastSummaryReadError, readBackupManifest, type BackupManifest } from '@/services/backupService';
+import { BackupBlockedError, runBackupNow } from '@/services/backupRunner';
+import {
+  assessTakeover,
+  importBackup,
+  lastSummaryReadError,
+  readBackupManifest,
+  type BackupSummary,
+  type TakeoverAssessment,
+} from '@/services/backupService';
 import {
   BACKUP_CATEGORIES,
   DEFAULT_SELECTION,
@@ -41,22 +56,20 @@ import {
 import { isBackupScheduled, syncBackupSchedule } from '@/services/backupScheduler';
 import { getBackupHistory, type BackupRunEntry } from '@/services/backupHistoryService';
 import { assessBackupReadiness, type BackupReadiness } from '@/services/backupReadinessService';
-import {
-  BackupHistoryCard,
-  BackupSizeCard,
-  EncryptionCard,
-  NextBackupCard,
-  RestorePreviewCard,
-  formatBytes,
-} from '@/components/backup/BackupInsightCards';
+import { BackupHistoryCard, formatBytes } from '@/components/backup/BackupInsightCards';
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
-import { Button, List, ProgressBar, Switch, Text, TextInput } from 'react-native-paper';
+import { Button, Icon, ProgressBar, Switch, Text, TextInput } from 'react-native-paper';
 
-const FREQUENCIES: BackupFrequency[] = ['daily', 'every3days', 'weekly', 'off'];
+const FREQUENCIES: { value: BackupFrequency; label: string }[] = [
+  { value: 'daily', label: 'Daily' },
+  { value: 'every3days', label: '3 days' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'off', label: 'Off' },
+];
 
 const relativeTime = (timestamp: number): string => {
   const diff = Date.now() - timestamp;
@@ -69,133 +82,159 @@ const relativeTime = (timestamp: number): string => {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 };
 
+/** The health check's machine codes, in words. Native reasons are already prose. */
+const icloudReasonText = (reason?: string | null): string => {
+  switch (reason) {
+    case 'simulator_no_icloud':
+      return 'iCloud backup only works on an iPhone, not the simulator.';
+    case 'native_module_unavailable':
+      return 'This version of the app can’t use iCloud backup.';
+    case undefined:
+    case null:
+    case '':
+      return 'Sign in to iCloud in the Settings app.';
+    default:
+      return reason;
+  }
+};
+
+const CATEGORY_ICONS: Record<BackupCategory, string> = {
+  messages: 'message-text-outline',
+  media: 'image-multiple-outline',
+  callHistory: 'phone-outline',
+  wallpapers: 'palette-outline',
+  localSettings: 'tune-variant',
+};
+
+type Status = 'loading' | 'unavailable' | 'needs_setup' | 'restore_first' | 'never' | 'stale' | 'ok';
+
 export const BackupSettingsScreen = () => {
   const navigation = useNavigation();
   const { user } = useAuth();
   const { theme } = useTheme();
 
-  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [enrolled, setEnrolled] = useState(false);
   const [enrolledAt, setEnrolledAt] = useState<number | null>(null);
-  const [lastBackup, setLastBackup] = useState<LastBackupInfo | null>(null);
   const [frequency, setFrequency] = useState<BackupFrequency>('daily');
   const [allowCellular, setAllowCellular] = useState(false);
-  const [icloud, setIcloud] = useState<{
-    available: boolean;
-    reason?: string | null;
-  }>({ available: true });
-  const [busy, setBusy] = useState<string | null>(null);
-  const [progress, setProgress] = useState<number | null>(null);
-  const [remoteManifest, setRemoteManifest] = useState<BackupManifest | null>(null);
-  // Typed on a device that has no passphrase of its own — the new-phone case.
-  const [restorePass, setRestorePass] = useState('');
-  const [revealRestorePass, setRevealRestorePass] = useState(false);
-  /** Real OS-level registration state, not just the stored preference. */
+  const [icloud, setIcloud] = useState<{ available: boolean; reason?: string | null }>({ available: true });
+  const [takeover, setTakeover] = useState<TakeoverAssessment | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [scheduled, setScheduled] = useState(false);
   const [selection, setSelection] = useState<BackupSelection>(DEFAULT_SELECTION);
   const [history, setHistory] = useState<BackupRunEntry[]>([]);
   const [readiness, setReadiness] = useState<BackupReadiness | null>(null);
-  /** Manifest of the backup currently in iCloud, for size / restore preview. */
-  const [localManifest, setLocalManifest] = useState<BackupManifest | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [restorePass, setRestorePass] = useState('');
+  const [revealRestorePass, setRevealRestorePass] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!user) return;
-    const [isEnrolled, at, last, freq, cellular, health, contents] = await Promise.all([
+    const [isEnrolled, at, freq, cellular, health, contents, runs] = await Promise.all([
       isPassphraseEnrolled(),
       getEnrolledAt(),
-      getLastBackupInfo(),
       getBackupFrequency(user.userId),
       getBackupAllowCellular(user.userId),
       isBackupHealthy(),
       getBackupSelection(),
+      getBackupHistory(),
     ]);
-    setSelection(contents);
-    setHistory(await getBackupHistory());
-    setReadiness(await assessBackupReadiness(user.userId));
     setEnrolled(isEnrolled);
     setEnrolledAt(at);
-    setLastBackup(last);
     setFrequency(freq);
     setAllowCellular(cellular);
     setIcloud({ available: health.isAvailable, reason: health.reason });
-    // Keep the OS schedule in step with the synced preference — another device
-    // may have changed it since this one last ran.
+    setSelection(contents);
+    setHistory(runs);
     await syncBackupSchedule(freq);
     setScheduled(await isBackupScheduled());
-    setLoading(false);
-
-    // Read the manifest in the BACKGROUND, after first paint. It needs a
-    // network round trip and a key derivation, so blocking the screen on it
-    // would make opening Settings feel broken; the size and restore-preview
-    // cards simply appear a moment later.
-    if (isEnrolled) {
-      void (async () => {
-        try {
-          const stored = await getStoredPassphrase();
-          if (stored) setLocalManifest(await readBackupManifest(stored));
-        } catch {
-          // Offline or unreadable — the cards stay hidden rather than lying.
-        }
-      })();
+    if (health.isAvailable) {
+      try {
+        setTakeover(await assessTakeover());
+        setSummaryError(null);
+      } catch {
+        setTakeover(null);
+        setSummaryError(lastSummaryReadError ?? 'unknown');
+      }
     }
+    setLoaded(true);
+    setReadiness(await assessBackupReadiness(user.userId));
   }, [user]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const stale = isBackupStale(frequency, lastBackup?.completedAt ?? null);
+  const remote: BackupSummary | null = takeover?.remote ?? null;
+  const theirsNotOurs = Boolean(remote && takeover && !takeover.sameChain);
+  const staleAfterMs =
+    frequency === 'off' ? Infinity : (frequency === 'daily' ? 1 : frequency === 'every3days' ? 3 : 7) * 2 * 86_400_000;
 
-  const handleBackupNow = async () => {
+  const status: Status = !loaded
+    ? 'loading'
+    : !icloud.available || summaryError
+      ? 'unavailable'
+      : !enrolled && !theirsNotOurs
+        ? 'needs_setup'
+        : takeover?.wouldShrink
+          ? 'restore_first'
+          : !remote
+            ? 'never'
+            : Date.now() - remote.createdAt > staleAfterMs
+              ? 'stale'
+              : 'ok';
+
+  // ----- Actions ------------------------------------------------------------
+
+  const runBackup = async (replaceExisting = false) => {
     if (!user) return;
     setBusy('Starting…');
     setProgress(0);
     try {
-      const info = await runBackupNow(user.userId, (p) => {
-        // Per-category, with a running byte total. A 300MB photo backup
-        // reporting only "backing up messages" looks frozen for minutes;
-        // naming the file count and bytes is what makes a long run feel
-        // accountable, and shows exactly where it stalls if it does.
-        const uploaded = p.bytesDone ? ` · ${formatBytes(p.bytesDone)}` : '';
-        if (p.phase === 'messages' && p.chatsTotal > 0) {
-          setProgress(Math.min((p.chatsDone / p.chatsTotal) * 0.6, 0.6));
-          setBusy(`Messages: ${p.messagesDone.toLocaleString()}${uploaded}`);
-        } else if (p.phase === 'media') {
-          const done = p.filesDone ?? 0;
-          const total = p.filesTotal ?? 0;
-          setProgress(total > 0 ? 0.6 + (done / total) * 0.35 : 0.6);
-          setBusy(`Photos & videos: ${done} of ${total}${uploaded}`);
-        } else if (p.phase === 'extras') {
-          setProgress(0.96);
-          setBusy(
-            `Saving ${p.category === 'wallpapers' ? 'wallpapers' : p.category === 'callHistory' ? 'call history' : 'settings'}${uploaded}`,
-          );
-        } else if (p.phase === 'manifest') {
-          setProgress(0.99);
-          setBusy(`Finishing up${uploaded}`);
-        }
-      });
-      setLastBackup(info);
+      const info = await runBackupNow(
+        user.userId,
+        (p) => {
+          const sent = p.bytesDone ? ` · ${formatBytes(p.bytesDone)} sent` : '';
+          if (p.phase === 'messages' && p.chatsTotal > 0) {
+            setProgress((p.chatsDone / p.chatsTotal) * 0.6);
+            setBusy(`Chats ${p.chatsDone} of ${p.chatsTotal}${sent}`);
+          } else if (p.phase === 'media' && p.filesTotal) {
+            setProgress(0.62 + ((p.filesDone ?? 0) / p.filesTotal) * 0.33);
+            setBusy(`Photos & videos ${p.filesDone ?? 0} of ${p.filesTotal}${sent}`);
+          } else if (p.phase === 'extras') {
+            setProgress(0.61);
+            setBusy(`Call history and settings${sent}`);
+          } else if (p.phase === 'manifest' || p.phase === 'verifying') {
+            setProgress(0.97);
+            setBusy('Checking the backup in iCloud…');
+          }
+        },
+        'manual',
+        { replaceExisting },
+      );
       successHaptic();
-      // Named explicitly rather than folded into a cheerful summary: a
-      // backup that omitted the user's videos while saying "complete" is the
-      // dishonest-success case the retirement gate exists to prevent.
       const skipped = info.mediaSkippedTooLarge ?? 0;
       appAlert(
         skipped > 0 ? 'Backed up, with some files skipped' : 'Backup complete',
         skipped > 0
-          ? `${info.messageCount} messages across ${info.chatCount} chats. ${skipped} large file${skipped === 1 ? '' : 's'} couldn't be included. Those stay on this device only.`
-          : `${info.messageCount} messages across ${info.chatCount} chats.`,
+          ? `${info.messageCount.toLocaleString()} messages are in iCloud. ${skipped} very large file${skipped === 1 ? '' : 's'} couldn't be included and stay on this phone only.`
+          : `${info.messageCount.toLocaleString()} messages across ${info.chatCount} chats are in iCloud.`,
       );
     } catch (error) {
       errorHaptic();
-      if (!(error instanceof BackupBlockedError)) {
-        console.warn('[BackupSettings] Backup failed:', error);
+      if (error instanceof BackupBlockedError && error.reason === 'would_replace_backup') {
+        confirmReplace(error.message);
+      } else {
+        appAlert(
+          error instanceof BackupBlockedError ? 'Can’t back up right now' : 'Backup didn’t finish',
+          error instanceof BackupBlockedError
+            ? error.message
+            : 'Nothing was lost. Anything already sent is kept, and the next backup continues from there.',
+        );
       }
-      appAlert(
-        error instanceof BackupBlockedError ? 'Can’t back up right now' : 'Backup failed',
-        error instanceof BackupBlockedError ? error.message : 'Check your iCloud connection and try again.',
-      );
     } finally {
       setBusy(null);
       setProgress(null);
@@ -203,122 +242,88 @@ export const BackupSettingsScreen = () => {
     }
   };
 
-  // Restore is deliberately two-step: look at what's in iCloud FIRST, then
-  // decide. A one-tap restore gives no chance to notice the backup is from the
-  // wrong account or far older than expected.
-  /**
-   * The passphrase to restore WITH.
-   *
-   * Falls back to whatever the user typed, because the stored one is the wrong
-   * source on the only device that ever really needs to restore. `getStored...`
-   * reads THIS device's keychain, which on a newly set-up phone is empty — so
-   * restore used to fail with "Set your backup passphrase first" precisely
-   * when it mattered, and the button was disabled on top of that. Restoring is
-   * not the same act as enrolling: it proves you know an EXISTING backup's
-   * passphrase, it doesn't establish one for future backups.
-   */
-  const restorePassphrase = async (): Promise<string> => {
+  const confirmReplace = (message: string) =>
+    appAlert('There’s a bigger backup in iCloud', message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Replace it',
+        style: 'destructive',
+        onPress: () =>
+          appAlert(
+            'Replace the iCloud backup?',
+            'The messages in that backup that aren’t on this phone will be gone for good.',
+            [
+              { text: 'Keep it', style: 'cancel' },
+              { text: 'Replace', style: 'destructive', onPress: () => void runBackup(true) },
+            ],
+          ),
+      },
+    ]);
+
+  const passphraseForRestore = async (): Promise<string> => {
     const typed = restorePass.trim();
     if (typed) return typed;
     const stored = await getStoredPassphrase();
     if (stored) return stored;
-    throw new Error('Enter the backup passphrase from your old device.');
+    throw new Error('missing');
   };
 
-  const handleCheckBackup = async () => {
-    setBusy('Reading backup…');
+  const runRestore = async () => {
+    let pass: string;
     try {
-      const passphrase = await restorePassphrase();
-      const manifest = await readBackupManifest(passphrase);
+      pass = await passphraseForRestore();
+    } catch {
+      appAlert('Enter the passphrase', 'Type the backup passphrase you set on your other phone.');
+      return;
+    }
+    setBusy('Checking the passphrase…');
+    setProgress(0);
+    try {
+      // Decrypting the manifest proves the passphrase before anything is
+      // written, so a typo fails fast with a clear message.
+      const manifest = await readBackupManifest(pass).catch(() => null);
       if (!manifest) {
-        // Says WHICH of several situations this is. "No backup found" was
-        // shown for record-absent, iCloud-unreachable AND provider-error
-        // alike, which is precisely the ambiguity that makes a backup
-        // reporting success and then reading back as missing impossible to
-        // diagnose from the phone.
-        const health = await isBackupHealthy();
-        if (lastSummaryReadError) {
-          console.warn('[BackupSettings] Backup summary read failed:', lastSummaryReadError);
-        }
-        const detail = !health.isAvailable
-          ? 'iCloud is not reachable right now, so we cannot tell whether a backup exists.'
-          : lastSummaryReadError
-            ? 'The backup record could not be read. Check iCloud Drive and try again.'
-            : 'The manifest record is not in this iCloud account. A backup that just reported success did not actually reach iCloud.';
-        appAlert('No backup found', detail);
+        errorHaptic();
+        appAlert('Wrong passphrase', 'That passphrase doesn’t open this backup. Check it and try again.');
         return;
       }
-      setRemoteManifest(manifest);
-      lightHaptic();
-    } catch (error) {
-      console.warn('[BackupSettings] Read failed:', error);
+      if (!enrolled) await adoptRestoredPassphrase(pass);
+      const result = await importBackup(pass, (p) => {
+        if (p.phase === 'messages' && p.chatsTotal > 0) {
+          setProgress((p.chatsDone / p.chatsTotal) * 0.7);
+          setBusy(`Restoring chats · ${p.messagesRestored.toLocaleString()} messages`);
+        } else if (p.phase === 'media' && p.filesTotal) {
+          setProgress(0.72 + ((p.filesDone ?? 0) / p.filesTotal) * 0.27);
+          setBusy(`Restoring photos & videos · ${p.filesDone ?? 0} of ${p.filesTotal}`);
+        } else if (p.phase === 'extras') {
+          setProgress(0.71);
+          setBusy('Restoring call history and settings…');
+        }
+      });
+      successHaptic();
+      const gaps = result.missingBatches.length > 0 || result.mediaFailed > 0;
+      const lines = [
+        `${result.messagesRestored.toLocaleString()} messages${result.mediaRestored ? ` and ${result.mediaRestored} photos & videos` : ''} restored.`,
+        gaps ? 'Some parts of the backup couldn’t be read.' : '',
+        result.needsRestart ? 'Restart the app to apply your restored appearance and currency settings.' : '',
+      ].filter(Boolean);
+      appAlert(gaps ? 'Restored with gaps' : 'Restore complete', lines.join('\n\n'));
+      setRestorePass('');
+    } catch {
       errorHaptic();
-      appAlert('Couldn’t read backup', 'Check that iCloud Drive is available, then try again.');
+      appAlert('Restore didn’t finish', 'Nothing on this phone was removed. Check your connection and try again.');
     } finally {
       setBusy(null);
+      setProgress(null);
+      void refresh();
     }
-  };
-
-  const handleRestore = () => {
-    if (!remoteManifest) return;
-    appAlert(
-      'Restore this backup?',
-      `${remoteManifest.totalMessages} messages across ${remoteManifest.chats.length} chats, backed up ${relativeTime(remoteManifest.createdAt)}. Messages already on this device are kept. This only adds what is missing.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Restore',
-          onPress: () =>
-            void (async () => {
-              setBusy('Restoring…');
-              setProgress(0);
-              try {
-                const passphrase = await restorePassphrase();
-                const result = await importBackup(passphrase, (p) => {
-                  if (p.chatsTotal > 0) setProgress(Math.min(p.chatsDone / p.chatsTotal, 0.99));
-                  setBusy(`Restored ${p.messagesRestored} messages…`);
-                });
-                successHaptic();
-                // Partial restores are reported, never smoothed over — §3.2's
-                // importBackup returns exactly which batches were unreadable.
-                // App settings (theme, currency, budgets) are read once at
-                // launch by their own contexts, so a restored value sits on
-                // disk correct but unapplied. Saying so is the honest option —
-                // silence reads as "the restore didn't work". Wallpapers are
-                // NOT in this list: importWallpapers re-hydrates its service.
-                const needsRestart = remoteManifest?.contents?.localSettings === true;
-                const base =
-                  result.missingBatches.length === 0
-                    ? `${result.messagesRestored} messages restored.`
-                    : `${result.messagesRestored} messages restored, but ${result.missingBatches.length} part(s) of the backup couldn’t be read.`;
-                appAlert(
-                  result.missingBatches.length === 0 ? 'Restore complete' : 'Restored with gaps',
-                  needsRestart ? `${base}\n\nRestart the app to apply your restored appearance and currency settings.` : base,
-                );
-              } catch (error) {
-                console.warn('[BackupSettings] Restore failed:', error);
-                errorHaptic();
-                appAlert(
-                  'Restore failed',
-                  'Nothing already on this device was removed. Check iCloud Drive and your backup passphrase, then try again.',
-                );
-              } finally {
-                setBusy(null);
-                setProgress(null);
-              }
-            })(),
-        },
-      ],
-    );
   };
 
   const handleFrequency = async (next: BackupFrequency) => {
     if (!user) return;
-    setFrequency(next);
     lightHaptic();
+    setFrequency(next);
     await setBackupFrequency(user.userId, next);
-    // Push the change to the OS scheduler too — storing the preference without
-    // this would leave the picker claiming automation that never happens.
     await syncBackupSchedule(next);
     setScheduled(await isBackupScheduled());
   };
@@ -335,7 +340,9 @@ export const BackupSettingsScreen = () => {
     await setBackupSelection(updated);
   };
 
-  if (loading) {
+  // ----- Render -------------------------------------------------------------
+
+  if (status === 'loading') {
     return (
       <LiquidBackground>
         <View style={styles.center}>
@@ -345,68 +352,77 @@ export const BackupSettingsScreen = () => {
     );
   }
 
+  const hero: Record<Exclude<Status, 'loading'>, { icon: string; color: string; title: string; body: string }> = {
+    ok: {
+      icon: 'cloud-check-outline',
+      color: theme.colors.moneyPositive,
+      title: `Backed up ${remote ? relativeTime(remote.createdAt) : ''}`,
+      body: '',
+    },
+    stale: {
+      icon: 'cloud-alert-outline',
+      color: theme.colors.warning ?? theme.colors.danger,
+      title: `Last backup ${remote ? relativeTime(remote.createdAt) : ''}`,
+      body: 'Automatic backups haven’t run lately. iOS runs them overnight while charging on Wi-Fi. Back up now to be safe.',
+    },
+    never: {
+      icon: 'cloud-upload-outline',
+      color: theme.colors.primary,
+      title: 'Not backed up yet',
+      body: 'Your chats live only on this phone until the first backup.',
+    },
+    needs_setup: {
+      icon: 'lock-plus-outline',
+      color: theme.colors.primary,
+      title: 'Turn on iCloud backup',
+      body: 'Set a passphrase to encrypt your backup. Only you can open it, not Apple and not us.',
+    },
+    restore_first: {
+      icon: 'cloud-download-outline',
+      color: theme.colors.primary,
+      title: 'Restore your backup first',
+      body: 'iCloud has a backup with more messages than this phone. Restore it below, so this phone continues that backup instead of replacing it.',
+    },
+    unavailable: {
+      icon: 'cloud-off-outline',
+      color: theme.colors.danger,
+      title: 'iCloud isn’t available',
+      body: summaryError
+        ? 'We couldn’t reach your backup in iCloud. Check your connection and that iCloud is on for ManaSplit.'
+        : `${icloudReasonText(icloud.reason)} Your chats still sync live between your devices.`,
+    },
+  };
+  const h = hero[status];
+  const summaryLine = remote
+    ? `${remote.totalMessages.toLocaleString()} messages · ${remote.chatCount} chats${remote.bytes ? ` · ${formatBytes(remote.bytes)}` : ''}${
+        remote.deviceName ? ` · from ${remote.deviceName}` : ''
+      }`
+    : null;
+  const blocking = readiness?.conditions.filter((c) => !c.met && c.key !== 'scheduled') ?? [];
+
   return (
     <LiquidBackground>
       <DetailScreenScaffold horizontalInset={SCREEN_GUTTER} contentContainerStyle={styles.container}>
-        {/* iCloud unavailable gets its own distinct message (§3.6 / #18): live
-            sync is unaffected, and saying so prevents a scarier reading. */}
-        {!icloud.available ? (
-          <GlassCard style={styles.card} contentStyle={styles.cardContent}>
-            <Text variant="titleSmall" style={{ color: theme.colors.danger }}>
-              iCloud isn’t available
-            </Text>
-            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              Your chats aren’t being backed up right now. They’re still syncing live across your devices. Just not saved to iCloud until
-              this is resolved.
-              {icloud.reason ? `\n\n(${icloud.reason})` : ''}
-            </Text>
-          </GlassCard>
-        ) : null}
-
-        {stale && enrolled ? (
-          <GlassCard style={styles.card} contentStyle={styles.cardContent}>
-            {/* Two genuinely different situations, so they don't share a
-                heading: "out of date" is alarming and simply untrue for
-                someone who enrolled a minute ago and has never run a backup
-                — there is nothing stale, there is nothing yet. */}
-            <Text
-              variant="titleSmall"
-              style={{
-                color: lastBackup ? theme.colors.danger : theme.colors.onSurface,
-              }}
-            >
-              {lastBackup ? 'Your backup is out of date' : 'No backup yet'}
-            </Text>
-            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              {lastBackup
-                ? `The last successful backup was ${relativeTime(lastBackup.completedAt)}.`
-                : 'Your chat history is only on this device until the first backup runs.'}
-            </Text>
-            <Button mode="contained" disabled={busy !== null} onPress={handleBackupNow}>
-              Back up now
-            </Button>
-          </GlassCard>
-        ) : null}
-
+        {/* 1. Status */}
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
-          <Text variant="titleMedium" style={{ color: theme.colors.onSurface }}>
-            iCloud backup
-          </Text>
-          <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-            {lastBackup
-              ? `Last successful backup: ${relativeTime(lastBackup.completedAt)} · ${lastBackup.messageCount} messages across ${lastBackup.chatCount} chats.`
-              : 'No backup has completed on this device yet.'}
-          </Text>
-          {/* Static explanation, never a predicted next run (§3.6). */}
-          {frequency !== 'off' && scheduled ? (
-            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              Automatic backups are on. They usually happen overnight while charging and connected to Wi-Fi, but iOS decides exactly when.
-            </Text>
-          ) : frequency !== 'off' ? (
-            // Claiming automation we could not actually register would be the
-            // same class of dishonesty as predicting a next-run time.
-            <Text variant="bodySmall" style={{ color: theme.colors.danger }}>
-              Automatic backups couldn’t be scheduled on this device. Use “Back up now” until this resolves.
+          <View style={styles.heroRow}>
+            <View style={[styles.heroIcon, { backgroundColor: `${h.color}22` }]}>
+              <Icon source={h.icon} size={26} color={h.color} />
+            </View>
+            <View style={styles.flex}>
+              <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                {h.title}
+              </Text>
+              {summaryLine && status !== 'restore_first' ? (
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                  {summaryLine}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+          {h.body ? (
+            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+              {h.body}
             </Text>
           ) : null}
 
@@ -423,31 +439,105 @@ export const BackupSettingsScreen = () => {
             </View>
           ) : null}
 
-          <Button mode="contained" disabled={busy !== null || !enrolled || !icloud.available} onPress={handleBackupNow}>
-            Back up now
-          </Button>
-          {!enrolled ? (
-            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              Set a backup passphrase first. Your backup is encrypted with it.
-            </Text>
+          {status === 'needs_setup' ? (
+            <Button
+              mode="contained"
+              onPress={() => {
+                lightHaptic();
+                (navigation as any).navigate(ROUTES.APP.BACKUP_PASSPHRASE);
+              }}
+            >
+              Set a passphrase
+            </Button>
+          ) : status !== 'restore_first' && status !== 'unavailable' ? (
+            <Button mode="contained" disabled={busy !== null || blocking.length > 0} onPress={() => void runBackup()}>
+              Back up now
+            </Button>
+          ) : null}
+
+          {status !== 'needs_setup' && status !== 'unavailable' && blocking.length > 0 ? (
+            <View style={styles.blockList}>
+              {blocking.map((condition) => (
+                <View key={condition.key} style={styles.blockRow}>
+                  <Icon source="alert-circle-outline" size={16} color={theme.colors.danger} />
+                  <Text variant="bodySmall" style={[styles.flex, { color: theme.colors.onSurfaceVariant }]}>
+                    {condition.detail ?? condition.label}
+                  </Text>
+                </View>
+              ))}
+            </View>
           ) : null}
         </GlassCard>
 
+        {/* 2. Restore — only for a backup this phone didn't write or restore */}
+        {theirsNotOurs && remote ? (
+          <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+            <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>
+              Backup found in iCloud
+            </Text>
+            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+              {`${remote.totalMessages.toLocaleString()} messages across ${remote.chatCount} chats, backed up ${relativeTime(remote.createdAt)}${
+                remote.deviceName ? ` from ${remote.deviceName}` : ''
+              }. Restoring adds them to this phone and keeps everything already here.`}
+            </Text>
+            {!enrolled ? (
+              <TextInput
+                mode="outlined"
+                label="Backup passphrase"
+                value={restorePass}
+                onChangeText={setRestorePass}
+                secureTextEntry={!revealRestorePass}
+                autoCapitalize="none"
+                autoCorrect={false}
+                disabled={busy !== null}
+                right={<TextInput.Icon icon={revealRestorePass ? 'eye-off' : 'eye'} onPress={() => setRevealRestorePass((v) => !v)} />}
+              />
+            ) : null}
+            <Button
+              mode="contained"
+              disabled={busy !== null || (!enrolled && restorePass.trim().length === 0)}
+              onPress={() => void runRestore()}
+            >
+              Restore to this phone
+            </Button>
+            {takeover?.wouldShrink ? (
+              <Button
+                mode="text"
+                disabled={busy !== null || !enrolled}
+                textColor={theme.colors.danger}
+                onPress={() =>
+                  confirmReplace(
+                    `iCloud has ${remote.totalMessages.toLocaleString()} messages and this phone has ${takeover.localMessages.toLocaleString()}.`,
+                  )
+                }
+              >
+                Replace it with this phone’s chats
+              </Button>
+            ) : null}
+          </GlassCard>
+        ) : null}
+
+        {/* 3. Automatic backups */}
+        <SectionLabel>Automatic backups</SectionLabel>
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
-          <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>
-            How often
+          <SegmentedControl
+            value={frequency}
+            onChange={(v) => void handleFrequency(v)}
+            options={FREQUENCIES}
+            accessibilityLabel="How often to back up"
+          />
+          <Text
+            variant="bodySmall"
+            style={{
+              color: frequency !== 'off' && !scheduled && icloud.available ? theme.colors.danger : theme.colors.onSurfaceVariant,
+            }}
+          >
+            {frequency === 'off'
+              ? 'Only when you tap Back up now.'
+              : scheduled || !icloud.available
+                ? 'Usually overnight while charging on Wi-Fi. iOS picks the exact time. Each run only sends what changed.'
+                : 'iOS didn’t accept the schedule on this phone. Use Back up now until it does.'}
           </Text>
-          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-            This sets how often we ask iOS to consider backing up. IOS decides the exact timing.
-          </Text>
-          {FREQUENCIES.map((option) => (
-            <List.Item
-              key={option}
-              title={BACKUP_FREQUENCY_LABELS[option]}
-              onPress={() => void handleFrequency(option)}
-              right={() => (frequency === option ? <List.Icon icon="check" color={theme.colors.primary} /> : null)}
-            />
-          ))}
           <Divider />
           <Pressable
             style={styles.switchRow}
@@ -456,12 +546,12 @@ export const BackupSettingsScreen = () => {
             accessibilityLabel="Back up over cellular"
             accessibilityState={{ checked: allowCellular }}
           >
-            <View style={styles.switchLabel}>
+            <View style={styles.flex}>
               <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
                 Back up over cellular
               </Text>
               <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                Off by default. Backups can be large.
+                Photos and videos can be large.
               </Text>
             </View>
             <Switch
@@ -474,155 +564,106 @@ export const BackupSettingsScreen = () => {
           </Pressable>
         </GlassCard>
 
+        {/* 4. What's included */}
+        <SectionLabel>What’s included</SectionLabel>
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
-          <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>
-            What gets backed up
-          </Text>
-          {BACKUP_CATEGORIES.map((category) => (
-            <Pressable
-              key={category.key}
-              style={styles.switchRow}
-              onPress={() => void handleCategory(category.key, !selection[category.key])}
-              accessibilityRole="switch"
-              accessibilityLabel={category.label}
-              accessibilityState={{ checked: selection[category.key] }}
-            >
-              <View style={styles.switchLabel}>
-                <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
-                  {category.label}
-                </Text>
-                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                  {category.description}
-                </Text>
+          {BACKUP_CATEGORIES.map((category, index) => {
+            const size = remote?.sizes?.[category.key];
+            return (
+              <View key={category.key}>
+                {index > 0 ? <Divider /> : null}
+                <Pressable
+                  style={styles.switchRow}
+                  onPress={() => void handleCategory(category.key, !selection[category.key])}
+                  accessibilityRole="switch"
+                  accessibilityLabel={category.label}
+                  accessibilityState={{ checked: selection[category.key] }}
+                >
+                  <Icon source={CATEGORY_ICONS[category.key]} size={20} color={theme.colors.primary} />
+                  <View style={styles.flex}>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+                      {category.label}
+                    </Text>
+                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                      {selection[category.key] && size ? `${formatBytes(size)} in iCloud` : category.description}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={selection[category.key]}
+                    onValueChange={(v) => void handleCategory(category.key, v)}
+                    pointerEvents="none"
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                  />
+                </Pressable>
               </View>
-              <Switch
-                value={selection[category.key]}
-                onValueChange={(v) => void handleCategory(category.key, v)}
-                pointerEvents="none"
-                accessibilityElementsHidden
-                importantForAccessibility="no-hide-descendants"
-              />
-            </Pressable>
-          ))}
+            );
+          })}
           {!selection.messages ? (
-            // Stated here rather than only at the retirement gate: by the time
-            // someone reaches that screen they are already planning to wipe
-            // this phone.
             <Text variant="bodySmall" style={{ color: theme.colors.danger }}>
-              With messages off, your conversations are not backed up. And this device can&apos;t be safely retired.
+              With chat messages off, your conversations aren’t backed up.
             </Text>
           ) : null}
-          <Divider />
-          {/* Named explicitly so the omissions don't read as gaps. Copying
-              server-held data into iCloud would spend the user's personal
-              quota duplicating something that isn't at risk, and a restore
-              could put a stale copy over the authoritative one. */}
           <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-            Your expenses, groups, balances, profile and synced settings are stored on our servers and come back automatically when you sign
-            in. They don&apos;t need a backup.
+            Expenses, groups, balances and your profile are kept on our servers and come back when you sign in.
           </Text>
         </GlassCard>
 
-        <NextBackupCard readiness={readiness} />
-        <BackupSizeCard manifest={localManifest} />
-        <RestorePreviewCard manifest={localManifest} />
-        <EncryptionCard enrolled={enrolled} enrolledAt={enrolledAt} />
-        <BackupHistoryCard history={history} />
-
-        <GlassCard style={styles.card} contentStyle={styles.cardContent}>
-          <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>
-            Restore
-          </Text>
-          {remoteManifest ? (
-            <>
-              <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                Found a backup from {relativeTime(remoteManifest.createdAt)}: {remoteManifest.totalMessages} messages across{' '}
-                {remoteManifest.chats.length} chats.
-              </Text>
-              <Button mode="contained" disabled={busy !== null} onPress={handleRestore}>
-                Restore this backup
-              </Button>
-            </>
-          ) : (
-            <>
-              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                Check what’s stored in iCloud before restoring. Restoring adds missing messages and keeps everything already on this device.
-              </Text>
-              {/* Shown whenever this device has no passphrase of its own —
-                  i.e. exactly the new-phone case restore exists for. Gating
-                  this on enrollment made restore reachable only on devices
-                  that had already been backing up, which are the ones least
-                  likely to need it. */}
-              {!enrolled ? (
-                <TextInput
-                  mode="outlined"
-                  label="Backup passphrase"
-                  value={restorePass}
-                  onChangeText={setRestorePass}
-                  secureTextEntry={!revealRestorePass}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  disabled={busy !== null}
-                  right={
-                    <TextInput.Icon icon={revealRestorePass ? 'eye-off' : 'eye'} onPress={() => setRevealRestorePass((value) => !value)} />
-                  }
-                />
-              ) : null}
-              <Button
-                mode="outlined"
-                disabled={busy !== null || (!enrolled && restorePass.trim().length === 0)}
-                onPress={handleCheckBackup}
-              >
-                Check iCloud for a backup
-              </Button>
-            </>
-          )}
-        </GlassCard>
-
-        <GlassCard style={styles.card} contentStyle={styles.cardContent}>
-          <List.Item
+        {/* 5. Security */}
+        <SectionLabel>Security</SectionLabel>
+        <GlassCard style={styles.card} contentStyle={styles.listContent}>
+          <ListRow
             title="Backup passphrase"
-            description={
+            subtitle={
               enrolled
-                ? enrolledAt
-                  ? `Set on ${new Date(enrolledAt).toLocaleDateString()}`
-                  : 'Set'
-                : 'Not set. Required before backing up'
+                ? `End-to-end encrypted${enrolledAt ? ` · set ${new Date(enrolledAt).toLocaleDateString()}` : ''}. We can’t reset it.`
+                : 'Not set'
             }
-            left={() => <List.Icon icon="lock-outline" color={theme.colors.primary} />}
+            icon="lock-outline"
+            chevron
             onPress={() => {
               lightHaptic();
               (navigation as any).navigate(ROUTES.APP.BACKUP_PASSPHRASE);
             }}
           />
-          <Divider />
-          <List.Item
+          <ListRow
             title="Wipe or sell this phone"
-            description="Verify your backup is readable before you erase it"
-            left={() => <List.Icon icon="cellphone-remove" color={theme.colors.primary} />}
+            subtitle="Check your backup opens before you erase it"
+            icon="cellphone-remove"
+            chevron
             onPress={() => {
               lightHaptic();
               (navigation as any).navigate(ROUTES.APP.DEVICE_RETIREMENT);
             }}
           />
+          {history.length > 0 ? (
+            <ListRow
+              title="Recent backups"
+              subtitle={showHistory ? 'Hide' : `${history.length} recorded on this phone`}
+              icon="history"
+              onPress={() => setShowHistory((v) => !v)}
+            />
+          ) : null}
         </GlassCard>
+
+        {/* 6. Recent runs (on demand) */}
+        {showHistory ? <BackupHistoryCard history={history} /> : null}
       </DetailScreenScaffold>
     </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
-  // Tightened 16 -> 8 (2026-08-07, compact density pass).
-  container: { gap: 8 },
+  container: { gap: 10, paddingBottom: 40 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   card: { borderRadius: 20 },
-  cardContent: { padding: 20, gap: 12 },
+  cardContent: { padding: 18, gap: 12 },
+  listContent: { paddingVertical: 4 },
+  heroRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  heroIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  flex: { flex: 1 },
   busyBlock: { gap: 8 },
-  switchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  switchLabel: { flex: 1 },
+  blockList: { gap: 6 },
+  blockRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
 });

@@ -20,9 +20,26 @@ import {
 export { assessPassphrase };
 export type { PassphraseAssessment, PassphraseVerdict };
 
+/**
+ * AFTER-FIRST-UNLOCK, not when-unlocked.
+ *
+ * iOS runs background processing tasks mostly overnight, while the phone is
+ * locked and charging — and a when-unlocked Keychain item cannot be read then.
+ * Every scheduled backup therefore failed with "no passphrase" (and the
+ * recovery secret the manifest needs was unreadable too), which is why
+ * automatic backups never happened. After-first-unlock keeps the items
+ * device-only and unavailable before the first unlock after a reboot, which
+ * is the protection that actually matters here.
+ */
+const KEYCHAIN_ACCESS = SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY;
+
 const PASSPHRASE_KEY = 'splitcircle.backup.passphrase';
 const ENROLLED_AT_KEY = 'splitcircle.backup.enrolledAt';
 const RECOVERY_SECRET_KEY = 'splitcircle.backup.recoverySecret';
+
+/** Reads an item, falling back to an in-flight migration copy. */
+const readItem = async (key: string): Promise<string | null> =>
+  (await SecureStore.getItemAsync(key)) ?? (await SecureStore.getItemAsync(`${key}.migrating`));
 
 /**
  * The random secret written into every manifest, whose SHA-256 the server
@@ -38,7 +55,7 @@ const RECOVERY_SECRET_KEY = 'splitcircle.backup.recoverySecret';
  * who reads Firestore an offline oracle to test passphrase guesses against.
  */
 export const getOrCreateRecoverySecret = async (): Promise<string> => {
-  const existing = await SecureStore.getItemAsync(RECOVERY_SECRET_KEY);
+  const existing = await readItem(RECOVERY_SECRET_KEY);
   if (existing) return existing;
 
   // btoa over a binary string, matching backupService's encoding convention.
@@ -51,7 +68,7 @@ export const getOrCreateRecoverySecret = async (): Promise<string> => {
   // eslint-disable-next-line no-undef
   const secret = globalThis.btoa(binary);
   await SecureStore.setItemAsync(RECOVERY_SECRET_KEY, secret, {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    keychainAccessible: KEYCHAIN_ACCESS,
   });
   return secret;
 };
@@ -84,16 +101,30 @@ export const enrollPassphrase = async (passphrase: string): Promise<void> => {
   }
 
   await SecureStore.setItemAsync(PASSPHRASE_KEY, passphrase, {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    keychainAccessible: KEYCHAIN_ACCESS,
   });
   await SecureStore.setItemAsync(ENROLLED_AT_KEY, String(Date.now()), {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    keychainAccessible: KEYCHAIN_ACCESS,
   });
+};
+
+/**
+ * Stores the passphrase of a backup that was just RESTORED on this device.
+ *
+ * No strength check: it is not a new choice but a proven one (it decrypted
+ * the backup), and this device must keep backing up under the SAME passphrase
+ * or its next backup would be sealed under a key the user doesn't know.
+ */
+export const adoptRestoredPassphrase = async (passphrase: string): Promise<void> => {
+  await SecureStore.setItemAsync(PASSPHRASE_KEY, passphrase, { keychainAccessible: KEYCHAIN_ACCESS });
+  if (!(await readItem(ENROLLED_AT_KEY))) {
+    await SecureStore.setItemAsync(ENROLLED_AT_KEY, String(Date.now()), { keychainAccessible: KEYCHAIN_ACCESS });
+  }
 };
 
 export const isPassphraseEnrolled = async (): Promise<boolean> => {
   try {
-    return (await SecureStore.getItemAsync(PASSPHRASE_KEY)) != null;
+    return (await readItem(PASSPHRASE_KEY)) != null;
   } catch {
     return false;
   }
@@ -101,7 +132,7 @@ export const isPassphraseEnrolled = async (): Promise<boolean> => {
 
 export const getEnrolledAt = async (): Promise<number | null> => {
   try {
-    const raw = await SecureStore.getItemAsync(ENROLLED_AT_KEY);
+    const raw = await readItem(ENROLLED_AT_KEY);
     const parsed = raw ? Number(raw) : NaN;
     return Number.isFinite(parsed) ? parsed : null;
   } catch {
@@ -112,7 +143,7 @@ export const getEnrolledAt = async (): Promise<number | null> => {
 /** For backup/restore runs. Returns null when not enrolled. */
 export const getStoredPassphrase = async (): Promise<string | null> => {
   try {
-    return await SecureStore.getItemAsync(PASSPHRASE_KEY);
+    return await readItem(PASSPHRASE_KEY);
   } catch {
     return null;
   }
@@ -132,4 +163,31 @@ export const clearPassphrase = async (): Promise<void> => {
   // in iCloud, which this does not delete; dropping it here would mint a new
   // secret on the next enrollment and leave the old backup's manifest holding
   // one the server no longer knows — unrecoverable for no reason.
+};
+
+/**
+ * Re-saves items written with the old when-unlocked accessibility. Runs in
+ * the foreground (where they are readable) at app start; idempotent.
+ */
+const MIGRATED_FLAG = 'splitcircle.backup.keychainAfterFirstUnlock';
+
+export const migrateBackupKeychainAccess = async (): Promise<void> => {
+  try {
+    if ((await SecureStore.getItemAsync(MIGRATED_FLAG)) === '1') return;
+    for (const key of [PASSPHRASE_KEY, ENROLLED_AT_KEY, RECOVERY_SECRET_KEY]) {
+      const value = await readItem(key);
+      if (value == null) continue;
+      // An update keeps the item's old accessibility class, so the item has
+      // to be deleted and re-added. A temporary copy is written FIRST, and
+      // reads fall back to it (readItem), so dying between the delete and
+      // the re-add cannot lose the passphrase.
+      await SecureStore.setItemAsync(`${key}.migrating`, value, { keychainAccessible: KEYCHAIN_ACCESS });
+      await SecureStore.deleteItemAsync(key);
+      await SecureStore.setItemAsync(key, value, { keychainAccessible: KEYCHAIN_ACCESS });
+      await SecureStore.deleteItemAsync(`${key}.migrating`);
+    }
+    await SecureStore.setItemAsync(MIGRATED_FLAG, '1', { keychainAccessible: KEYCHAIN_ACCESS });
+  } catch {
+    // Locked or unavailable: try again next launch.
+  }
 };
