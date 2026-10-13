@@ -13,6 +13,33 @@ npm run build:ios:local  # .ipa only, no upload
 number auto-increments, `scripts/eas-local-preflight.sh` needs ~12GB free disk and
 purges stale DerivedData. Builds land in TestFlight after Apple processes.
 
+### 2026-10-13 TestFlight build: 1.0.3 (0.0.258)
+
+On October 13, iOS `1.0.3 (0.0.258)` was built locally with `npm run ship:ios`
+from `ui-revamp` (`0fc1f08` + `a467d6c`) and accepted by App Store Connect
+through EAS Submit (submission `cae8eecd-c189-4566-9be5-b1c39070c51b`). Apple
+processing and its appearance in TestFlight were not yet confirmed when this
+was written. `1.0.2 (0.0.253)` is still the version in App Review.
+
+- Contents: iCloud backup v2 (doc 31 §9) and live wallpapers (commit
+  `a467d6c`). No backend change; the production Functions it uses were
+  deployed on 2026-10-10.
+- Build number `0.0.257` is burned: that run stopped at the disk preflight
+  (11GB free of the 12GB it needs; the EAS project copy takes about 1GB).
+- **Verified on the physical iPhone 17 Pro** with a local Release build of
+  the same commit, against the owner's real iCloud: a manual backup of 769
+  messages in 13 chats (453 KB) completed in 13.5s and reported success
+  only after the manifest read back; a second run with no changes took
+  2.1s (incremental skip). Per-category sizes on the backup screen came
+  from iCloud metadata.
+- **Not verified on hardware**: restore on a second device, the takeover
+  guard, scheduled (overnight) backups, native media upload (this account's
+  backup had no downloaded media), and the live wallpapers on a device.
+- A black screen seen on the phone during testing was the owner's own
+  Privacy Guard plus a solid-black app background, not a defect.
+- Disk: to pass the 12GB preflight, Xcode's module caches, DerivedData, the
+  npm cache and the already-uploaded `0.0.256` archive were removed.
+
 ### 2026-10-10 TestFlight build: 1.0.3 (0.0.256)
 
 On October 10, iOS `1.0.3 (0.0.256)` was built locally with `npm run ship:ios`
