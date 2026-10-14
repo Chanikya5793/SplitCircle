@@ -24,9 +24,10 @@ import {
   type PlanPresentation,
 } from '@/utils/monetizationPresentation';
 import { appAlert } from '@/utils/appAlert';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { ROUTES } from '@/constants/routes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ScrollView as ScrollViewType } from 'react-native';
 import {
   ActivityIndicator,
   Linking,
@@ -211,6 +212,17 @@ const PlanCard = ({
 export const PlansAndCreditsScreen = () => {
   const { theme } = useTheme();
   const navigation = useNavigation<any>();
+  // Opened from a limit popup that offers credits: land on the credit packs,
+  // not the top of the plans list.
+  const focusCredits = (useRoute().params as { focus?: string } | undefined)?.focus === 'credits';
+  const scrollRef = useRef<ScrollViewType>(null);
+  const creditsY = useRef<number | null>(null);
+  const scrolledToCredits = useRef(false);
+  const scrollToCredits = () => {
+    if (!focusCredits || scrolledToCredits.current || creditsY.current === null) return;
+    scrolledToCredits.current = true;
+    scrollRef.current?.scrollTo({ y: Math.max(0, creditsY.current - 120), animated: true });
+  };
   const { fontScale, width } = useWindowDimensions();
   const stackRows = fontScale >= 1.3 || width < 360;
   const [billingPeriod, setBillingPeriod] = useState<MonetizationBillingPeriod>('annual');
@@ -411,6 +423,7 @@ export const PlansAndCreditsScreen = () => {
   return (
     <LiquidBackground style={styles.root}>
       <DetailScreenScaffold
+        ref={scrollRef}
         horizontalInset={SCREEN_GUTTER}
         contentContainerStyle={styles.scrollContent}
         bottomSpacing={theme.spacing.xxl}
@@ -672,7 +685,14 @@ export const PlansAndCreditsScreen = () => {
               </View>
             ) : null}
 
-            <SectionLabel style={styles.sectionLabel}>Mana Credits</SectionLabel>
+            <View
+              onLayout={(event) => {
+                creditsY.current = event.nativeEvent.layout.y;
+                scrollToCredits();
+              }}
+            >
+              <SectionLabel style={styles.sectionLabel}>Mana Credits</SectionLabel>
+            </View>
             <GlassCard style={styles.card} contentStyle={styles.sectionContent}>
               <View style={styles.sectionHeading}>
                 <View

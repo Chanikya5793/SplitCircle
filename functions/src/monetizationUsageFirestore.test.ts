@@ -79,7 +79,7 @@ describeWithEmulator("usage limits beyond advanced splits", () => {
         auth,
     });
 
-    it("caps free AI assistant messages per day and never offers credits for them", async () => {
+    it("caps free AI assistant messages per day, then charges one credit each", async () => {
         for (let index = 0; index < 3; index += 1) {
             const operationId = randomUUID();
             const decision = await authorize(aiTurn(operationId) as never);
@@ -90,11 +90,14 @@ describeWithEmulator("usage limits beyond advanced splits", () => {
             } as never);
         }
         const denied = await authorize(aiTurn(randomUUID()) as never);
+        // Past the free allowance a message costs one credit. The app checks
+        // the balance before offering it; with none it shows the upgrade path.
         expect(denied).toMatchObject({
             allowed: false,
             source: "quota_exhausted",
-            reasonCode: "upgrade_required",
-            creditCost: null,
+            reasonCode: "credit_consent_required",
+            creditCost: 1,
+            creditBalance: 0,
         });
     });
 

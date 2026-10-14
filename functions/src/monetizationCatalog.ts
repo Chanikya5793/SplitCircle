@@ -6,7 +6,7 @@ import {
 } from "./commerceCatalog";
 
 export const MONETIZATION_SCHEMA_VERSION = 1 as const;
-export const MONETIZATION_CATALOG_VERSION = "2026-10-09.usage-v2" as const;
+export const MONETIZATION_CATALOG_VERSION = "2026-10-14.usage-v3" as const;
 
 export const PLAN_IDS = ["free", "essential", "plus", "pro", "power", "max"] as const;
 export type PlanId = (typeof PLAN_IDS)[number];
@@ -135,9 +135,10 @@ export const METERED_FEATURES: Record<MeteredFeatureId, MeteredFeatureDefinition
             power: { kind: "metered", limit: 1_500, cadence: "month" },
             max: { kind: "unlimited_local" },
         },
-        // On-device turns have no continuing provider cost. A future pricing
-        // experiment can still test value, but credit charging stays disabled.
-        creditCost: null,
+        // On-device turns have no provider cost, but the free allowance must
+        // still have a way past it that isn't a subscription: one credit per
+        // message, only spent when the reply actually arrives.
+        creditCost: 1,
     },
     "provider.ai_or_ocr_job": {
         id: "provider.ai_or_ocr_job",

@@ -12,10 +12,10 @@
  * settles the reservation through the durable finalization queue, so a
  * failed or cancelled attempt never costs anything.
  *
- * Fail-open, deliberately and only for work that runs on this device: when
- * the access service cannot be reached (offline, outage, or a server that
- * predates a feature's enforcement), the work is local and costs the service
- * nothing, so blocking it would only punish people for bad signal. An
+ * When the access service cannot be reached (offline, outage) the work runs
+ * locally on a small OFFLINE GRACE allowance per feature per day, so bad
+ * signal doesn't block someone mid-task — but airplane mode is not an
+ * unlimited plan. Max subscribers (unlimited local use) are not capped. An
  * explicit denial from the server is always honoured.
  */
 import type {
@@ -28,6 +28,7 @@ import { navigationRef } from '@/navigation/navigationRef';
 import { authorizeMonetizedOperation } from '@/services/monetizationService';
 import { queueMonetizedOperationFinalization } from '@/services/monetizedOperationFinalizationQueue';
 import { appAlert } from '@/utils/appAlert';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { describeResetTime } from '@/utils/monetizationPresentation';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -98,9 +99,63 @@ const confirm = (title: string, message: string, accept: string, reject: string)
 
 const creditWord = (count: number) => (count === 1 ? 'Mana Credit' : 'Mana Credits');
 
-export const openPlansAndCredits = (backTitle?: string): void => {
+// ---------------------------------------------------------------------------
+// Offline grace
+
+/** Uses per feature per day while the access service can't be reached. */
+export const OFFLINE_GRACE_PER_DAY: Record<ClientMeteredFeatureId, number> = {
+  'ai.expense_on_device_turn': 3,
+  'advanced_split.completion': 3,
+  'insights.advanced_report': 1,
+};
+
+const OFFLINE_KEY = 'splitcircle.metered.offline.v1';
+
+interface OfflineState {
+  day: string;
+  counts: Partial<Record<ClientMeteredFeatureId, number>>;
+  /** Plan from the last server decision, so offline caps match it. */
+  plan?: string;
+}
+
+const today = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+};
+
+const readOffline = async (): Promise<OfflineState> => {
+  try {
+    const raw = await AsyncStorage.getItem(OFFLINE_KEY);
+    const state = raw ? (JSON.parse(raw) as OfflineState) : null;
+    if (state && state.day === today()) return state;
+    return { day: today(), counts: {}, plan: state?.plan };
+  } catch {
+    return { day: today(), counts: {} };
+  }
+};
+
+const writeOffline = (state: OfflineState) => AsyncStorage.setItem(OFFLINE_KEY, JSON.stringify(state)).catch(() => {});
+
+/** Remember the plan the server last reported (for offline caps). */
+const rememberPlan = async (plan: string | undefined) => {
+  if (!plan) return;
+  const state = await readOffline();
+  if (state.plan !== plan) await writeOffline({ ...state, plan });
+};
+
+/** Takes one offline use if any are left today. Exported for tests. */
+export const takeOfflineGrace = async (featureId: ClientMeteredFeatureId): Promise<boolean> => {
+  const state = await readOffline();
+  if (state.plan === 'max') return true;
+  const used = state.counts[featureId] ?? 0;
+  if (used >= OFFLINE_GRACE_PER_DAY[featureId]) return false;
+  await writeOffline({ ...state, counts: { ...state.counts, [featureId]: used + 1 } });
+  return true;
+};
+
+export const openPlansAndCredits = (backTitle?: string, focus?: 'credits'): void => {
   if (!navigationRef.isReady()) return;
-  navigationRef.navigate(ROUTES.APP.PLANS_AND_CREDITS, { backTitle: backTitle ?? 'Back' });
+  navigationRef.navigate(ROUTES.APP.PLANS_AND_CREDITS, { backTitle: backTitle ?? 'Back', ...(focus ? { focus } : {}) });
 };
 
 export const openUsage = (backTitle?: string): void => {
@@ -120,9 +175,12 @@ export const explainMeteredDenial = (
   const allowance = options.allowance ?? copy?.allowance ?? 'included uses';
   const draftNote = options.draftNote ?? copy?.draftNote;
   const reset = decision.resetsAt ? ` More become available ${describeResetTime(decision.resetsAt)}.` : '';
-  const credits = decision.creditCost
-    ? ` Each one costs ${decision.creditCost} ${creditWord(decision.creditCost)} after that; you have ${decision.creditBalance}.`
-    : '';
+  const creditable = decision.creditCost !== null && decision.creditCost > 0;
+  const credits = creditable
+    ? ` Keep going now for ${decision.creditCost} ${creditWord(decision.creditCost!)} each${
+        decision.creditBalance > 0 ? ` (you have ${decision.creditBalance})` : ''
+      }, or upgrade for more every month.`
+    : ' Upgrade for more every month.';
   appAlert(
     `You've used your ${allowance}`,
     [`Your ${decision.planId === 'free' ? 'free plan' : 'plan'} includes a set number each period.${reset}${credits}`, draftNote]
@@ -130,8 +188,10 @@ export const explainMeteredDenial = (
       .join('\n\n'),
     [
       { text: 'Not now', style: 'cancel' },
-      { text: 'See usage', onPress: () => openUsage(options.backTitle) },
-      { text: 'Plans & credits', onPress: () => openPlansAndCredits(options.backTitle) },
+      ...(creditable
+        ? [{ text: 'Get credits', onPress: () => openPlansAndCredits(options.backTitle, 'credits') }]
+        : []),
+      { text: 'Upgrade', onPress: () => openPlansAndCredits(options.backTitle) },
     ],
   );
 };
@@ -176,9 +236,21 @@ export async function requestMeteredAccess(
       appAlert('Could not check your plan', 'Sign in again, then try once more.');
       return null;
     }
-    console.error('[meteredAccess] access service unavailable; running locally', options.featureId, error);
-    return { ownerUid: options.ownerUid, operationId, authorizationId: null, decision: null };
+    console.error('[meteredAccess] access service unavailable', options.featureId, error);
+    if (await takeOfflineGrace(options.featureId)) {
+      return { ownerUid: options.ownerUid, operationId, authorizationId: null, decision: null };
+    }
+    const copy = METERED_FEATURE_COPY[options.featureId];
+    appAlert(
+      'Connect to keep going',
+      [`You've used today's offline ${copy.allowance}. Connect to the internet to use your plan's allowance.`, copy.draftNote]
+        .filter(Boolean)
+        .join('\n\n'),
+    );
+    return null;
   }
+
+  void rememberPlan(decision.planId);
 
   if (!decision.allowed || !decision.authorizationId) {
     if (options.onDenied) options.onDenied(decision);
