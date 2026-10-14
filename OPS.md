@@ -13,6 +13,29 @@ npm run build:ios:local  # .ipa only, no upload
 number auto-increments, `scripts/eas-local-preflight.sh` needs ~12GB free disk and
 purges stale DerivedData. Builds land in TestFlight after Apple processes.
 
+### 2026-10-14 TestFlight build: 1.0.3 (0.0.259) + Functions deploy
+
+On October 14, iOS `1.0.3 (0.0.259)` was built from `ui-revamp` (`84d18bc`)
+and accepted by App Store Connect through EAS Submit (submission
+`a69fe311-f7a3-447d-a7f9-22226e4e93d9`). The build succeeded on the first run.
+`ship:ios`'s own submit step failed on a DNS error (`ENOTFOUND api.expo.dev`),
+and the first manual `eas submit` died at 90% with `EPIPE`. A retry of
+`eas submit --path build-output/SplitCircle-production-20261014-093004.ipa`
+succeeded. Apple processing was not yet confirmed when this was written.
+
+- Contents: AI assistant messages cost 1 Mana Credit past the free allowance;
+  an offline cap on local metered features (3 AI messages, 3 advanced splits,
+  1 AI report per day; Max uncapped); and the limit popup now offers
+  "Get credits" (opens Plans & credits at the packs) and "Upgrade".
+- Functions: before the build, the same 57 Functions were redeployed to
+  `splitcircle-c9e46` with catalog `2026-10-14.usage-v3`, using the same
+  temporary Security Center exclusion as on 2026-10-10. Security Center's
+  13 Functions are still not deployed (five secrets missing), so link checks
+  and manual scans do not work in production.
+- Not yet verified with a real sandbox purchase: buying credits in TestFlight
+  and spending them past a limit. The owner account has the internal quota
+  bypass, so testing the limit popups needs a separate test account.
+
 ### 2026-10-13 TestFlight build: 1.0.3 (0.0.258)
 
 On October 13, iOS `1.0.3 (0.0.258)` was built locally with `npm run ship:ios`
